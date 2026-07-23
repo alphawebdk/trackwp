@@ -114,7 +114,7 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 
 = 1.8.0 =
 * Ny: Automatiske opdateringer via GitHub Releases (Plugin Update Checker v5.7) — opdateringsnotifikation og 1-klik-opdatering i wp-admin som standard-plugins
-* Kræver TRACKWP_GITHUB_TOKEN i wp-config.php (privat repo)
+* Offentligt GitHub-repo — opdateringer kræver ingen token (TRACKWP_GITHUB_TOKEN understøttes fortsat, men er unødvendig)
 
 = 1.7.2 =
 * Fix: GA4-sessionstitching — understøtter det nye GS2 _ga_*-cookieformat (udrullet af Google maj 2025)
