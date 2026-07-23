@@ -1,0 +1,56 @@
+// ESLint flat config (v9+). Run: npx eslint assets/
+export default [
+    {
+        ignores: [
+            'node_modules/**',
+            'assets/**/*.min.js',
+            'build.mjs',
+        ],
+    },
+    {
+        files: ['assets/**/*.js'],
+        languageOptions: {
+            ecmaVersion: 2017,
+            sourceType: 'script',
+            globals: {
+                window: 'readonly',
+                document: 'readonly',
+                navigator: 'readonly',
+                console: 'readonly',
+                fetch: 'readonly',
+                setTimeout: 'readonly',
+                clearTimeout: 'readonly',
+                confirm: 'readonly',
+                alert: 'readonly',
+                Request: 'readonly',
+                Blob: 'readonly',
+                URL: 'readonly',
+                crypto: 'readonly',
+                Promise: 'readonly',
+                sessionStorage: 'readonly',
+                localStorage: 'readonly',
+                URLSearchParams: 'readonly',
+                CustomEvent: 'readonly',
+                TextEncoder: 'readonly',
+                Uint8Array: 'readonly',
+                jQuery: 'readonly',
+                gtag: 'readonly',
+                dataLayer: 'readonly',
+                trackwpConfig: 'readonly',
+                trackwpConsentConfig: 'readonly',
+                trackwpAdminConfig: 'readonly',
+                wp: 'readonly',
+            },
+        },
+        rules: {
+            'no-unused-vars': ['warn', { args: 'none' }],
+            'no-undef': 'error',
+            'no-console': 'off',
+            'semi': ['error', 'always'],
+            'eqeqeq': ['warn', 'always'],
+            'no-var': 'off', // codebase uses var intentionally (ES5 target)
+            'prefer-const': 'off',
+            'no-empty': ['error', { allowEmptyCatch: true }],
+        },
+    },
+];

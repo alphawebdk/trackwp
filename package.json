@@ -1,0 +1,15 @@
+{
+  "name": "trackwp",
+  "private": true,
+  "version": "1.8.0",
+  "description": "TrackWP plugin build pipeline",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.20.0",
+    "cssnano": "^7.0.0",
+    "postcss": "^8.4.0"
+  }
+}

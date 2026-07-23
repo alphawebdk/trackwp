@@ -1,0 +1,603 @@
+# Copyright (C) 2026 TrackWP
+# This file is distributed under the GPLv2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: TrackWP 1.1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: \n"
+"Language-Team: English (United States)\n"
+"Language: en_US\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-06-02T00:00:00+00:00\n"
+"PO-Revision-Date: 2026-06-02T00:00:00+00:00\n"
+"X-Domain: trackwp\n"
+
+#: trackwp.php:116
+msgid "Telefonklik"
+msgstr "Phone Click"
+
+#: trackwp.php:128
+msgid "E-mailklik"
+msgstr "Email Click"
+
+#: trackwp.php:140
+#: includes/class-trackwp-events.php:161
+msgid "Formularindsendelse"
+msgstr "Form Submit"
+
+#: trackwp.php:158
+#: trackwp.php:477
+#: templates/consent-banner.php:11
+msgid "Vi bruger cookies"
+msgstr "We use cookies"
+
+#: trackwp.php:159
+msgid "Vi bruger cookies til at forbedre din oplevelse og analysere trafik. Vælg dine præferencer nedenfor."
+msgstr "We use cookies to improve your experience and analyze traffic. Choose your preferences below."
+
+#: trackwp.php:160
+#: trackwp.php:479
+#: templates/consent-banner.php:13
+msgid "Accepter alle"
+msgstr "Accept all"
+
+#: trackwp.php:161
+#: trackwp.php:480
+msgid "Afvis alle"
+msgstr "Reject all"
+
+#: trackwp.php:162
+#: trackwp.php:481
+msgid "Tilpas"
+msgstr "Customize"
+
+#: trackwp.php:163
+#: trackwp.php:482
+msgid "Gem præferencer"
+msgstr "Save preferences"
+
+#: trackwp.php:356
+msgid "Udvid"
+msgstr "Expand"
+
+#: trackwp.php:357
+msgid "Slet"
+msgstr "Delete"
+
+#: trackwp.php:358
+msgid "Slet denne begivenhed?"
+msgstr "Delete this event?"
+
+#: trackwp.php:359
+msgid "Ret venligst følgende fejl:"
+msgstr "Please fix the following errors:"
+
+#: includes/class-trackwp-settings.php:19
+msgid "TrackWP Indstillinger"
+msgstr "TrackWP Settings"
+
+#: includes/class-trackwp-settings.php:34
+#: templates/settings-page.php:14
+msgid "Adgang nægtet."
+msgstr "Unauthorized access."
+
+#: includes/class-trackwp-settings.php:300
+msgid "Indstillinger"
+msgstr "Settings"
+
+#: includes/class-trackwp-events.php:112
+msgid "Begivenhedsnavnet skal starte med et bogstav og kun indeholde små bogstaver, tal og underscores (maks. 40 tegn)."
+msgstr "Event name must start with a letter and contain only lowercase letters, numbers, and underscores (max 40 characters)."
+
+#: includes/class-trackwp-events.php:119
+msgid "Ugyldig trigger-type."
+msgstr "Invalid trigger type."
+
+#: includes/class-trackwp-events.php:124
+msgid "CSS-selector er påkrævet for klik-triggere."
+msgstr "CSS selector is required for click triggers."
+
+#: includes/class-trackwp-events.php:129
+msgid "Konverteringsværdi skal være numerisk."
+msgstr "Conversion value must be numeric."
+
+#: includes/class-trackwp-events.php:160
+msgid "Klik på CSS-selector"
+msgstr "Click on CSS selector"
+
+#: includes/class-trackwp-events.php:162
+msgid "Sidevisning (URL match)"
+msgstr "Page view (URL match)"
+
+#: includes/class-trackwp-events.php:163
+msgid "Scrolldybde"
+msgstr "Scroll depth"
+
+#: includes/class-trackwp-events.php:164
+msgid "Tid på siden"
+msgstr "Time on page"
+
+#: includes/class-trackwp-events.php:165
+msgid "JavaScript-event"
+msgstr "JavaScript event"
+
+#: includes/class-trackwp-events.php:166
+msgid "Fildownload"
+msgstr "File download"
+
+#: includes/class-trackwp-events.php:175
+msgid "— Ingen —"
+msgstr "— None —"
+
+#: includes/class-trackwp-events.php:186
+msgid "Tilpasset begivenhed"
+msgstr "Custom Event"
+
+#: includes/class-trackwp-proxy.php:91
+msgid "Ugyldig nonce."
+msgstr "Invalid nonce."
+
+#: includes/class-trackwp-proxy.php:108
+msgid "Cross-origin-forespørgsel afvist."
+msgstr "Cross-origin request denied."
+
+#: includes/class-trackwp-proxy.php:120
+msgid "For mange forespørgsler."
+msgstr "Too many requests."
+
+#: templates/settings-page.php:29
+msgid "TrackWP"
+msgstr "TrackWP"
+
+#: templates/settings-page.php:33
+msgid "Platforme"
+msgstr "Platforms"
+
+#: templates/settings-page.php:36
+msgid "Begivenheder"
+msgstr "Events"
+
+#: templates/settings-page.php:40
+msgid "WooCommerce"
+msgstr "WooCommerce"
+
+#: templates/settings-page.php:44
+msgid "Samtykke"
+msgstr "Consent"
+
+#: templates/settings-page.php:47
+msgid "Avanceret"
+msgstr "Advanced"
+
+#: templates/settings-page.php:66
+msgid "Google Analytics 4"
+msgstr "Google Analytics 4"
+
+#: templates/settings-page.php:73
+msgid "Measurement ID"
+msgstr "Measurement ID"
+
+#: templates/settings-page.php:83
+msgid "Findes i GA4 > Admin > Data Streams > din stream > Measurement ID."
+msgstr "Found in GA4 > Admin > Data Streams > your stream > Measurement ID."
+
+#: templates/settings-page.php:89
+msgid "API Secret"
+msgstr "API Secret"
+
+#: templates/settings-page.php:101
+#: templates/settings-page.php:188
+msgid "Ryd"
+msgstr "Clear"
+
+#: templates/settings-page.php:106
+msgid "GA4 > Admin > Data Streams > din stream > Measurement Protocol API secrets. Opret en hvis ingen findes."
+msgstr "GA4 > Admin > Data Streams > your stream > Measurement Protocol API secrets. Create one if none exist."
+
+#: templates/settings-page.php:121
+msgid "Google Ads"
+msgstr "Google Ads"
+
+#: templates/settings-page.php:128
+msgid "Conversion ID"
+msgstr "Conversion ID"
+
+#: templates/settings-page.php:138
+msgid "Google Ads > Tools > Conversions > din konverteringshandling > Tag setup > Conversion ID."
+msgstr "Google Ads > Tools > Conversions > your conversion action > Tag setup > Conversion ID."
+
+#: templates/settings-page.php:153
+msgid "Meta (Facebook)"
+msgstr "Meta (Facebook)"
+
+#: templates/settings-page.php:160
+msgid "Pixel ID"
+msgstr "Pixel ID"
+
+#: templates/settings-page.php:170
+msgid "Meta Events Manager > Data Sources > dit Pixel > Settings > Pixel ID."
+msgstr "Meta Events Manager > Data Sources > your Pixel > Settings > Pixel ID."
+
+#: templates/settings-page.php:176
+msgid "Access Token"
+msgstr "Access Token"
+
+#: templates/settings-page.php:193
+msgid "Meta Events Manager > Data Sources > dit Pixel > Settings > Generate access token (Conversions API)."
+msgstr "Meta Events Manager > Data Sources > your Pixel > Settings > Generate access token (Conversions API)."
+
+#: templates/settings-page.php:208
+msgid "Google Tag Manager"
+msgstr "Google Tag Manager"
+
+#: templates/settings-page.php:215
+msgid "Container ID"
+msgstr "Container ID"
+
+#: templates/settings-page.php:225
+msgid "Format: GTM-XXXXXXX. Snippet'et indsættes automatisk i <head> og <body>."
+msgstr "Format: GTM-XXXXXXX. The snippet is injected into <head> and <body> automatically."
+
+#: templates/settings-page.php:232
+msgid "Gem platforme"
+msgstr "Save Platforms"
+
+#: templates/settings-page.php:250
+msgid "Aktiveret"
+msgstr "Enabled"
+
+#: templates/settings-page.php:251
+msgid "Begivenhedsnavn"
+msgstr "Event Name"
+
+#: templates/settings-page.php:252
+msgid "Visningsnavn"
+msgstr "Display Name"
+
+#: templates/settings-page.php:253
+msgid "Trigger-type"
+msgstr "Trigger Type"
+
+#: templates/settings-page.php:254
+msgid "Værdi"
+msgstr "Value"
+
+#: templates/settings-page.php:255
+msgid "Valuta"
+msgstr "Currency"
+
+#: templates/settings-page.php:256
+msgid "Google Ads Label"
+msgstr "Google Ads Label"
+
+#: templates/settings-page.php:257
+msgid "Meta Event"
+msgstr "Meta Event"
+
+#: templates/settings-page.php:258
+msgid "Handlinger"
+msgstr "Actions"
+
+#: templates/settings-page.php:268
+msgid "Tilføj begivenhed"
+msgstr "Add Event"
+
+#: templates/settings-page.php:277
+msgid "Gem begivenheder"
+msgstr "Save Events"
+
+#: templates/settings-page.php:288
+msgid "Kommer snart"
+msgstr "Coming soon"
+
+#: templates/settings-page.php:289
+msgid "WooCommerce-tracking er planlagt til TrackWP v1.5."
+msgstr "WooCommerce e-commerce tracking is planned for TrackWP v1.5."
+
+#: templates/settings-page.php:302
+msgid "Banner-stil"
+msgstr "Banner Style"
+
+#: templates/settings-page.php:306
+msgid "Stil"
+msgstr "Style"
+
+#: templates/settings-page.php:311
+msgid "Centreret pop-up"
+msgstr "Centered popup"
+
+#: templates/settings-page.php:314
+msgid "Bjælke i bunden"
+msgstr "Bottom bar"
+
+#: templates/settings-page.php:317
+msgid "Diskret hjørne-pop-up"
+msgstr "Discreet corner popup"
+
+#: templates/settings-page.php:324
+msgid "Farver"
+msgstr "Colors"
+
+#: templates/settings-page.php:327
+msgid "Baggrund"
+msgstr "Background"
+
+#: templates/settings-page.php:335
+#: templates/settings-page.php:378
+msgid "Tekst"
+msgstr "Text"
+
+#: templates/settings-page.php:343
+msgid "Fremhævning / knap"
+msgstr "Accent / Button"
+
+#: templates/settings-page.php:351
+msgid "Knaptekst"
+msgstr "Button Text"
+
+#: templates/settings-page.php:360
+msgid "Udseende"
+msgstr "Appearance"
+
+#: templates/settings-page.php:364
+msgid "Hjørneradius (px)"
+msgstr "Border Radius (px)"
+
+#: templates/settings-page.php:382
+msgid "Overskrift"
+msgstr "Heading"
+
+#: templates/settings-page.php:394
+msgid "Beskrivelse"
+msgstr "Description"
+
+#: templates/settings-page.php:405
+msgid "Accepter-knap"
+msgstr "Accept Button"
+
+#: templates/settings-page.php:417
+msgid "Afvis-knap"
+msgstr "Reject Button"
+
+#: templates/settings-page.php:429
+msgid "Tilpas-knap"
+msgstr "Customize Button"
+
+#: templates/settings-page.php:441
+msgid "Gem-knap"
+msgstr "Save Button"
+
+#: templates/settings-page.php:453
+msgid "Side med privatlivspolitik"
+msgstr "Privacy Policy Page"
+
+#: templates/settings-page.php:461
+msgid "-- Vælg side --"
+msgstr "-- Select page --"
+
+#: templates/settings-page.php:469
+msgid "Adfærd"
+msgstr "Behavior"
+
+#: templates/settings-page.php:472
+msgid "Vis afvis-knap"
+msgstr "Show Reject Button"
+
+#: templates/settings-page.php:479
+msgid "Vis en \"Afvis alle\"-knap på samtykke-banneret."
+msgstr "Display a \"Reject all\" button on the consent banner."
+
+#: templates/settings-page.php:484
+msgid "Kræv aktivt samtykke"
+msgstr "Require Active Consent"
+
+#: templates/settings-page.php:491
+msgid "Bloker al tracking indtil brugeren aktivt accepterer (GDPR-anbefalet)."
+msgstr "Block all tracking until user actively accepts (GDPR recommended)."
+
+#: templates/settings-page.php:496
+msgid "Log samtykke"
+msgstr "Log Consent"
+
+#: templates/settings-page.php:503
+msgid "Gem en server-side log over hver samtykke-handling til audit-formål."
+msgstr "Store a server-side record of each consent action for auditing."
+
+#: templates/settings-page.php:508
+msgid "Genindhent samtykke ved policy-ændring"
+msgstr "Re-consent on Policy Change"
+
+#: templates/settings-page.php:515
+msgid "Bed automatisk brugere om nyt samtykke når samtykke-tekst ændres."
+msgstr "Automatically prompt users for new consent when consent text changes."
+
+#: templates/settings-page.php:521
+msgid "Cookie-levetid (måneder)"
+msgstr "Cookie Lifetime (months)"
+
+#: templates/settings-page.php:535
+msgid "Forhåndsvisning"
+msgstr "Preview"
+
+#: templates/settings-page.php:548
+msgid "Gem samtykke-indstillinger"
+msgstr "Save Consent Settings"
+
+#: templates/settings-page.php:559
+msgid "Endpoint"
+msgstr "Endpoint"
+
+#: templates/settings-page.php:563
+msgid "Endpoint slug"
+msgstr "Endpoint Slug"
+
+#: templates/settings-page.php:577
+msgid "Kun slug (a-z, 0-9, bindestreger; maks. 32 tegn). Nyttigt for at omgå adblockers. Må ikke være \"consent-log\"."
+msgstr "Slug-only (a-z, 0-9, dashes; max 32 chars). Useful for bypassing ad-blockers. Cannot be \"consent-log\"."
+
+#: templates/settings-page.php:594
+msgid "Førsteparts-cookie"
+msgstr "First-Party Cookie"
+
+#: templates/settings-page.php:597
+msgid "Aktivér"
+msgstr "Enable"
+
+#: templates/settings-page.php:604
+msgid "Brug en førsteparts-cookie til at identificere returnerende besøgende."
+msgstr "Use a first-party cookie to identify returning visitors."
+
+#: templates/settings-page.php:610
+msgid "Cookie-navn"
+msgstr "Cookie Name"
+
+#: templates/settings-page.php:622
+msgid "Levetid (måneder)"
+msgstr "Lifetime (months)"
+
+#: templates/settings-page.php:636
+msgid "Consent Mode v2"
+msgstr "Consent Mode v2"
+
+#: templates/settings-page.php:639
+msgid "Cookieløse pings"
+msgstr "Cookieless Pings"
+
+#: templates/settings-page.php:646
+msgid "Send cookieløse pings til Google når samtykke er afvist (hjælper konverteringsmodellering)."
+msgstr "Send cookieless pings to Google when consent is denied (helps conversion modeling)."
+
+#: templates/settings-page.php:651
+msgid "Annoncesignaler"
+msgstr "Ad Signals"
+
+#: templates/settings-page.php:658
+msgid "Send annonce-klik-identifiers (gclid, fbclid) i cookieløse pings."
+msgstr "Pass ad click identifiers (gclid, fbclid) in cookieless pings."
+
+#: templates/settings-page.php:664
+msgid "Dedup-strategi"
+msgstr "Dedup Strategy"
+
+#: templates/settings-page.php:667
+msgid "Tilstand"
+msgstr "Mode"
+
+#: templates/settings-page.php:673
+msgid "Klient + server (standard — begge fyrer, dedup via event_id)"
+msgstr "Client + Server (default — both fire, dedup via event_id)"
+
+#: templates/settings-page.php:677
+msgid "Kun server (brug når GTM håndterer klient-side tags)"
+msgstr "Server-only (use when GTM handles client-side tags)"
+
+#: templates/settings-page.php:681
+msgid "Kun klient (spring server-proxy GA4/Meta dispatch over)"
+msgstr "Client-only (skip server proxy GA4/Meta dispatch)"
+
+#: templates/settings-page.php:685
+msgid "Førsteparts-cookie og samtykke-log kører altid uanset tilstand."
+msgstr "First-party cookie and consent logging always run regardless of mode."
+
+#: templates/settings-page.php:690
+msgid "Jeg bruger GTM på dette site"
+msgstr "I use GTM on this site"
+
+#: templates/settings-page.php:694
+msgid "Vælg automatisk \"Kun server\"-tilstand ovenfor."
+msgstr "Auto-select \"Server-only\" mode above."
+
+#: templates/settings-page.php:713
+msgid "Debug"
+msgstr "Debug"
+
+#: templates/settings-page.php:716
+msgid "Log til fil"
+msgstr "Log to File"
+
+#: templates/settings-page.php:723
+msgid "Skriv tracking-events til WordPress debug-loggen."
+msgstr "Write tracking events to the WordPress debug log."
+
+#: templates/settings-page.php:728
+msgid "Konsoloutput"
+msgstr "Console Output"
+
+#: templates/settings-page.php:735
+msgid "Send tracking debug-info til browserkonsollen."
+msgstr "Output tracking debug info to the browser console."
+
+#: templates/settings-page.php:741
+msgid "Ydelse"
+msgstr "Performance"
+
+#: templates/settings-page.php:744
+msgid "Asynkron indlæsning"
+msgstr "Async Loading"
+
+#: templates/settings-page.php:751
+msgid "Indlæs tracking-scripts asynkront for at undgå at blokere sideindlæsning."
+msgstr "Load tracking scripts asynchronously to avoid blocking page render."
+
+#: templates/settings-page.php:756
+msgid "Udsæt tracking"
+msgstr "Defer Tracking"
+
+#: templates/settings-page.php:763
+msgid "Udsæt event-dispatch til efter sideindlæsning er færdig."
+msgstr "Defer event dispatch until after page load completes."
+
+#: templates/settings-page.php:769
+msgid "Gem avancerede indstillinger"
+msgstr "Save Advanced Settings"
+
+#: templates/consent-banner.php:12
+msgid "Vi bruger cookies til at analysere trafik og forbedre din oplevelse. Du kan vaelge hvilke du accepterer."
+msgstr "We use cookies to analyze traffic and improve your experience. You can choose which ones you accept."
+
+#: templates/consent-banner.php:14
+msgid "Kun noedvendige"
+msgstr "Necessary only"
+
+#: templates/consent-banner.php:15
+msgid "Tilpas valg"
+msgstr "Customize choices"
+
+#: templates/consent-banner.php:16
+#: templates/consent-banner.php:102
+msgid "Gem mine valg"
+msgstr "Save my choices"
+
+#: templates/consent-banner.php:35
+msgid "Cookie consent"
+msgstr "Cookie consent"
+
+#: templates/consent-banner.php:65
+msgid "Noedvendige"
+msgstr "Necessary"
+
+#: templates/consent-banner.php:71
+msgid "Grundlaeggende funktionalitet og cookie-hukommelse. Kan ikke deaktiveres."
+msgstr "Basic functionality and cookie memory. Cannot be disabled."
+
+#: templates/consent-banner.php:77
+msgid "Statistik"
+msgstr "Statistics"
+
+#: templates/consent-banner.php:83
+msgid "Google Analytics og anonymiseret trafikanalyse."
+msgstr "Google Analytics and anonymized traffic analysis."
+
+#: templates/consent-banner.php:89
+msgid "Marketing"
+msgstr "Marketing"
+
+#: templates/consent-banner.php:95
+msgid "Google Ads, Meta Pixel, remarketing og konverteringsmaaling."
+msgstr "Google Ads, Meta Pixel, remarketing and conversion measurement."
+
+#: templates/consent-banner.php:108
+msgid "Privatlivspolitik"
+msgstr "Privacy Policy"

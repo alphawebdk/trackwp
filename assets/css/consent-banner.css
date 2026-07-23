@@ -1,0 +1,712 @@
+/* TrackWP Consent Banner — supports 3 styles: cookiebot, dialog, bottombar */
+
+/* === Overlay (cookiebot + dialog only — bottombar hides it) === */
+.trackwp-consent-overlay,
+#trackwp-consent-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 999998;
+}
+
+/* === Banner base (shared by all 3 styles) === */
+.trackwp-consent {
+    position: fixed;
+    z-index: 999999;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--twp-text, #fff);
+    background: var(--twp-bg, #274A45);
+    border-radius: var(--twp-radius, 8px);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity .3s ease, transform .3s ease;
+}
+
+.trackwp-consent--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.trackwp-consent *,
+.trackwp-consent *::before,
+.trackwp-consent *::after {
+    box-sizing: border-box;
+}
+
+/* === Inner container (shared) === */
+.trackwp-consent__inner {
+    padding: 24px 28px;
+}
+
+/* === Headings / description (shared) === */
+.trackwp-consent__heading {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 700;
+    line-height: 1.3;
+    color: inherit;
+}
+
+.trackwp-consent__description {
+    margin: 0 0 20px;
+    font-size: 14px;
+    opacity: 0.9;
+    color: inherit;
+}
+
+/* === Action buttons (shared base) === */
+.trackwp-consent__actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.trackwp-consent__actions--detail {
+    margin-top: 16px;
+}
+
+.trackwp-consent__btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 20px;
+    border: 2px solid transparent;
+    border-radius: var(--twp-radius, 8px);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background .15s ease, border-color .15s ease, opacity .15s ease, color .15s ease;
+    white-space: nowrap;
+    font-family: inherit;
+}
+
+.trackwp-consent__btn:hover {
+    opacity: 0.88;
+}
+
+.trackwp-consent__btn:focus-visible {
+    outline: 2px solid var(--twp-accent, #30D3C0);
+    outline-offset: 2px;
+}
+
+/* Primary: Accept (solid accent) */
+.trackwp-consent__btn--accept {
+    background: var(--twp-accent, #30D3C0);
+    color: var(--twp-btn-text, #274A45);
+    border-color: var(--twp-accent, #30D3C0);
+    flex: 1 1 auto;
+}
+
+/*
+ * Reject: equal visual weight as Accept (Datatilsynet requirement).
+ * Same padding, font-size, font-weight, flex-grow, border-radius.
+ * Solid neutral background — not transparent — so the user is not nudged
+ * toward Accept by visual hierarchy.
+ */
+.trackwp-consent__btn--reject {
+    background: rgba(255, 255, 255, 0.18);
+    color: var(--twp-text, #fff);
+    border-color: rgba(255, 255, 255, 0.18);
+    flex: 1 1 auto;
+}
+
+.trackwp-consent__btn--reject:hover {
+    background: rgba(255, 255, 255, 0.28);
+    border-color: rgba(255, 255, 255, 0.28);
+    opacity: 1;
+}
+
+/* Save: outline */
+.trackwp-consent__btn--save {
+    background: transparent;
+    color: var(--twp-text, #fff);
+    border-color: rgba(255, 255, 255, 0.45);
+    flex: 1 1 auto;
+}
+
+.trackwp-consent__btn--save:hover {
+    border-color: rgba(255, 255, 255, 0.7);
+    opacity: 1;
+}
+
+/* Customize: outline (tertiary action) */
+.trackwp-consent__btn--customize {
+    background: transparent;
+    color: var(--twp-text, #fff);
+    border-color: rgba(255, 255, 255, 0.35);
+}
+
+.trackwp-consent__btn--customize:hover {
+    border-color: rgba(255, 255, 255, 0.6);
+    opacity: 1;
+}
+
+/* === Categories (shared) === */
+.trackwp-consent__categories {
+    margin-top: 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    padding-top: 16px;
+}
+
+.trackwp-consent__category {
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.trackwp-consent__category:last-child {
+    border-bottom: none;
+}
+
+.trackwp-consent__category-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.trackwp-consent__category-name {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.trackwp-consent__category-desc {
+    margin: 6px 0 0;
+    font-size: 12px;
+    opacity: 0.7;
+    color: inherit;
+}
+
+/* === Toggle switch (shared) === */
+.trackwp-consent__toggle {
+    position: relative;
+    display: inline-flex;
+    width: 44px;
+    height: 24px;
+    flex-shrink: 0;
+    cursor: pointer;
+}
+
+.trackwp-consent__toggle input,
+.trackwp-consent__input {
+    position: absolute;
+    width: 0;
+    height: 0;
+    opacity: 0;
+}
+
+.trackwp-consent__toggle-slider {
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 12px;
+    transition: background .2s ease;
+}
+
+.trackwp-consent__toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 18px;
+    height: 18px;
+    background: #fff;
+    border-radius: 50%;
+    transition: transform .2s ease;
+}
+
+.trackwp-consent__toggle input:checked + .trackwp-consent__toggle-slider,
+.trackwp-consent__input:checked + .trackwp-consent__toggle-slider {
+    background: var(--twp-accent, #30D3C0);
+}
+
+.trackwp-consent__toggle input:checked + .trackwp-consent__toggle-slider::after,
+.trackwp-consent__input:checked + .trackwp-consent__toggle-slider::after {
+    transform: translateX(20px);
+}
+
+.trackwp-consent__toggle input:focus-visible + .trackwp-consent__toggle-slider,
+.trackwp-consent__input:focus-visible + .trackwp-consent__toggle-slider {
+    outline: 2px solid var(--twp-accent, #30D3C0);
+    outline-offset: 2px;
+}
+
+/* Disabled toggle */
+.trackwp-consent__toggle--disabled {
+    cursor: default;
+    opacity: 0.6;
+}
+
+.trackwp-consent__toggle--disabled .trackwp-consent__toggle-slider {
+    background: var(--twp-accent, #30D3C0);
+}
+
+.trackwp-consent__toggle--disabled .trackwp-consent__toggle-slider::after {
+    transform: translateX(20px);
+}
+
+/* === Privacy link (shared) === */
+.trackwp-consent__link {
+    display: inline-block;
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--twp-text, #fff);
+    opacity: 0.6;
+    text-decoration: underline;
+    transition: opacity .15s ease;
+}
+
+.trackwp-consent__link:hover {
+    opacity: 1;
+    color: var(--twp-text, #fff);
+}
+
+/* === Vendors accordion (shared) === */
+.trackwp-consent-vendors {
+    margin-top: 12px;
+    font-size: 13px;
+}
+
+.trackwp-consent-vendors > summary {
+    cursor: pointer;
+    font-weight: 600;
+    padding: 8px 0;
+    list-style: none;
+    opacity: 0.85;
+}
+
+.trackwp-consent-vendors > summary::-webkit-details-marker {
+    display: none;
+}
+
+.trackwp-consent-vendors[open] > summary {
+    opacity: 1;
+}
+
+/* =====================================================================
+ * Style 1: .trackwp-consent--style-cookiebot
+ * Centered modal with tabs + 4-column category grid.
+ * ===================================================================== */
+.trackwp-consent--style-cookiebot {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) translateY(20px);
+    width: 92vw;
+    max-width: 880px;
+    max-height: 90vh;
+    overflow: auto;
+    background: #fff;
+    color: #1d2327;
+    border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    z-index: 999999;
+}
+
+.trackwp-consent--style-cookiebot.trackwp-consent--visible {
+    transform: translate(-50%, -50%) translateY(0);
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__inner {
+    padding: 32px;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__heading,
+.trackwp-consent--style-cookiebot .trackwp-consent__description {
+    color: #1d2327;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__description {
+    opacity: 1;
+}
+
+/* Tabs */
+.trackwp-consent--style-cookiebot .trackwp-consent__tabs {
+    display: flex;
+    border-bottom: 1px solid #e0e0e0;
+    gap: 32px;
+    margin-bottom: 24px;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__tab {
+    background: none;
+    border: none;
+    padding: 12px 4px;
+    font-weight: 500;
+    color: #666;
+    cursor: pointer;
+    position: relative;
+    font-family: inherit;
+    font-size: 14px;
+    transition: color .15s ease;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__tab:hover {
+    color: #1d2327;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__tab.is-active {
+    color: var(--accent, var(--twp-accent, #4a3aff));
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__tab.is-active::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    background: var(--accent, var(--twp-accent, #4a3aff));
+}
+
+/* Tab panels */
+.trackwp-consent--style-cookiebot .trackwp-consent__tabpanel {
+    display: none;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__tabpanel.is-active {
+    display: block;
+}
+
+/* Categories grid (4 cols) */
+.trackwp-consent--style-cookiebot .trackwp-consent__categories {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 20px;
+    margin: 24px 0;
+    border-top: none;
+    padding-top: 0;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__category {
+    padding: 16px;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    background: #fafafa;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__category-name {
+    color: #1d2327;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__category-desc {
+    color: #555;
+    opacity: 1;
+}
+
+/* Toggle in cookiebot — vertical: label above, switch below */
+.trackwp-consent--style-cookiebot .trackwp-consent__toggle-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__toggle-slider {
+    background: #d0d0d0;
+}
+
+/* Actions footer */
+.trackwp-consent--style-cookiebot .trackwp-consent__actions {
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    padding-top: 24px;
+    border-top: 1px solid #e0e0e0;
+    margin-top: 24px;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn {
+    flex: 1 1 auto;
+}
+
+/* Reject + Save in cookiebot — outline on white bg */
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--reject {
+    background: #fff;
+    color: #1d2327;
+    border-color: #c0c0c0;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--reject:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--save {
+    background: #fff;
+    color: #1d2327;
+    border-color: #c0c0c0;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--save:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--customize {
+    background: #fff;
+    color: #1d2327;
+    border-color: #c0c0c0;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__btn--customize:hover {
+    background: #f5f5f5;
+    border-color: #999;
+}
+
+/* Accept stays solid accent (already defined globally) */
+
+.trackwp-consent--style-cookiebot .trackwp-consent__link {
+    color: #555;
+}
+
+.trackwp-consent--style-cookiebot .trackwp-consent__link:hover {
+    color: #1d2327;
+}
+
+/* Cookiebot mobile: 2 cols, stacked buttons */
+@media (max-width: 600px) {
+    .trackwp-consent--style-cookiebot .trackwp-consent__categories {
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+    }
+
+    .trackwp-consent--style-cookiebot .trackwp-consent__actions {
+        flex-direction: column;
+    }
+
+    .trackwp-consent--style-cookiebot .trackwp-consent__inner {
+        padding: 20px;
+    }
+
+    .trackwp-consent--style-cookiebot .trackwp-consent__tabs {
+        gap: 16px;
+    }
+}
+
+/* =====================================================================
+ * Style 2: .trackwp-consent--style-dialog
+ * Centered modal, vertical category list, 3 buttons in a row.
+ * (Previously .trackwp-consent--dialog.)
+ * ===================================================================== */
+.trackwp-consent--style-dialog {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) translateY(20px);
+    width: 92%;
+    max-width: 680px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.trackwp-consent--style-dialog.trackwp-consent--visible {
+    transform: translate(-50%, -50%) translateY(0);
+}
+
+/* Toggle in dialog — horizontal: label and switch side-by-side */
+.trackwp-consent--style-dialog .trackwp-consent__toggle-label {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Dialog mobile: slides up from bottom */
+@media (max-width: 600px) {
+    .trackwp-consent--style-dialog {
+        top: auto;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-width: 100%;
+        max-height: 85vh;
+        border-radius: var(--twp-radius, 8px) var(--twp-radius, 8px) 0 0;
+        transform: translateY(20px);
+    }
+
+    .trackwp-consent--style-dialog.trackwp-consent--visible {
+        transform: translateY(0);
+    }
+}
+
+/* =====================================================================
+ * Style 3: .trackwp-consent--style-bottombar
+ * Slim fixed bottom bar — no overlay.
+ * ===================================================================== */
+.trackwp-consent--style-bottombar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    top: auto;
+    width: 100%;
+    max-width: 100%;
+    z-index: 999999;
+    background: var(--bg, var(--twp-bg, #1d2327));
+    color: #fff;
+    padding: 16px 24px;
+    border-radius: 0;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* Hide overlay when bottombar is the active style */
+.trackwp-consent--style-bottombar ~ .trackwp-consent-overlay,
+.trackwp-consent--style-bottombar ~ #trackwp-consent-overlay,
+body:has(.trackwp-consent--style-bottombar) .trackwp-consent-overlay,
+body:has(.trackwp-consent--style-bottombar) #trackwp-consent-overlay {
+    display: none;
+}
+
+.trackwp-consent--style-bottombar .trackwp-consent__inner {
+    padding: 0;
+}
+
+.trackwp-consent__inner--bar {
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    max-width: 1400px;
+    margin: 0 auto;
+}
+
+.trackwp-consent__bar-text {
+    flex: 1 1 auto;
+    font-size: 14px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.trackwp-consent__bar-actions {
+    display: flex;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+
+/* Compact bar buttons */
+.trackwp-consent--style-bottombar .trackwp-consent__btn {
+    padding: 8px 16px;
+    font-size: 13px;
+    flex: 0 0 auto;
+}
+
+/* Bottombar mobile */
+@media (max-width: 768px) {
+    .trackwp-consent__inner--bar {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
+    }
+
+    .trackwp-consent__bar-actions {
+        display: flex;
+        flex-direction: row;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    .trackwp-consent--style-bottombar .trackwp-consent__btn {
+        flex: 1 1 auto;
+    }
+}
+
+/* =====================================================================
+ * Drawer: shown when user clicks "Tilpas" on bottombar.
+ * Reuses the cookiebot modal layout.
+ * ===================================================================== */
+.trackwp-consent--drawer {
+    display: none;
+}
+
+.trackwp-consent--drawer.is-open {
+    display: block;
+}
+
+/* =====================================================================
+ * Shared responsive rules
+ * ===================================================================== */
+@media (max-width: 768px) {
+    .trackwp-consent__actions {
+        flex-direction: column;
+    }
+
+    .trackwp-consent--style-dialog .trackwp-consent__btn,
+    .trackwp-consent--style-cookiebot .trackwp-consent__btn {
+        width: 100%;
+    }
+
+    .trackwp-consent__inner {
+        padding: 20px;
+    }
+}
+
+/* Category grid safeguard (used by dialog if it ever opts into a grid) */
+.trackwp-consent__categories--grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+/* =====================================================================
+ * Floating "Cookie-indstillinger" trigger button
+ * ===================================================================== */
+.trackwp-consent-trigger {
+    position: fixed;
+    bottom: 20px;
+    left: 20px;
+    z-index: 9998;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--twp-accent, var(--accent, #30D3C0));
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    border: none;
+    padding: 0;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    font-family: inherit;
+}
+
+.trackwp-consent-trigger:hover {
+    transform: scale(1.05);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+}
+
+.trackwp-consent-trigger:focus {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.trackwp-consent-trigger:focus-visible {
+    outline: 2px solid #fff;
+    outline-offset: 2px;
+}
+
+.trackwp-consent-trigger svg {
+    width: 24px;
+    height: 24px;
+    display: block;
+    fill: currentColor;
+}
+
+/* Mobile: smaller floating trigger */
+@media (max-width: 480px) {
+    .trackwp-consent-trigger {
+        width: 40px;
+        height: 40px;
+        bottom: 16px;
+        left: 16px;
+    }
+
+    .trackwp-consent-trigger svg {
+        width: 20px;
+        height: 20px;
+    }
+}

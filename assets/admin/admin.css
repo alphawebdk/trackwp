@@ -1,0 +1,1012 @@
+/**
+ * TrackWP Admin Styles
+ *
+ * @package TrackWP
+ */
+
+/* =========================================================================
+   Layout & Tabs
+   ========================================================================= */
+
+.trackwp-settings {
+    max-width: 960px;
+}
+
+.trackwp-settings h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 16px;
+}
+
+.trackwp-tabs {
+    margin-bottom: 0;
+}
+
+.trackwp-tab-content {
+    display: none;
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-top: none;
+    padding: 20px 24px 24px;
+}
+
+.trackwp-tab-content.active {
+    display: block;
+}
+
+/* =========================================================================
+   Section Headers
+   ========================================================================= */
+
+.trackwp-section-title {
+    font-size: 15px;
+    font-weight: 600;
+    padding-bottom: 8px;
+    margin: 24px 0 12px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.trackwp-section-title:first-child {
+    margin-top: 0;
+}
+
+.trackwp-section-title label {
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.trackwp-section-title input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+/* =========================================================================
+   Status Badges
+   ========================================================================= */
+
+.trackwp-status-badge {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-left: 8px;
+    vertical-align: middle;
+}
+
+.trackwp-status-badge.enabled {
+    background-color: #00a32a;
+    box-shadow: 0 0 0 2px rgba(0, 163, 42, 0.2);
+}
+
+.trackwp-status-badge.disabled {
+    background-color: #9ca2a7;
+}
+
+/* =========================================================================
+   Platform Sections
+   ========================================================================= */
+
+.trackwp-platform-section {
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    padding: 16px 20px 8px;
+    margin-bottom: 16px;
+}
+
+.trackwp-platform-section .form-table {
+    margin-top: 0;
+}
+
+.trackwp-platform-section .form-table th {
+    width: 160px;
+    padding: 12px 10px 12px 0;
+}
+
+.trackwp-platform-section .form-table td {
+    padding: 12px 10px;
+}
+
+/* =========================================================================
+   Password Field with Clear Button
+   ========================================================================= */
+
+.trackwp-password-field {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.trackwp-password-field input {
+    flex: 0 1 auto;
+}
+
+.trackwp-clear-secret {
+    flex-shrink: 0;
+    color: #b32d2e !important;
+    border-color: #b32d2e !important;
+}
+
+.trackwp-clear-secret:hover {
+    background: #b32d2e !important;
+    color: #fff !important;
+}
+
+/* =========================================================================
+   Events Table
+   ========================================================================= */
+
+.trackwp-events-table {
+    margin-top: 12px;
+}
+
+.trackwp-events-table thead th {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 10px 8px;
+}
+
+.trackwp-events-table tbody tr {
+    transition: background-color 0.15s;
+}
+
+.trackwp-events-table tbody tr:hover {
+    background-color: #f0f6fc;
+}
+
+.trackwp-events-table td {
+    padding: 8px;
+    vertical-align: middle;
+}
+
+.trackwp-events-table input[type="text"],
+.trackwp-events-table input[type="number"],
+.trackwp-events-table select {
+    width: 100%;
+    min-width: 60px;
+}
+
+.trackwp-col-enabled {
+    width: 60px;
+    text-align: center;
+}
+
+.trackwp-col-name {
+    width: 140px;
+}
+
+.trackwp-col-display {
+    width: 130px;
+}
+
+.trackwp-col-trigger {
+    width: 140px;
+}
+
+.trackwp-col-value {
+    width: 70px;
+}
+
+.trackwp-col-currency {
+    width: 80px;
+}
+
+.trackwp-col-ads {
+    width: 110px;
+}
+
+.trackwp-col-meta {
+    width: 110px;
+}
+
+.trackwp-col-actions {
+    width: 90px;
+    white-space: nowrap;
+}
+
+.trackwp-col-actions .button {
+    margin-right: 4px;
+    padding: 2px 8px;
+    min-height: 28px;
+}
+
+/* =========================================================================
+   Event Expand Panel
+   ========================================================================= */
+
+.trackwp-event-expand-row td {
+    padding: 0 !important;
+}
+
+.trackwp-event-detail {
+    border-left: 3px solid #2271b1;
+    background: #f6f7f7;
+    padding: 16px 20px;
+    margin: 0;
+}
+
+.trackwp-event-detail .form-table {
+    margin: 0;
+}
+
+.trackwp-event-detail .form-table th {
+    width: 160px;
+    padding: 8px 10px 8px 0;
+    font-size: 13px;
+}
+
+.trackwp-event-detail .form-table td {
+    padding: 8px 10px;
+}
+
+.trackwp-event-detail .form-table input[type="text"],
+.trackwp-event-detail .form-table input[type="number"],
+.trackwp-event-detail .form-table select {
+    width: 320px;
+    max-width: 100%;
+}
+
+.trackwp-trigger-field {
+    display: none;
+}
+
+.trackwp-trigger-field.active {
+    display: table-row;
+}
+
+/* =========================================================================
+   Color Picker Row
+   ========================================================================= */
+
+.trackwp-color-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    margin: 12px 0 20px;
+}
+
+.trackwp-color-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.trackwp-color-group label {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+/* =========================================================================
+   Consent Preview Panel
+   ========================================================================= */
+
+.trackwp-consent-preview {
+    background: #1d1d1d;
+    border-radius: 8px;
+    padding: 32px;
+    margin: 16px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 240px;
+    position: relative;
+    overflow: hidden;
+}
+
+.trackwp-preview-stage {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+}
+
+.trackwp-preview-banner {
+    border-radius: 8px;
+    padding: 24px;
+    max-width: 400px;
+    width: 100%;
+    text-align: left;
+}
+
+.trackwp-preview-heading {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+
+.trackwp-preview-description {
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 16px;
+    opacity: 0.9;
+}
+
+/* Tabs (Cookiebot-stil) */
+.trackwp-preview-tabs {
+    display: flex;
+    gap: 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+}
+
+.trackwp-preview-tab {
+    font-size: 11px;
+    opacity: 0.7;
+    padding: 4px 0;
+    position: relative;
+}
+
+.trackwp-preview-tab.is-active {
+    opacity: 1;
+    font-weight: 600;
+}
+
+.trackwp-preview-tab.is-active::after {
+    content: '';
+    position: absolute;
+    bottom: -9px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: currentColor;
+}
+
+/* Categories */
+.trackwp-preview-categories {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 14px;
+    flex-wrap: wrap;
+}
+
+.trackwp-preview-cat {
+    font-size: 10px;
+    opacity: 0.85;
+    padding: 4px 8px;
+    border: 1px solid currentColor;
+    border-radius: 12px;
+}
+
+/* === Style: Cookiebot === */
+.trackwp-consent-preview--style-cookiebot .trackwp-preview-banner {
+    width: 100%;
+    max-width: 520px;
+    padding: 20px;
+}
+
+.trackwp-consent-preview--style-cookiebot .trackwp-preview-categories {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+
+/* === Style: Dialog === */
+.trackwp-consent-preview--style-dialog .trackwp-preview-banner {
+    width: 100%;
+    max-width: 420px;
+    padding: 18px;
+}
+
+/* === Style: Bottombar === */
+.trackwp-consent-preview--style-bottombar .trackwp-preview-stage {
+    align-items: flex-end;
+    padding-bottom: 0;
+}
+
+.trackwp-consent-preview--style-bottombar .trackwp-preview-banner {
+    width: 100%;
+    max-width: 100%;
+    padding: 12px 16px;
+    border-radius: 0 !important;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 16px;
+}
+
+.trackwp-consent-preview--style-bottombar .trackwp-preview-heading {
+    display: none;
+}
+
+.trackwp-consent-preview--style-bottombar .trackwp-preview-description {
+    flex: 1 1 auto;
+    margin: 0;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trackwp-consent-preview--style-bottombar .trackwp-preview-buttons {
+    flex: 0 0 auto;
+    margin-top: 0;
+}
+
+.trackwp-preview-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.trackwp-preview-btn {
+    border: none;
+    padding: 8px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: default;
+    transition: none;
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.trackwp-preview-btn.trackwp-preview-customize {
+    background: transparent !important;
+    text-decoration: underline;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+/* =========================================================================
+   Form Table Tweaks
+   ========================================================================= */
+
+.trackwp-tab-content .form-table th {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.trackwp-tab-content .form-table .description {
+    color: #646970;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+/* =========================================================================
+   Responsive (WP admin breakpoint)
+   ========================================================================= */
+
+@media screen and (max-width: 782px) {
+    .trackwp-settings {
+        max-width: 100%;
+    }
+
+    .trackwp-tab-content {
+        padding: 16px;
+    }
+
+    .trackwp-platform-section {
+        padding: 12px 16px 4px;
+    }
+
+    .trackwp-platform-section .form-table th,
+    .trackwp-event-detail .form-table th {
+        width: auto;
+        display: block;
+        padding-bottom: 4px;
+    }
+
+    .trackwp-platform-section .form-table td,
+    .trackwp-event-detail .form-table td {
+        display: block;
+        padding-top: 0;
+    }
+
+    .trackwp-events-table {
+        font-size: 12px;
+    }
+
+    .trackwp-events-table thead th {
+        font-size: 11px;
+        padding: 6px 4px;
+    }
+
+    .trackwp-events-table td {
+        padding: 6px 4px;
+    }
+
+    .trackwp-color-row {
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .trackwp-consent-preview {
+        padding: 16px;
+    }
+
+    .trackwp-preview-banner {
+        max-width: 100%;
+    }
+
+    .trackwp-event-detail .form-table input[type="text"],
+    .trackwp-event-detail .form-table input[type="number"],
+    .trackwp-event-detail .form-table select {
+        width: 100%;
+    }
+
+    .trackwp-col-ads,
+    .trackwp-col-meta,
+    .trackwp-col-currency {
+        display: none;
+    }
+}
+
+/* ============================================================
+   Dashboard — modern redesign
+   ============================================================ */
+
+#tab-dashboard {
+    --twp-primary: #30D3C0;
+    --twp-primary-dark: #274A45;
+    --twp-bg: #f6f8fa;
+    --twp-surface: #ffffff;
+    --twp-border: #e6e9ec;
+    --twp-text: #1d2327;
+    --twp-text-muted: #646970;
+    --twp-text-subtle: #8c8f94;
+    --twp-up: #16a34a;
+    --twp-up-bg: #dcfce7;
+    --twp-down: #dc2626;
+    --twp-down-bg: #fee2e2;
+    --twp-neutral: #6b7280;
+    --twp-neutral-bg: #f1f5f9;
+    --twp-shadow-sm: 0 1px 2px rgba(15,23,42,0.04), 0 1px 3px rgba(15,23,42,0.06);
+    --twp-shadow-md: 0 4px 12px rgba(15,23,42,0.08), 0 2px 4px rgba(15,23,42,0.04);
+    --twp-radius: 12px;
+    --twp-radius-sm: 8px;
+    --twp-radius-pill: 999px;
+
+    background: var(--twp-bg);
+    margin: 0 -20px -20px;
+    padding: 24px 20px 40px;
+    min-height: 100%;
+}
+
+.trackwp-dashboard-notice {
+    border-radius: var(--twp-radius-sm) !important;
+    margin-bottom: 20px !important;
+}
+
+/* Header */
+.trackwp-dashboard-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 24px;
+}
+.trackwp-dashboard-header-title h2 {
+    margin: 0 0 4px;
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.2px;
+    color: var(--twp-text);
+}
+.trackwp-dashboard-header-sub {
+    margin: 0;
+    color: var(--twp-text-muted);
+    font-size: 13px;
+}
+.trackwp-dashboard-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+/* Period pill bar */
+.trackwp-pillbar {
+    display: inline-flex;
+    background: var(--twp-surface);
+    border: 1px solid var(--twp-border);
+    border-radius: var(--twp-radius-pill);
+    padding: 4px;
+    box-shadow: var(--twp-shadow-sm);
+}
+.trackwp-pill {
+    padding: 6px 14px;
+    border-radius: var(--twp-radius-pill);
+    font-size: 13px;
+    font-weight: 500;
+    text-decoration: none;
+    color: var(--twp-text-muted);
+    line-height: 1;
+    transition: background 0.15s, color 0.15s;
+}
+.trackwp-pill:hover {
+    color: var(--twp-text);
+}
+.trackwp-pill.is-active {
+    background: var(--twp-primary-dark);
+    color: #fff;
+    box-shadow: 0 1px 2px rgba(15,23,42,0.15);
+}
+
+/* Reset icon button */
+.trackwp-reset-form { margin: 0; }
+.trackwp-icon-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    background: var(--twp-surface);
+    border: 1px solid var(--twp-border);
+    border-radius: var(--twp-radius-pill);
+    color: var(--twp-text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    box-shadow: var(--twp-shadow-sm);
+    transition: color 0.15s, border-color 0.15s, transform 0.15s;
+}
+.trackwp-icon-button:hover {
+    color: var(--twp-down);
+    border-color: var(--twp-down);
+    transform: translateY(-1px);
+}
+.trackwp-icon-button svg { display: block; }
+
+/* Hero card */
+.trackwp-hero {
+    display: grid;
+    grid-template-columns: 1fr 280px;
+    gap: 24px;
+    background: linear-gradient(135deg, #ffffff 0%, #fafffd 100%);
+    border: 1px solid var(--twp-border);
+    border-radius: var(--twp-radius);
+    padding: 28px;
+    margin-bottom: 20px;
+    box-shadow: var(--twp-shadow-sm);
+    position: relative;
+    overflow: hidden;
+}
+.trackwp-hero::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    background: linear-gradient(90deg, var(--twp-primary) 0%, var(--twp-primary-dark) 100%);
+}
+.trackwp-hero-main {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+.trackwp-hero-icon {
+    width: 40px; height: 40px;
+    background: rgba(48, 211, 192, 0.12);
+    color: var(--twp-primary-dark);
+    border-radius: var(--twp-radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+.trackwp-hero-value {
+    font-size: 44px;
+    font-weight: 700;
+    letter-spacing: -1.5px;
+    line-height: 1;
+    color: var(--twp-text);
+    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.trackwp-hero-label {
+    font-size: 14px;
+    color: var(--twp-text-muted);
+    margin-bottom: 12px;
+}
+.trackwp-hero-trend { display: block; }
+.trackwp-hero-sparkline {
+    align-self: stretch;
+    display: flex;
+    align-items: flex-end;
+    justify-content: stretch;
+    min-height: 80px;
+}
+.trackwp-hero-sparkline svg {
+    width: 100%;
+    height: 100%;
+    max-height: 100px;
+    display: block;
+}
+.trackwp-sparkline-empty {
+    width: 100%;
+    text-align: center;
+    color: var(--twp-text-subtle);
+    font-size: 12px;
+    padding: 24px 0;
+}
+
+/* Trend pills */
+.trackwp-trend {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: var(--twp-radius-pill);
+    line-height: 1.5;
+}
+.trackwp-trend--up { background: var(--twp-up-bg); color: var(--twp-up); }
+.trackwp-trend--down { background: var(--twp-down-bg); color: var(--twp-down); }
+.trackwp-trend--neutral { background: var(--twp-neutral-bg); color: var(--twp-neutral); }
+
+/* Secondary stat cards */
+.trackwp-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+}
+.trackwp-stat-card {
+    background: var(--twp-surface);
+    border: 1px solid var(--twp-border);
+    border-radius: var(--twp-radius);
+    padding: 20px;
+    box-shadow: var(--twp-shadow-sm);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.trackwp-stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--twp-shadow-md);
+}
+.trackwp-stat-icon {
+    width: 32px; height: 32px;
+    background: rgba(48, 211, 192, 0.10);
+    color: var(--twp-primary-dark);
+    border-radius: var(--twp-radius-sm);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 12px;
+}
+.trackwp-stat-value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    line-height: 1;
+    color: var(--twp-text);
+    margin-bottom: 4px;
+    font-variant-numeric: tabular-nums;
+}
+.trackwp-stat-unit {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--twp-text-subtle);
+    margin-left: 4px;
+}
+.trackwp-stat-label {
+    font-size: 13px;
+    color: var(--twp-text-muted);
+    margin-bottom: 8px;
+}
+.trackwp-stat-sub {
+    font-size: 12px;
+    color: var(--twp-text-subtle);
+}
+.trackwp-stat-empty {
+    color: var(--twp-text-subtle);
+    font-style: italic;
+}
+.trackwp-stat-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+/* Chips */
+.trackwp-chip {
+    display: inline-block;
+    padding: 2px 8px;
+    background: rgba(39, 74, 69, 0.08);
+    color: var(--twp-primary-dark);
+    border-radius: var(--twp-radius-pill);
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+}
+
+/* Panels (Events per dag, Top events) */
+.trackwp-panel {
+    background: var(--twp-surface);
+    border: 1px solid var(--twp-border);
+    border-radius: var(--twp-radius);
+    padding: 24px;
+    margin-bottom: 20px;
+    box-shadow: var(--twp-shadow-sm);
+}
+.trackwp-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.trackwp-panel-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--twp-text);
+}
+.trackwp-panel-meta {
+    font-size: 12px;
+    color: var(--twp-text-subtle);
+}
+
+/* Chart */
+.trackwp-chart {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 180px;
+    padding: 8px 0 24px;
+    border-bottom: 1px solid var(--twp-border);
+}
+.trackwp-chart-col {
+    flex: 1;
+    min-width: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: stretch;
+    position: relative;
+    cursor: default;
+    transition: transform 0.15s;
+}
+.trackwp-chart-col:hover { transform: translateY(-2px); }
+.trackwp-chart-bar {
+    background: linear-gradient(180deg, var(--twp-primary) 0%, var(--twp-primary-dark) 100%);
+    border-radius: 4px 4px 0 0;
+    min-height: 2px;
+    width: 100%;
+    transition: filter 0.15s;
+}
+.trackwp-chart-col:hover .trackwp-chart-bar { filter: brightness(1.08); }
+.trackwp-chart-label {
+    position: absolute;
+    bottom: -22px;
+    left: 50%;
+    transform: translateX(-50%) rotate(-45deg);
+    transform-origin: center top;
+    font-size: 10px;
+    color: var(--twp-text-subtle);
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+/* Top events list */
+.trackwp-top-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.trackwp-top-row {
+    display: grid;
+    grid-template-columns: 24px minmax(120px, 1.2fr) 2fr auto auto;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--twp-border);
+}
+.trackwp-top-row:last-child { border-bottom: none; }
+.trackwp-top-rank {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--twp-text-subtle);
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+.trackwp-top-name code {
+    background: rgba(39, 74, 69, 0.06);
+    color: var(--twp-primary-dark);
+    padding: 3px 8px;
+    border-radius: var(--twp-radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.trackwp-top-bar {
+    background: var(--twp-border);
+    border-radius: var(--twp-radius-pill);
+    height: 6px;
+    position: relative;
+    overflow: hidden;
+}
+.trackwp-top-bar-fill {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--twp-primary) 0%, var(--twp-primary-dark) 100%);
+    border-radius: var(--twp-radius-pill);
+    transition: width 0.4s ease;
+}
+.trackwp-top-count {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--twp-text);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    min-width: 48px;
+}
+.trackwp-top-share {
+    font-size: 12px;
+    color: var(--twp-text-subtle);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    min-width: 36px;
+}
+
+/* Empty states */
+.trackwp-empty {
+    text-align: center;
+    padding: 32px 16px;
+    color: var(--twp-text-subtle);
+}
+.trackwp-empty svg {
+    color: var(--twp-text-subtle);
+    opacity: 0.5;
+    margin-bottom: 12px;
+}
+.trackwp-empty p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--twp-text-muted);
+}
+.trackwp-empty-hint {
+    font-size: 12px;
+    color: var(--twp-text-subtle);
+    margin-top: 4px !important;
+}
+
+/* Footnote */
+.trackwp-footnote {
+    text-align: center;
+    font-size: 12px;
+    color: var(--twp-text-subtle);
+    margin: 24px 0 0;
+}
+
+/* Responsive */
+@media (max-width: 900px) {
+    .trackwp-hero {
+        grid-template-columns: 1fr;
+    }
+    .trackwp-hero-sparkline {
+        margin-top: 8px;
+        min-height: 60px;
+    }
+    .trackwp-top-row {
+        grid-template-columns: 24px minmax(100px, 1fr) auto auto;
+    }
+    .trackwp-top-row .trackwp-top-bar { display: none; }
+}
+@media (max-width: 600px) {
+    .trackwp-dashboard-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    .trackwp-hero-value { font-size: 36px; }
+}
+
+/* =========================================================================
+   Inline warning (e.g. GA4 Measurement ID format)
+   ========================================================================= */
+
+.trackwp-inline-warning {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: #fff8e5;
+    border-left: 4px solid #dba617;
+    color: #1d2327;
+    font-size: 13px;
+    border-radius: 2px;
+    line-height: 1.5;
+}
+
+.trackwp-inline-warning strong {
+    color: #8a6d3b;
+}
