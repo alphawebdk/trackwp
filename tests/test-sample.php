@@ -7,7 +7,9 @@ class TrackWP_Sample_Test extends WP_UnitTestCase {
 
     public function test_plugin_version_constant() {
         $this->assertTrue( defined( 'TRACKWP_VERSION' ) );
-        $this->assertSame( '1.1.0', TRACKWP_VERSION );
+        // Assert shape, not a pinned value — a hardcoded version makes this
+        // test fail on every release instead of catching a real problem.
+        $this->assertMatchesRegularExpression( '/^\d+\.\d+\.\d+$/', TRACKWP_VERSION );
     }
 
     public function test_main_class_exists() {

@@ -348,24 +348,36 @@ class TrackWP_Proxy {
 
         // === PLATFORM ROUTING ===
 
+        // Delivery-log context: metadata only, never identifiers (see
+        // TrackWP_Delivery_Log). Recording is a no-op while the log is off.
+        $log_consent = array( 'analytics' => $analytics_consent, 'marketing' => $marketing_consent );
+        $log_id      = isset( $event_data['event_id'] ) ? $event_data['event_id'] : '';
+
         if ( $server_dispatch ) {
             // GA4
             $ga4 = new TrackWP_GA4();
             if ($ga4->is_enabled() && $analytics_consent && $to_ga4) {
-                $ga4->send_event($event_data);
+                $sent = $ga4->send_event($event_data);
+                TrackWP_Delivery_Log::record( $log_id, $event_name, 'ga4', $sent ? 'ok' : 'failed', $log_consent );
+            } elseif ( $ga4->is_enabled() ) {
+                TrackWP_Delivery_Log::record( $log_id, $event_name, 'ga4', 'skipped', $log_consent );
             }
 
             // Meta — only with marketing consent
             $meta = new TrackWP_Meta();
             if ($marketing_consent && $to_meta && $meta->is_enabled()) {
-                $meta->send_event($event_data);
+                $sent = $meta->send_event($event_data);
+                TrackWP_Delivery_Log::record( $log_id, $event_name, 'meta', $sent ? 'ok' : 'failed', $log_consent );
+            } elseif ( $meta->is_enabled() ) {
+                TrackWP_Delivery_Log::record( $log_id, $event_name, 'meta', 'skipped', $log_consent );
             }
 
             // Google Ads CAPI (server-side) — gated by the class's own is_capi_enabled() check.
             if ( $to_ads && class_exists( 'TrackWP_Google_Ads' ) ) {
                 $ads_capi = new TrackWP_Google_Ads();
                 if ( method_exists( $ads_capi, 'is_capi_enabled' ) && $ads_capi->is_capi_enabled() ) {
-                    $ads_capi->send_conversion( $event_data, $consent );
+                    $sent = $ads_capi->send_conversion( $event_data, $consent );
+                    TrackWP_Delivery_Log::record( $log_id, $event_name, 'google_ads', $sent ? 'ok' : 'failed', $log_consent );
                 }
             }
         }
@@ -501,14 +513,27 @@ class TrackWP_Proxy {
             }
         }
 
+        // The wording below must match reality: when the delivery log is on,
+        // the site DOES keep something server-side (metadata only), and saying
+        // otherwise would make this GDPR endpoint misleading.
+        $notes = array();
+        if ( class_exists( 'TrackWP_Delivery_Log' ) && TrackWP_Delivery_Log::is_enabled() ) {
+            $notes[] = sprintf(
+                /* translators: %d: retention in days */
+                __( 'Tracking-events forwardes til Google/Meta. Der gemmes server-side udelukkende teknisk leveringsinformation i %d dage — begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform og leveringsstatus. Der gemmes hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer eller dit client_id, og posterne kan derfor ikke knyttes til dig.', 'trackwp' ),
+                (int) TrackWP_Delivery_Log::retention_days()
+            );
+        } else {
+            $notes[] = __( 'Tracking-events forwardes til Google/Meta og gemmes ikke server-side. Førsteparts-cookien indeholder kun et tilfældigt client_id.', 'trackwp' );
+        }
+
         $data = array(
             'client_id'     => $client_id,
             'consent_state' => $consent_state,
-            'notes'         => array(
-                __( 'Tracking-events forwardes til Google/Meta og gemmes ikke server-side. Førsteparts-cookien indeholder kun et tilfældigt client_id.', 'trackwp' ),
+            'notes'         => array_merge( $notes, array(
                 __( 'Ved samtykke-afgivelse gemmes en revisionspost server-side med pseudonymiseret IP (envejshash), user-agent og tidspunkt — den kan ikke slås op via dette endpoint, da den ikke er knyttet til dit client_id.', 'trackwp' ),
                 __( 'For at slette dit client_id: ryd cookies for dette site i din browser, eller kald DELETE /wp-json/trackwp/v1/my-data.', 'trackwp' ),
-            ),
+            ) ),
         );
 
         $response = new WP_REST_Response( $data, 200 );

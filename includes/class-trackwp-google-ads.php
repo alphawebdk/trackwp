@@ -206,10 +206,20 @@ class TrackWP_Google_Ads {
      * Dispatches an uploadClickConversions request to the Google Ads REST
      * API using an OAuth2 access token refreshed on demand.
      *
-     * NOTE: Google deprecates UploadClickConversions for NEW developer
-     * tokens from June 15, 2026 (migration path: Data Manager API).
-     * Existing adopters continue to work; the API version is filterable
-     * via trackwp_google_ads_api_version.
+     * IMPORTANT — this path is closed for most developer tokens as of
+     * 2026-06-15. Google now allowlists ConversionUploadService by
+     * *demonstrated prior use*: a developer token that did not import offline
+     * conversions between December 2025 and May 2026 is rejected with
+     * CUSTOMER_NOT_ALLOWLISTED_FOR_THIS_FEATURE. Token age alone does not
+     * qualify — an old but unused token is not covered.
+     *
+     * TrackWP has never had CAPI credentials filled in, so its token is
+     * almost certainly NOT allowlisted. Verify before relying on this method;
+     * the migration path is the Data Manager API (events.ingest), which needs
+     * no developer token but is a different dispatcher, not a config switch.
+     *
+     * The Google Ads API version is filterable via
+     * trackwp_google_ads_api_version.
      *
      * @param array $event_data
      * @param array $consent

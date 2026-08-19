@@ -155,7 +155,7 @@ class TrackWP_Forms {
     // HTML Fallback — catches any form not handled above
     document.addEventListener('submit', function(e) {
         var form = e.target;
-        if (!form || form.dataset.trackwpHandled) return;
+        if (!form || typeof form.closest !== 'function') return;
 
         // Skip forms already handled by specific plugins
         if (form.closest('.wpcf7-form') ||
@@ -166,7 +166,15 @@ class TrackWP_Forms {
             return;
         }
 
-        form.dataset.trackwpHandled = '1';
+        // Suppress only a re-dispatch of the SAME submit (some scripts call
+        // form.submit()/dispatchEvent from inside their own handler). A genuine
+        // second submit of an AJAX form later on the same page must still be
+        // tracked — a permanent "handled" flag silently dropped those.
+        var now = Date.now();
+        var last = parseInt(form.dataset.trackwpLastSubmit || '0', 10);
+        if (last && (now - last) < 1000) return;
+        form.dataset.trackwpLastSubmit = String(now);
+
         var emailEl = form.querySelector('[type="email"]');
         var phoneEl = form.querySelector('[type="tel"]');
         window.trackwp.sendEvent('form_submit', {

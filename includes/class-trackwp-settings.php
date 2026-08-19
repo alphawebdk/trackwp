@@ -189,29 +189,101 @@ class TrackWP_Settings {
     /**
      * Sanitize events array.
      *
-     * Expects JSON string from hidden textarea or array from PHP.
+     * Expects a JSON string from the hidden textarea in the admin form, or a
+     * plain array when called from import_settings().
+     *
+     * NOTE: do NOT stripslashes() the incoming string. wp-admin/options.php has
+     * already run wp_unslash() on the POSTed value, so a second pass eats the
+     * JSON's *own* escapes (`\"` inside a CSS selector like a[href^="tel:"]),
+     * json_decode() then returns null and the whole event list is silently
+     * replaced. That was the "cannot save events" bug.
      *
      * @param string|array $input Raw events input.
      * @return array Sanitized events array.
      */
     public function sanitize_events($input) {
-        // If it's a JSON string from the admin form
+        $current = get_option('trackwp_events', array());
+        $current = is_array($current) ? $current : array();
+
         if (is_string($input)) {
-            $input = json_decode(stripslashes($input), true);
+            $decoded = json_decode($input, true);
+            if (!is_array($decoded)) {
+                add_settings_error(
+                    'trackwp_events',
+                    'events_invalid_json',
+                    __('Begivenhederne kunne ikke læses (ugyldig JSON). Ingen ændringer blev gemt.', 'trackwp'),
+                    'error'
+                );
+                return $current;
+            }
+            $input = $decoded;
         }
+
         if (!is_array($input)) {
-            return TrackWP_Events::get_defaults();
+            add_settings_error(
+                'trackwp_events',
+                'events_invalid_payload',
+                __('Uventet dataformat for begivenheder. Ingen ændringer blev gemt.', 'trackwp'),
+                'error'
+            );
+            return $current;
+        }
+
+        // An explicitly emptied list is a legitimate choice — respect it.
+        if (empty($input)) {
+            return array();
         }
 
         $output = array();
-        foreach ($input as $event) {
+        $seen   = array();
+        foreach ($input as $i => $event) {
             $validated = TrackWP_Events::validate_event($event);
-            if (!is_wp_error($validated)) {
-                $output[] = $validated;
+            if (is_wp_error($validated)) {
+                add_settings_error(
+                    'trackwp_events',
+                    'event_invalid_' . (int) $i,
+                    sprintf(
+                        /* translators: 1: row number, 2: validation error message */
+                        __('Begivenhed #%1$d blev ikke gemt: %2$s', 'trackwp'),
+                        (int) $i + 1,
+                        $validated->get_error_message()
+                    ),
+                    'error'
+                );
+                continue;
             }
+            // Duplicate names bind twice client-side and dispatch twice with
+            // different event_ids — real double counting. Keep the first.
+            if (isset($seen[ $validated['name'] ])) {
+                add_settings_error(
+                    'trackwp_events',
+                    'event_duplicate_' . (int) $i,
+                    sprintf(
+                        /* translators: %s: event name */
+                        __('Begivenhed "%s" findes mere end én gang — kun den første blev gemt.', 'trackwp'),
+                        $validated['name']
+                    ),
+                    'error'
+                );
+                continue;
+            }
+            $seen[ $validated['name'] ] = true;
+            $output[] = $validated;
         }
 
-        return !empty($output) ? $output : TrackWP_Events::get_defaults();
+        // Every row was rejected — keep what is already stored rather than
+        // silently overwriting the site's configuration with the defaults.
+        if (empty($output)) {
+            add_settings_error(
+                'trackwp_events',
+                'events_all_invalid',
+                __('Ingen af begivenhederne kunne valideres — den tidligere liste er bevaret.', 'trackwp'),
+                'error'
+            );
+            return !empty($current) ? $current : TrackWP_Events::get_defaults();
+        }
+
+        return $output;
     }
 
     /**
@@ -294,7 +366,19 @@ class TrackWP_Settings {
         if ( strlen($slug) < 1 || strlen($slug) > 32 ) {
             $slug = 'event';
         }
-        if ( $slug === 'consent-log' ) {
+        // The tracking route shares the trackwp/v1 namespace with every other
+        // route the plugin registers. Picking one of their slugs would shadow
+        // the real endpoint (consent logging, the first-party loader, the GDPR
+        // endpoints), so the whole set is reserved — not just 'consent-log'.
+        $reserved = array(
+            'consent-log', // TrackWP_Consent
+            'consent',     // TrackWP_Consent (withdraw)
+            'loader',      // TrackWP_Loader
+            'c',           // TrackWP_Loader collect-proxy prefix (/c/e, /c/se)
+            'keepalive',   // TrackWP_Proxy
+            'my-data',     // TrackWP_Proxy (GDPR access/erasure)
+        );
+        if ( in_array( $slug, $reserved, true ) ) {
             $slug = 'event';
         }
         return $slug;
@@ -322,8 +406,8 @@ class TrackWP_Settings {
         $output['consent_mode_ad_signals']      = !empty($input['consent_mode_ad_signals']);
         $output['debug_log']                    = !empty($input['debug_log']);
         $output['debug_console']                = !empty($input['debug_console']);
-        $output['async_loading']                = !empty($input['async_loading']);
-        $output['defer_tracking']               = !empty($input['defer_tracking']);
+        // 'async_loading' / 'defer_tracking' were dropped in 1.7.2 (no UI, no
+        // reader) — they are intentionally not written back here.
 
         // Dedup mode
         $mode = isset($input['dedup_mode']) ? $input['dedup_mode'] : 'client_and_server';
@@ -332,11 +416,32 @@ class TrackWP_Settings {
 
         $output['uses_gtm'] = ! empty($input['uses_gtm']);
 
+        // Delivery log (1.9.0). Off by default — switching it on creates a data
+        // store, so it must be a deliberate choice. Retention is clamped hard:
+        // this is a diagnostic log, not an archive.
+        $output['delivery_log_enabled'] = ! empty($input['delivery_log_enabled']);
+        $retention = isset($input['delivery_log_retention_days'])
+            ? absint($input['delivery_log_retention_days'])
+            : TrackWP_Delivery_Log::DEFAULT_RETENTION_DAYS;
+        $output['delivery_log_retention_days'] = max(1, min(TrackWP_Delivery_Log::MAX_RETENTION_DAYS, $retention));
+
         // New v1.2.0 advanced flags
         $output['ga4_user_id_enabled']          = ! empty($input['ga4_user_id_enabled']);
         $output['batching_enabled']             = ! empty($input['batching_enabled']);
         $output['first_party_loader_enabled']   = ! empty($input['first_party_loader_enabled']);
         $output['capi_debug_logging_enabled']   = ! empty($input['capi_debug_logging_enabled']);
+
+        // Create the table on first enable and keep the pruning cron in step
+        // with the toggle. sanitize_advanced() runs before the option is
+        // written, so read the new value from $output, not from the DB.
+        if ( ! empty($output['delivery_log_enabled']) ) {
+            TrackWP_Delivery_Log::create_table();
+            if ( ! wp_next_scheduled(TrackWP_Delivery_Log::CRON_HOOK) ) {
+                wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', TrackWP_Delivery_Log::CRON_HOOK);
+            }
+        } else {
+            wp_clear_scheduled_hook(TrackWP_Delivery_Log::CRON_HOOK);
+        }
 
         return $output;
     }
@@ -352,14 +457,57 @@ class TrackWP_Settings {
      * @return array
      */
     public function sanitize_cookie_declarations($input) {
-        if (is_string($input)) {
-            $input = json_decode(stripslashes($input), true);
-        }
         $grouped = array('necessary' => array(), 'statistics' => array(), 'marketing' => array(), 'personalisation' => array());
+
+        // See sanitize_events(): the value is already unslashed by options.php,
+        // so a second stripslashes() would corrupt any escaped character in the
+        // JSON (e.g. a quote in a "purpose" field) and wipe all declarations.
+        if (is_string($input)) {
+            $decoded = json_decode($input, true);
+            if (!is_array($decoded)) {
+                add_settings_error(
+                    'trackwp_cookie_declarations',
+                    'declarations_invalid_json',
+                    __('Cookie-deklarationerne kunne ikke læses (ugyldig JSON). Ingen ændringer blev gemt.', 'trackwp'),
+                    'error'
+                );
+                $existing = get_option('trackwp_cookie_declarations', array());
+                return is_array($existing) ? $existing : $grouped;
+            }
+            $input = $decoded;
+        }
+
         if (!is_array($input)) {
             return $grouped;
         }
+
         $allowed = array('necessary', 'statistics', 'marketing', 'personalisation');
+
+        // Accept the grouped shape too (that is how the value is stored and
+        // exported), so import_settings() can hand its payload straight in.
+        $is_grouped = false;
+        foreach ($allowed as $cat) {
+            if (isset($input[$cat]) && is_array($input[$cat])) {
+                $is_grouped = true;
+                break;
+            }
+        }
+        if ($is_grouped) {
+            $flat = array();
+            foreach ($allowed as $cat) {
+                if (empty($input[$cat]) || !is_array($input[$cat])) {
+                    continue;
+                }
+                foreach ($input[$cat] as $entry) {
+                    if (is_array($entry)) {
+                        $entry['category'] = $cat;
+                        $flat[] = $entry;
+                    }
+                }
+            }
+            $input = $flat;
+        }
+
         foreach ($input as $row) {
             if (!is_array($row)) {
                 continue;
@@ -674,19 +822,21 @@ class TrackWP_Settings {
         $advanced  = get_option( 'trackwp_advanced',  array() );
         $events    = get_option( 'trackwp_events',    array() );
         $consent   = get_option( 'trackwp_consent',   array() );
+        $cookies   = get_option( 'trackwp_cookie_declarations', array() );
 
         if ( ! $include_secrets ) {
             unset( $platforms['ga4_api_secret'], $platforms['meta_access_token'], $platforms['google_ads_developer_token'], $platforms['google_ads_oauth_client_secret'], $platforms['google_ads_oauth_refresh_token'] );
         }
 
         return array(
-            'version'         => defined( 'TRACKWP_VERSION' ) ? TRACKWP_VERSION : '1.1.0',
-            'exported_at'     => gmdate( 'c' ),
-            'include_secrets' => (bool) $include_secrets,
-            'platforms'       => $platforms,
-            'advanced'        => $advanced,
-            'events'          => $events,
-            'consent'         => $consent,
+            'version'             => defined( 'TRACKWP_VERSION' ) ? TRACKWP_VERSION : '1.1.0',
+            'exported_at'         => gmdate( 'c' ),
+            'include_secrets'     => (bool) $include_secrets,
+            'platforms'           => $platforms,
+            'advanced'            => $advanced,
+            'events'              => $events,
+            'consent'             => $consent,
+            'cookie_declarations' => is_array( $cookies ) ? $cookies : array(),
         );
     }
 
@@ -726,6 +876,14 @@ class TrackWP_Settings {
         update_option( 'trackwp_advanced',  $advanced );
         update_option( 'trackwp_events',    $events );
         update_option( 'trackwp_consent',   $consent );
+
+        // Optional — absent in files exported before 1.8.1.
+        if ( isset( $data['cookie_declarations'] ) && is_array( $data['cookie_declarations'] ) ) {
+            update_option(
+                'trackwp_cookie_declarations',
+                $instance->sanitize_cookie_declarations( $data['cookie_declarations'] )
+            );
+        }
 
         return true;
     }

@@ -10,7 +10,7 @@
 (function ($) {
     'use strict';
 
-    var triggerTypes, metaEventTypes, currencies;
+    var triggerTypes, metaEventTypes, currencies, conditionSchema;
     var eventsData = [];
 
     // =====================================================================
@@ -21,6 +21,7 @@
         triggerTypes   = JSON.parse($('#trackwp-trigger-types').text() || '{}');
         metaEventTypes = JSON.parse($('#trackwp-meta-event-types').text() || '{}');
         currencies     = JSON.parse($('#trackwp-currencies').text() || '{}');
+        conditionSchema = JSON.parse($('#trackwp-conditions-schema').text() || '{}');
 
         initTabs();
         initEvents();
@@ -106,14 +107,46 @@
             eventsData = [];
         }
 
+        // Normalise every event to the firing-trigger shape so the builder has
+        // one thing to render. Configs saved before 1.9.0 carry only the flat
+        // trigger_* fields — those become a single trigger with no conditions.
+        $.each(eventsData, function (i, event) {
+            if (!event.firing_triggers || !event.firing_triggers.length) {
+                event.firing_triggers = [triggerFromLegacy(event)];
+            }
+        });
+
         renderEventTable();
 
         $('#trackwp-add-event').on('click', addEvent);
 
-        // Serialize back to JSON on form submit
-        $('#trackwp-events-form').on('submit', function () {
-            syncEventsToJson();
-        });
+        // Serialization happens in initFormValidation()'s submit handler, which
+        // must run validation first — a second handler here would only
+        // duplicate the work.
+    }
+
+    function triggerFromLegacy(event) {
+        return {
+            type: event.trigger_type || 'css_click',
+            css_selector: event.css_selector || '',
+            url_match: event.url_match || '',
+            scroll_depth: event.scroll_depth || 0,
+            time_seconds: event.time_seconds || 0,
+            js_event: event.js_event || '',
+            conditions: []
+        };
+    }
+
+    function blankTrigger() {
+        return {
+            type: 'css_click',
+            css_selector: '',
+            url_match: '',
+            scroll_depth: 0,
+            time_seconds: 0,
+            js_event: '',
+            conditions: []
+        };
     }
 
     function renderEventTable() {
@@ -126,10 +159,26 @@
         });
     }
 
-    function buildEventRow(index, event) {
-        var triggerLabel = triggerTypes[event.trigger_type] || event.trigger_type;
-        var metaLabel = metaEventTypes[event.meta_event] || event.meta_event || '';
+    // Short human summary of an event's triggers for the collapsed table row.
+    function triggerSummary(event) {
+        var triggers = event.firing_triggers || [];
+        if (!triggers.length) return '—';
+        var first = triggerTypes[triggers[0].type] || triggers[0].type;
+        var extra = 0;
+        for (var t = 0; t < triggers.length; t++) {
+            extra += (triggers[t].conditions || []).length;
+        }
+        var parts = [first];
+        if (triggers.length > 1) {
+            parts.push('+' + (triggers.length - 1) + ' ' + (window.trackwpAdminConfig && trackwpAdminConfig.strings.moreTriggers || 'flere'));
+        }
+        if (extra) {
+            parts.push(extra + ' ' + (window.trackwpAdminConfig && trackwpAdminConfig.strings.conditions || 'betingelser'));
+        }
+        return parts.join(' · ');
+    }
 
+    function buildEventRow(index, event) {
         var $tr = $('<tr>').attr('data-index', index);
 
         // Enabled
@@ -165,19 +214,14 @@
             )
         );
 
-        // Trigger Type
-        var $triggerSelect = $('<select>').attr('data-field', 'trigger_type');
-        $.each(triggerTypes, function (val, label) {
-            $triggerSelect.append(
-                $('<option>').val(val).text(label)
-                    .prop('selected', val === event.trigger_type)
-            );
-        });
-        $triggerSelect.on('change', function () {
-            eventsData[index].trigger_type = $(this).val();
-            updateTriggerFields(index);
-        });
-        $tr.append($('<td>').addClass('trackwp-col-trigger').append($triggerSelect));
+        // Triggers — read-only summary; an event can now have several, so a
+        // single dropdown here would misrepresent the configuration. Editing
+        // happens in the expand panel.
+        $tr.append(
+            $('<td>').addClass('trackwp-col-trigger').append(
+                $('<span>').addClass('trackwp-trigger-summary').text(triggerSummary(event))
+            )
+        );
 
         // Value
         $tr.append(
@@ -192,7 +236,7 @@
 
         // Currency
         var $currSelect = $('<select>').attr('data-field', 'currency');
-        $.each(currencies, function (code, label) {
+        $.each(currencies, function (code) {
             $currSelect.append(
                 $('<option>').val(code).text(code)
                     .prop('selected', code === event.currency)
@@ -231,12 +275,12 @@
         var $actions = $('<td>').addClass('trackwp-col-actions');
         $actions.append(
             $('<button>').attr('type', 'button').addClass('button')
-                .text('\u25BC')
+                .text('▼')
                 .attr('title', (window.trackwpAdminConfig && trackwpAdminConfig.strings.expand) || 'Udvid')
                 .on('click', function () {
                     var $panel = $('#trackwp-expand-' + index);
                     $panel.toggle();
-                    $(this).text($panel.is(':visible') ? '\u25B2' : '\u25BC');
+                    $(this).text($panel.is(':visible') ? '▲' : '▼');
                 })
         );
         $actions.append(
@@ -255,91 +299,347 @@
         return $tr;
     }
 
+    // =====================================================================
+    // Firing triggers + conditions builder
+    //
+    // Follows Google Tag Manager's model, and its wording, so it reads the way
+    // people already expect: the event fires when ANY trigger matches, and a
+    // trigger matches when ALL of its conditions are true. No nested boolean
+    // groups — GTM does not have them either, and they get unreadable fast.
+    // =====================================================================
+
     function buildExpandPanel(index, event) {
-        var triggerType = event.trigger_type || 'css_click';
+        var $row = $('<tr>').attr('id', 'trackwp-expand-' + index)
+            .addClass('trackwp-event-expand-row').hide();
+        var $cell = $('<td>').attr('colspan', 9);
+        var $wrap = $('<div>').addClass('trackwp-event-detail');
 
-        var html = '<tr id="trackwp-expand-' + index + '" class="trackwp-event-expand-row" style="display:none;">';
-        html += '<td colspan="9"><div class="trackwp-event-detail"><table class="form-table">';
+        var $triggers = $('<div>').addClass('trackwp-triggers');
+        $wrap.append(
+            $('<p>').addClass('description')
+                .text((window.trackwpAdminConfig && trackwpAdminConfig.strings.anyTrigger) ||
+                      'Begivenheden sendes når EN AF disse triggere matcher.')
+        );
+        $wrap.append($triggers);
 
-        // CSS Selector
-        html += triggerField(index, 'css_selector', 'CSS Selector', 'text', event.css_selector || '', triggerType, ['css_click', 'form_submit', 'file_download']);
+        renderTriggers($triggers, index);
 
-        // URL Match
-        html += triggerField(index, 'url_match', 'URL Match', 'text', event.url_match || '', triggerType, ['url_match']);
-
-        // Scroll Depth
-        html += triggerField(index, 'scroll_depth', 'Scroll Depth (%)', 'number', event.scroll_depth || 0, triggerType, ['scroll_depth']);
-
-        // Time on Page
-        html += triggerField(index, 'time_seconds', 'Seconds', 'number', event.time_seconds || 0, triggerType, ['time_on_page']);
-
-        // JS Event
-        html += triggerField(index, 'js_event', 'Event Name', 'text', event.js_event || '', triggerType, ['js_event']);
+        var $addTrigger = $('<button>').attr('type', 'button').addClass('button')
+            .text('+ ' + ((window.trackwpAdminConfig && trackwpAdminConfig.strings.addTrigger) || 'Tilføj alternativ trigger'))
+            .on('click', function () {
+                var triggers = eventsData[index].firing_triggers;
+                if (triggers.length >= schemaMax('maxTriggers', 10)) return;
+                triggers.push(blankTrigger());
+                renderTriggers(triggersContainer(index), index);
+                refreshSummary(index);
+            });
+        $wrap.append($('<p>').append($addTrigger));
 
         // Send To checkboxes
         var sendTo = event.send_to || {};
-        html += '<tr><th scope="row">Send To</th><td>';
-        html += '<label><input type="checkbox" data-field="send_to_ga4" ' + (sendTo.ga4 ? 'checked' : '') + ' data-index="' + index + '" /> GA4</label>&nbsp;&nbsp;';
-        html += '<label><input type="checkbox" data-field="send_to_google_ads" ' + (sendTo.google_ads ? 'checked' : '') + ' data-index="' + index + '" /> Google Ads</label>&nbsp;&nbsp;';
-        html += '<label><input type="checkbox" data-field="send_to_meta" ' + (sendTo.meta ? 'checked' : '') + ' data-index="' + index + '" /> Meta</label>';
-        html += '</td></tr>';
-
-        html += '</table></div></td></tr>';
-
-        var $panel = $(html);
-
-        // Bind send_to change events
-        $panel.find('[data-field="send_to_ga4"]').on('change', function () {
-            if (!eventsData[index].send_to) eventsData[index].send_to = {};
-            eventsData[index].send_to.ga4 = $(this).is(':checked');
+        var $sendTo = $('<p>');
+        $sendTo.append($('<strong>').text((window.trackwpAdminConfig && trackwpAdminConfig.strings.sendTo) || 'Send til') + ' ');
+        $.each([['ga4', 'GA4'], ['google_ads', 'Google Ads'], ['meta', 'Meta']], function (i, pair) {
+            var key = pair[0];
+            var $cb = $('<input>').attr({ type: 'checkbox' }).prop('checked', !!sendTo[key])
+                .on('change', function () {
+                    if (!eventsData[index].send_to) eventsData[index].send_to = {};
+                    eventsData[index].send_to[key] = $(this).is(':checked');
+                });
+            $sendTo.append($('<label>').css('margin-right', '14px').append($cb).append(' ' + pair[1]));
         });
-        $panel.find('[data-field="send_to_google_ads"]').on('change', function () {
-            if (!eventsData[index].send_to) eventsData[index].send_to = {};
-            eventsData[index].send_to.google_ads = $(this).is(':checked');
-        });
-        $panel.find('[data-field="send_to_meta"]').on('change', function () {
-            if (!eventsData[index].send_to) eventsData[index].send_to = {};
-            eventsData[index].send_to.meta = $(this).is(':checked');
-        });
+        $wrap.append($sendTo);
 
-        // Bind trigger-specific field changes
-        $panel.find('[data-trigger-field]').on('input change', function () {
-            var field = $(this).data('trigger-field');
-            var val = $(this).val();
-            if ($(this).attr('type') === 'number') {
-                val = parseInt(val, 10) || 0;
+        $cell.append($wrap);
+        $row.append($cell);
+        return $row;
+    }
+
+    // The panel is re-rendered in place, so look the container up by index
+    // rather than holding a stale jQuery reference.
+    function triggersContainer(index) {
+        return $('#trackwp-expand-' + index).find('.trackwp-triggers');
+    }
+
+    function schemaMax(key, fallback) {
+        return (conditionSchema && conditionSchema[key]) ? conditionSchema[key] : fallback;
+    }
+
+    function refreshSummary(index) {
+        $('#trackwp-events-tbody tr[data-index="' + index + '"] .trackwp-trigger-summary')
+            .text(triggerSummary(eventsData[index]));
+    }
+
+    function renderTriggers($container, index) {
+        $container.empty();
+        var triggers = eventsData[index].firing_triggers;
+
+        $.each(triggers, function (t) {
+            if (t > 0) {
+                $container.append($('<div>').addClass('trackwp-or-divider').text('OR'));
             }
-            eventsData[index][field] = val;
+            $container.append(buildTriggerCard(index, t));
         });
-
-        return $panel;
     }
 
-    function triggerField(index, fieldName, label, inputType, value, currentTrigger, showForTriggers) {
-        var isActive = showForTriggers.indexOf(currentTrigger) !== -1;
-        var cls = 'trackwp-trigger-field' + (isActive ? ' active' : '');
-        var html = '<tr class="' + cls + '" data-trigger-show="' + showForTriggers.join(',') + '">';
-        html += '<th scope="row">' + label + '</th>';
-        html += '<td><input type="' + inputType + '" data-trigger-field="' + fieldName + '" ';
-        html += 'value="' + escAttr(String(value)) + '" data-index="' + index + '" ';
-        if (inputType === 'number') html += 'min="0" ';
-        html += '/></td></tr>';
-        return html;
+    function buildTriggerCard(index, t) {
+        var trigger = eventsData[index].firing_triggers[t];
+        var $card = $('<div>').addClass('trackwp-trigger-card');
+
+        // --- header: type + remove ---
+        var $head = $('<div>').addClass('trackwp-trigger-head');
+        $head.append($('<strong>').text(
+            ((window.trackwpAdminConfig && trackwpAdminConfig.strings.trigger) || 'Trigger') + ' ' + (t + 1)
+        ));
+
+        var $typeSelect = $('<select>');
+        $.each(triggerTypes, function (val, label) {
+            $typeSelect.append($('<option>').val(val).text(label).prop('selected', val === trigger.type));
+        });
+        $typeSelect.on('change', function () {
+            trigger.type = $(this).val();
+            // Conditions referencing variables that no longer exist for this
+            // trigger type would silently never match — drop them instead.
+            trigger.conditions = $.grep(trigger.conditions || [], function (c) {
+                return variableAllowed(c.variable, trigger.type);
+            });
+            renderTriggers(triggersContainer(index), index);
+            refreshSummary(index);
+        });
+        $head.append($typeSelect);
+
+        if (eventsData[index].firing_triggers.length > 1) {
+            $head.append(
+                $('<button>').attr('type', 'button').addClass('button-link trackwp-remove-trigger')
+                    .html('&times;')
+                    .attr('title', (window.trackwpAdminConfig && trackwpAdminConfig.strings.removeTrigger) || 'Fjern trigger')
+                    .on('click', function () {
+                        eventsData[index].firing_triggers.splice(t, 1);
+                        renderTriggers(triggersContainer(index), index);
+                        refreshSummary(index);
+                    })
+            );
+        }
+        $card.append($head);
+
+        // --- type-specific configuration ---
+        $card.append(buildTriggerConfig(index, t, trigger));
+
+        // --- conditions ---
+        $card.append(
+            $('<p>').addClass('description').css('margin-top', '10px').text(
+                (window.trackwpAdminConfig && trackwpAdminConfig.strings.allConditions) ||
+                'Udløs kun når ALLE disse betingelser er sande:'
+            )
+        );
+
+        var $conds = $('<div>').addClass('trackwp-conditions');
+        $.each(trigger.conditions || [], function (c) {
+            if (c > 0) {
+                $conds.append($('<div>').addClass('trackwp-and-divider').text('AND'));
+            }
+            $conds.append(buildConditionRow(index, t, c));
+        });
+        if (!trigger.conditions || !trigger.conditions.length) {
+            $conds.append(
+                $('<p>').addClass('description').css('font-style', 'italic').text(
+                    (window.trackwpAdminConfig && trackwpAdminConfig.strings.noConditions) ||
+                    'Ingen betingelser — triggeren matcher altid.'
+                )
+            );
+        }
+        $card.append($conds);
+
+        $card.append($('<p>').append(
+            $('<button>').attr('type', 'button').addClass('button button-small')
+                .text('+ ' + ((window.trackwpAdminConfig && trackwpAdminConfig.strings.addCondition) || 'Tilføj betingelse'))
+                .on('click', function () {
+                    if (!trigger.conditions) trigger.conditions = [];
+                    if (trigger.conditions.length >= schemaMax('maxConditions', 10)) return;
+                    var vars = variablesForTrigger(trigger.type);
+                    var firstVar = vars.length ? vars[0] : 'page_url';
+                    trigger.conditions.push({
+                        variable: firstVar,
+                        operator: defaultOperator(firstVar),
+                        value: '',
+                        param: ''
+                    });
+                    renderTriggers(triggersContainer(index), index);
+                    refreshSummary(index);
+                })
+        ));
+
+        return $card;
     }
 
-    function updateTriggerFields(index) {
-        var trigger = eventsData[index].trigger_type;
-        var $panel = $('#trackwp-expand-' + index);
-        $panel.find('.trackwp-trigger-field').each(function () {
-            var showFor = $(this).data('trigger-show').split(',');
-            $(this).toggleClass('active', showFor.indexOf(trigger) !== -1);
+    function buildTriggerConfig(index, t, trigger) {
+        var $box = $('<div>').addClass('trackwp-trigger-config');
+
+        function field(labelKey, fallbackLabel, prop, type, placeholder) {
+            var $p = $('<p>');
+            $p.append($('<label>').text(
+                ((window.trackwpAdminConfig && trackwpAdminConfig.strings[labelKey]) || fallbackLabel) + ' '
+            ));
+            var $input = $('<input>').attr('type', type || 'text').val(trigger[prop] || (type === 'number' ? 0 : ''));
+            if (placeholder) $input.attr('placeholder', placeholder);
+            if (type === 'number') $input.attr('min', 0).addClass('small-text');
+            else $input.addClass('regular-text');
+            $input.on('input change', function () {
+                trigger[prop] = (type === 'number') ? (parseInt($(this).val(), 10) || 0) : $(this).val();
+                refreshSummary(index);
+            });
+            $p.append($input);
+            return $p;
+        }
+
+        switch (trigger.type) {
+            case 'css_click':
+                $box.append(field('cssSelector', 'CSS-selector', 'css_selector', 'text', 'a[href^="tel:"]'));
+                break;
+            case 'form_submit':
+            case 'file_download':
+                $box.append(field('cssSelector', 'CSS-selector', 'css_selector', 'text', 'form.kontakt'));
+                break;
+            case 'url_match':
+                $box.append(field('urlMatch', 'URL indeholder', 'url_match', 'text', '/tak-for-din-henvendelse'));
+                break;
+            case 'scroll_depth':
+                $box.append(field('scrollDepth', 'Scrolldybde (%)', 'scroll_depth', 'number'));
+                break;
+            case 'time_on_page':
+                $box.append(field('timeSeconds', 'Sekunder', 'time_seconds', 'number'));
+                break;
+            case 'js_event':
+                $box.append(field('jsEvent', 'JavaScript-eventnavn', 'js_event', 'text', 'min_custom_event'));
+                break;
+        }
+        return $box;
+    }
+
+    // --- schema helpers -------------------------------------------------
+
+    function variablesForTrigger(triggerType) {
+        if (!conditionSchema || !conditionSchema.variables) return [];
+        var scopes = (conditionSchema.scopes && conditionSchema.scopes[triggerType]) || ['page'];
+        var out = [];
+        $.each(conditionSchema.variables, function (key, def) {
+            if ($.inArray(def.scope, scopes) !== -1) out.push(key);
         });
+        return out;
+    }
+
+    function variableAllowed(variable, triggerType) {
+        return $.inArray(variable, variablesForTrigger(triggerType)) !== -1;
+    }
+
+    function variableDef(variable) {
+        return (conditionSchema && conditionSchema.variables && conditionSchema.variables[variable]) || null;
+    }
+
+    function operatorsForVariable(variable) {
+        var def = variableDef(variable);
+        if (!def || !conditionSchema.operators) return {};
+        return conditionSchema.operators[def.type] || {};
+    }
+
+    function defaultOperator(variable) {
+        var ops = operatorsForVariable(variable);
+        for (var k in ops) {
+            if (Object.prototype.hasOwnProperty.call(ops, k)) return k;
+        }
+        return 'equals';
+    }
+
+    function operatorTakesValue(operator) {
+        var valueless = (conditionSchema && conditionSchema.valueless) || ['exists', 'not_exists'];
+        return $.inArray(operator, valueless) === -1;
+    }
+
+    function buildConditionRow(index, t, c) {
+        var trigger = eventsData[index].firing_triggers[t];
+        var cond = trigger.conditions[c];
+        var $row = $('<div>').addClass('trackwp-condition-row');
+
+        // Variable
+        var $var = $('<select>').addClass('trackwp-cond-var');
+        $.each(variablesForTrigger(trigger.type), function (i, key) {
+            var def = variableDef(key);
+            $var.append($('<option>').val(key).text(def ? def.label : key).prop('selected', key === cond.variable));
+        });
+        $var.on('change', function () {
+            cond.variable = $(this).val();
+            // Operators are per variable type — reset to a valid one.
+            cond.operator = defaultOperator(cond.variable);
+            renderTriggers(triggersContainer(index), index);
+        });
+        $row.append($var);
+
+        // Query Parameter needs its own name field.
+        var def = variableDef(cond.variable);
+        if (def && def.param) {
+            $row.append(
+                $('<input>').attr({ type: 'text', placeholder: 'utm_campaign' })
+                    .addClass('trackwp-cond-param')
+                    .val(cond.param || '')
+                    .on('input', function () { cond.param = $(this).val(); })
+            );
+        }
+
+        // Operator
+        var $op = $('<select>').addClass('trackwp-cond-op');
+        $.each(operatorsForVariable(cond.variable), function (key, label) {
+            $op.append($('<option>').val(key).text(label).prop('selected', key === cond.operator));
+        });
+        $op.on('change', function () {
+            cond.operator = $(this).val();
+            renderTriggers(triggersContainer(index), index);
+        });
+        $row.append($op);
+
+        // Value (hidden for exists / does not exist)
+        if (operatorTakesValue(cond.operator)) {
+            $row.append(
+                $('<input>').attr({ type: 'text' })
+                    .addClass('trackwp-cond-value')
+                    .val(cond.value || '')
+                    .on('input', function () { cond.value = $(this).val(); })
+            );
+        }
+
+        // Remove
+        $row.append(
+            $('<button>').attr('type', 'button').addClass('button-link trackwp-remove-condition')
+                .html('&times;')
+                .on('click', function () {
+                    trigger.conditions.splice(c, 1);
+                    renderTriggers(triggersContainer(index), index);
+                    refreshSummary(index);
+                })
+        );
+
+        return $row;
+    }
+
+    // Event names must be unique: duplicates bind twice on the frontend and
+    // dispatch twice with different event_ids (real double counting), so the
+    // server now rejects them. Seed a free name instead of always 'new_event'.
+    function uniqueEventName(base) {
+        var taken = {};
+        $.each(eventsData, function (i, event) {
+            if (event && event.name) taken[event.name] = true;
+        });
+        if (!taken[base]) return base;
+        for (var n = 2; n < 1000; n++) {
+            if (!taken[base + '_' + n]) return base + '_' + n;
+        }
+        return base;
     }
 
     function addEvent() {
+        var name = uniqueEventName('new_event');
         eventsData.push({
             enabled: true,
-            name: 'new_event',
+            name: name,
             display_name: 'New Event',
             trigger_type: 'css_click',
             css_selector: '',
@@ -351,23 +651,46 @@
             currency: 'DKK',
             ads_label: '',
             meta_event: '',
-            send_to: { ga4: true, google_ads: true, meta: true }
+            send_to: { ga4: true, google_ads: true, meta: true },
+            firing_triggers: [blankTrigger()]
         });
         renderEventTable();
 
-        // Scroll to new row
-        var $tbody = $('#trackwp-events-tbody');
-        $('html, body').animate({
-            scrollTop: $tbody.find('tr:last').offset().top - 100
-        }, 300);
+        // Open the new row's detail panel straight away: a click trigger needs
+        // a CSS selector to validate, and that field lives inside the collapsed
+        // panel — leaving it shut just produced an unexplained error on save.
+        var index = eventsData.length - 1;
+        var $panel = $('#trackwp-expand-' + index);
+        var $row = $('#trackwp-events-tbody').find('tr[data-index="' + index + '"]');
+        $panel.show();
+        $row.find('.trackwp-col-actions .button').first().text('▲');
+
+        if ($row.length && $row.offset()) {
+            $('html, body').animate({ scrollTop: $row.offset().top - 100 }, 300, function () {
+                $panel.find('.trackwp-trigger-config input').first().trigger('focus');
+            });
+        }
     }
 
     function syncEventsToJson() {
+        // Keep the flat legacy fields in step with the first trigger — the
+        // server treats them as a mirror, and anything still reading them
+        // (older integrations) must not see stale values.
+        $.each(eventsData, function (i, event) {
+            var triggers = event.firing_triggers || [];
+            if (!triggers.length) {
+                triggers = [triggerFromLegacy(event)];
+                event.firing_triggers = triggers;
+            }
+            var primary = triggers[0];
+            event.trigger_type = primary.type;
+            event.css_selector = primary.css_selector || '';
+            event.url_match    = primary.url_match || '';
+            event.scroll_depth = primary.scroll_depth || 0;
+            event.time_seconds = primary.time_seconds || 0;
+            event.js_event     = primary.js_event || '';
+        });
         $('#trackwp-events-json').val(JSON.stringify(eventsData));
-    }
-
-    function escAttr(str) {
-        return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     }
 
     // =====================================================================
@@ -506,17 +829,45 @@
     function initFormValidation() {
         $('#trackwp-events-form').on('submit', function (e) {
             var errors = [];
+            var seen = {};
 
             $.each(eventsData, function (i, event) {
                 // Event name: required, lowercase alphanumeric + underscores
                 if (!event.name || !/^[a-z][a-z0-9_]{0,39}$/.test(event.name)) {
                     errors.push('Event #' + (i + 1) + ': Name must start with a lowercase letter, contain only a-z, 0-9, underscores, max 40 characters.');
+                } else if (seen[event.name]) {
+                    // Mirrors the server-side rule — duplicates fire twice.
+                    errors.push('Event #' + (i + 1) + ': the name "' + event.name + '" is already used by event #' + seen[event.name] + '. Names must be unique.');
+                } else {
+                    seen[event.name] = i + 1;
                 }
 
-                // CSS selector required for css_click
-                if (event.trigger_type === 'css_click' && !event.css_selector) {
-                    errors.push('Event #' + (i + 1) + ' (' + event.name + '): CSS selector is required for click triggers.');
+                // Every firing trigger must be usable on its own — an event
+                // fires when ANY of them matches, so one broken trigger is a
+                // silently dead branch rather than a harmless leftover.
+                var triggers = event.firing_triggers || [];
+                if (!triggers.length) {
+                    errors.push('Event #' + (i + 1) + ' (' + event.name + '): no trigger configured.');
                 }
+                $.each(triggers, function (t, trg) {
+                    var where = 'Event #' + (i + 1) + ' (' + event.name + '), trigger ' + (t + 1) + ': ';
+                    if (trg.type === 'css_click' && !trg.css_selector) {
+                        errors.push(where + 'a CSS selector is required for click triggers.');
+                    }
+                    if (trg.type === 'js_event' && !trg.js_event) {
+                        errors.push(where + 'a JavaScript event name is required.');
+                    }
+                    $.each(trg.conditions || [], function (c, cond) {
+                        var cWhere = where + 'condition ' + (c + 1) + ': ';
+                        if (operatorTakesValue(cond.operator) && !String(cond.value || '').length) {
+                            errors.push(cWhere + 'a value is required.');
+                        }
+                        var def = variableDef(cond.variable);
+                        if (def && def.param && !String(cond.param || '').length) {
+                            errors.push(cWhere + 'a parameter name is required.');
+                        }
+                    });
+                });
             });
 
             if (errors.length) {

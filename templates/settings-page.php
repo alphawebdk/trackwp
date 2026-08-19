@@ -29,6 +29,14 @@ $has_woocommerce = class_exists('WooCommerce');
 <div class="wrap trackwp-settings">
     <h1><?php echo esc_html__('TrackWP', 'trackwp'); ?></h1>
 
+    <?php
+    // WordPress only auto-prints these on the built-in options-*.php screens.
+    // Without this call the sanitizers' add_settings_error() messages (invalid
+    // event name, duplicate name, bad GA4 ID …) — and the "settings saved"
+    // confirmation — were never shown on this page.
+    settings_errors();
+    ?>
+
     <nav class="nav-tab-wrapper trackwp-tabs">
         <a href="#dashboard" class="nav-tab nav-tab-active" data-tab="dashboard">
             <?php echo esc_html__('Dashboard', 'trackwp'); ?>
@@ -734,6 +742,7 @@ $has_woocommerce = class_exists('WooCommerce');
             <script type="text/template" id="trackwp-trigger-types"><?php echo wp_json_encode($trigger_types); ?></script>
             <script type="text/template" id="trackwp-meta-event-types"><?php echo wp_json_encode($meta_event_types); ?></script>
             <script type="text/template" id="trackwp-currencies"><?php echo wp_json_encode($currencies); ?></script>
+            <script type="text/template" id="trackwp-conditions-schema"><?php echo wp_json_encode(TrackWP_Conditions::admin_schema()); ?></script>
 
             <?php submit_button( __('Gem begivenheder', 'trackwp') ); ?>
         </form>
@@ -1375,6 +1384,51 @@ $has_woocommerce = class_exists('WooCommerce');
                 </tr>
             </table>
 
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Leveringslog', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php echo esc_html__('Gem leveringsstatus', 'trackwp'); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox"
+                                   name="trackwp_advanced[delivery_log_enabled]"
+                                   value="1"
+                                   <?php checked( ! empty($advanced['delivery_log_enabled']) ); ?> />
+                            <?php echo esc_html__('Gem hvilke begivenheder der blev sendt til hver platform, og om de kom frem.', 'trackwp'); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo esc_html__('Gemmer KUN teknisk leveringsinformation: begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform, leveringsstatus og samtykketilstand. Der gemmes hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer, client_id, gclid eller Facebook-cookies — loggen kan derfor ikke knyttes til en bestemt besøgende.', 'trackwp'); ?>
+                        </p>
+                        <p class="description">
+                            <?php echo esc_html__('Brug den til at bevise at events faktisk når frem, og til at opdage dobbelttælling. Den er ikke et analyseværktøj og forbedrer ikke genkendelsen af tilbagevendende besøgende — det gør førsteparts-cookien.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="advanced_delivery_log_retention"><?php echo esc_html__('Slet efter (dage)', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <input type="number"
+                               id="advanced_delivery_log_retention"
+                               name="trackwp_advanced[delivery_log_retention_days]"
+                               value="<?php echo esc_attr( isset($advanced['delivery_log_retention_days']) ? (int) $advanced['delivery_log_retention_days'] : TrackWP_Delivery_Log::DEFAULT_RETENTION_DAYS ); ?>"
+                               class="small-text"
+                               min="1"
+                               max="<?php echo esc_attr( TrackWP_Delivery_Log::MAX_RETENTION_DAYS ); ?>" />
+                        <p class="description">
+                            <?php
+                            echo esc_html( sprintf(
+                                /* translators: %d: maximum retention in days */
+                                __( 'Ældre poster slettes automatisk hver dag. Maks. %d dage — loggen er et diagnoseværktøj, ikke et arkiv.', 'trackwp' ),
+                                TrackWP_Delivery_Log::MAX_RETENTION_DAYS
+                            ) );
+                            ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
             <h2 class="trackwp-section-title"><?php echo esc_html__('Conversions API debug', 'trackwp'); ?></h2>
             <table class="form-table">
                 <tr>
@@ -1393,6 +1447,136 @@ $has_woocommerce = class_exists('WooCommerce');
 
             <?php submit_button( __('Gem avancerede indstillinger', 'trackwp') ); ?>
         </form>
+
+            <?php if ( ! empty( $advanced['delivery_log_enabled'] ) ) : ?>
+            <hr style="margin: 32px 0;">
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__( 'Leveringslog — seneste', 'trackwp' ); ?></h2>
+
+            <?php if ( isset( $_GET['trackwp_log_cleared'] ) ) : ?>
+                <div class="notice notice-success inline"><p><?php echo esc_html__( 'Leveringsloggen er tømt.', 'trackwp' ); ?></p></div>
+            <?php endif; ?>
+
+            <?php
+            $log_rows      = TrackWP_Delivery_Log::get_recent( 50 );
+            $log_total     = TrackWP_Delivery_Log::count();
+            $log_dupes     = TrackWP_Delivery_Log::find_duplicates( 10 );
+            $log_overview  = TrackWP_Delivery_Log::overview();
+            $log_per_day   = TrackWP_Delivery_Log::per_day();
+            $log_days      = TrackWP_Delivery_Log::retention_days();
+            $log_day_max   = 0;
+            foreach ( $log_per_day as $d ) {
+                if ( $d['events'] > $log_day_max ) { $log_day_max = $d['events']; }
+            }
+            $dest_labels = array( 'ga4' => 'GA4', 'meta' => 'Meta', 'google_ads' => 'Google Ads' );
+            ?>
+
+            <?php if ( $log_dupes ) : ?>
+                <div class="notice notice-warning inline">
+                    <p><strong><?php echo esc_html__( 'Mulig dobbelttælling opdaget', 'trackwp' ); ?></strong><br>
+                    <?php echo esc_html__( 'Samme begivenhed er sendt flere gange til samme platform inden for det samme minut, med forskellige begivenheds-id\'er:', 'trackwp' ); ?></p>
+                    <ul style="list-style: disc; margin-left: 20px;">
+                        <?php foreach ( $log_dupes as $dupe ) : ?>
+                            <li><code><?php echo esc_html( $dupe['event_name'] ); ?></code> → <?php echo esc_html( $dupe['destination'] ); ?> — <?php echo esc_html( sprintf( __( '%1$d gange kl. %2$s', 'trackwp' ), (int) $dupe['hits'], $dupe['logged_at'] ) ); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                </div>
+            <?php endif; ?>
+
+            <p class="description">
+                <?php
+                echo esc_html( sprintf(
+                    /* translators: 1: number of days, 2: number of rows */
+                    __( 'Viser de seneste %1$d dage (%2$s poster). Tidspunkter er UTC og afrundet til minut.', 'trackwp' ),
+                    $log_days,
+                    number_format_i18n( $log_total )
+                ) );
+                ?>
+            </p>
+
+            <?php if ( $log_day_max > 0 ) : ?>
+            <div class="trackwp-log-chart" style="display:flex; align-items:flex-end; gap:4px; height:70px; margin:16px 0; padding:8px; background:#f6f7f7; border:1px solid #dcdcde;">
+                <?php foreach ( $log_per_day as $d ) : ?>
+                    <div title="<?php echo esc_attr( $d['date'] . ' — ' . number_format_i18n( $d['events'] ) . ' events' ); ?>"
+                         style="flex:1; min-width:6px; background:#2271b1; height:<?php echo esc_attr( max( 2, round( ( $d['events'] / $log_day_max ) * 100 ) ) ); ?>%;"></div>
+                <?php endforeach; ?>
+            </div>
+            <?php endif; ?>
+
+            <?php if ( $log_overview ) : ?>
+            <h3><?php echo esc_html__( 'Sendte begivenheder', 'trackwp' ); ?></h3>
+            <table class="widefat striped">
+                <thead><tr>
+                    <th><?php esc_html_e( 'Begivenhed', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Leveret', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Pr. platform', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Senest', 'trackwp' ); ?></th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ( $log_overview as $ov ) : ?>
+                    <tr>
+                        <td><code><?php echo esc_html( $ov['event_name'] ); ?></code></td>
+                        <td><strong><?php echo esc_html( number_format_i18n( $ov['total'] ) ); ?></strong></td>
+                        <td>
+                            <?php foreach ( $ov['destinations'] as $dest => $counts ) : ?>
+                                <?php
+                                $label = isset( $dest_labels[ $dest ] ) ? $dest_labels[ $dest ] : $dest;
+                                $bits  = array();
+                                if ( ! empty( $counts['ok'] ) )      { $bits[] = sprintf( __( '%s leveret', 'trackwp' ), number_format_i18n( $counts['ok'] ) ); }
+                                if ( ! empty( $counts['failed'] ) )  { $bits[] = sprintf( __( '%s fejlet', 'trackwp' ), number_format_i18n( $counts['failed'] ) ); }
+                                if ( ! empty( $counts['skipped'] ) ) { $bits[] = sprintf( __( '%s sprunget over', 'trackwp' ), number_format_i18n( $counts['skipped'] ) ); }
+                                ?>
+                                <div<?php echo ! empty( $counts['failed'] ) ? ' style="color:#b32d2e;"' : ''; ?>>
+                                    <?php echo esc_html( $label . ': ' . ( $bits ? implode( ', ', $bits ) : '—' ) ); ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </td>
+                        <td><?php echo esc_html( $ov['last_seen'] ); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php endif; ?>
+
+            <?php if ( $log_rows ) : ?>
+            <h3><?php echo esc_html__( 'Seneste afsendelser', 'trackwp' ); ?></h3>
+            <table class="widefat striped">
+                <thead><tr>
+                    <th><?php esc_html_e( 'Tidspunkt (UTC)', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Begivenhed', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Platform', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Status', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Samtykke', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Begivenheds-id', 'trackwp' ); ?></th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ( $log_rows as $row ) : ?>
+                    <tr>
+                        <td><?php echo esc_html( $row['logged_at'] ); ?></td>
+                        <td><code><?php echo esc_html( $row['event_name'] ); ?></code></td>
+                        <td><?php echo esc_html( $row['destination'] ); ?></td>
+                        <td><?php echo esc_html( $row['status'] ); ?></td>
+                        <td><?php
+                            $flags = array();
+                            if ( ! empty( $row['consent_analytics'] ) ) { $flags[] = 'statistik'; }
+                            if ( ! empty( $row['consent_marketing'] ) ) { $flags[] = 'marketing'; }
+                            echo esc_html( $flags ? implode( ' + ', $flags ) : '—' );
+                        ?></td>
+                        <td><code style="font-size:11px;"><?php echo esc_html( $row['event_id'] ); ?></code></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+            <?php else : ?>
+                <p><?php echo esc_html__( 'Ingen poster endnu.', 'trackwp' ); ?></p>
+            <?php endif; ?>
+
+            <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top:12px;" onsubmit="return confirm('<?php echo esc_attr__( 'Tøm leveringsloggen?', 'trackwp' ); ?>');">
+                <input type="hidden" name="action" value="trackwp_clear_delivery_log" />
+                <?php wp_nonce_field( 'trackwp_clear_delivery_log' ); ?>
+                <button type="submit" class="button"><?php echo esc_html__( 'Tøm leveringslog', 'trackwp' ); ?></button>
+            </form>
+            <?php endif; ?>
 
             <hr style="margin: 32px 0;">
 

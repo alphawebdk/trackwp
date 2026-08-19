@@ -3,7 +3,7 @@
  * Plugin Name: TrackWP
  * Plugin URI: https://trackwp.com
  * Description: Server-side tracking proxy with built-in cookie consent and Consent Mode v2. Supports GA4, Google Ads, and Meta.
- * Version: 1.8.0
+ * Version: 1.9.0
  * Author: TrackWP
  * Author URI: https://trackwp.com
  * License: GPLv2 or later
@@ -17,22 +17,23 @@
 
 defined('ABSPATH') || exit;
 
-define('TRACKWP_VERSION', '1.8.0');
+define('TRACKWP_VERSION', '1.9.0');
 define('TRACKWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRACKWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
- * Self-hosted updates via GitHub Releases (private repo alphawebdk/trackwp).
+ * Self-hosted updates via GitHub Releases (public repo alphawebdk/trackwp).
  *
  * Plugin Update Checker polls the repo's latest release and serves its ZIP
  * asset through WordPress' standard update flow (update notice + one-click
  * update in wp-admin, wp-cron twice-daily checks).
  *
- * The repo is private, so each site must authenticate: define
- * TRACKWP_GITHUB_TOKEN in wp-config.php (fine-grained PAT, read-only
- * "Contents" access to the repo) or supply it via the
- * 'trackwp_github_token' filter.
+ * The repo is PUBLIC (since 2026-07-23), so no authentication is needed on
+ * client sites. A token is still honoured — define TRACKWP_GITHUB_TOKEN in
+ * wp-config.php or use the 'trackwp_github_token' filter — which is useful if
+ * the repo ever goes private again, or to lift GitHub's unauthenticated rate
+ * limit when many sites share one outbound IP.
  */
 if (file_exists(TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php')) {
     require_once TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php';
@@ -128,6 +129,9 @@ final class TrackWP {
         // GA4 batch flush — must be registered at bootstrap so the callback
         // exists in WP-Cron requests (no TrackWP_GA4 instance exists there).
         add_action('trackwp_flush_ga4', [$this, 'flush_ga4_queue']);
+        // Delivery-log pruning — registered at bootstrap for the same reason as
+        // the GA4 flush: the callback must exist in WP-Cron requests.
+        add_action(TrackWP_Delivery_Log::CRON_HOOK, ['TrackWP_Delivery_Log', 'prune']);
 
         // "Settings" link on Plugins page
         add_filter('plugin_action_links_' . TRACKWP_PLUGIN_BASENAME, ['TrackWP_Settings', 'add_plugin_action_links']);
@@ -135,6 +139,20 @@ final class TrackWP {
         add_action( 'admin_post_trackwp_export', [ $this, 'handle_export' ] );
         add_action( 'admin_post_trackwp_import', [ $this, 'handle_import' ] );
         add_action( 'admin_post_trackwp_reset_stats', [ $this, 'handle_reset_stats' ] );
+        add_action( 'admin_post_trackwp_clear_delivery_log', [ $this, 'handle_clear_delivery_log' ] );
+    }
+
+    /**
+     * admin-post handler — empty the delivery log.
+     */
+    public function handle_clear_delivery_log() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( esc_html__( 'Adgang nægtet.', 'trackwp' ) );
+        }
+        check_admin_referer( 'trackwp_clear_delivery_log' );
+        TrackWP_Delivery_Log::clear();
+        wp_safe_redirect( add_query_arg( 'trackwp_log_cleared', '1', admin_url( 'admin.php?page=trackwp#advanced' ) ) );
+        exit;
     }
 
     /**
@@ -194,7 +212,10 @@ final class TrackWP {
                 'name'         => 'form_submit',
                 'display_name' => __('Formularindsendelse', 'trackwp'),
                 'trigger_type' => 'form_submit',
-                'css_selector' => 'form',
+                // Empty on purpose: the generic 'form_submit' event is bound by
+                // TrackWP_Forms (which covers the known form plugins). A
+                // selector here would only matter for a renamed copy.
+                'css_selector' => '',
                 'value'        => 0,
                 'currency'     => 'DKK',
                 'ads_label'    => '',
@@ -235,14 +256,15 @@ final class TrackWP {
             'consent_mode_ad_signals'      => true,
             'debug_log'                    => false,
             'debug_console'                => false,
-            'async_loading'                => true,
-            'defer_tracking'               => true,
             'dedup_mode'                   => 'client_and_server',
             'uses_gtm'                     => false,
             'ga4_user_id_enabled'          => false,
             'batching_enabled'             => false,
             'first_party_loader_enabled'   => true,
             'capi_debug_logging_enabled'   => false,
+            // Off by default — enabling it creates a data store.
+            'delivery_log_enabled'         => false,
+            'delivery_log_retention_days'  => TrackWP_Delivery_Log::DEFAULT_RETENTION_DAYS,
         ]);
 
         add_option('trackwp_stats', array());
@@ -362,6 +384,73 @@ final class TrackWP {
             }
         }
 
+        if ( version_compare($stored, '1.8.1', '<') ) {
+            // Drop dead advanced flags (no UI, no reader since 1.7.2).
+            $advanced = get_option('trackwp_advanced', array());
+            if ( is_array($advanced) && ( array_key_exists('async_loading', $advanced) || array_key_exists('defer_tracking', $advanced) ) ) {
+                unset($advanced['async_loading'], $advanced['defer_tracking']);
+                update_option('trackwp_advanced', $advanced);
+            }
+
+            // De-duplicate event names. Two events sharing a name bound twice
+            // client-side and dispatched twice with different event_ids — real
+            // double counting in GA4/Meta. Keep the first occurrence.
+            $events = get_option('trackwp_events', array());
+            if ( is_array($events) ) {
+                $seen    = array();
+                $cleaned = array();
+                foreach ( $events as $event ) {
+                    if ( ! is_array($event) || empty($event['name']) ) {
+                        continue;
+                    }
+                    if ( isset($seen[ $event['name'] ]) ) {
+                        continue;
+                    }
+                    $seen[ $event['name'] ] = true;
+                    $cleaned[] = $event;
+                }
+                if ( count($cleaned) !== count($events) ) {
+                    update_option('trackwp_events', $cleaned);
+                }
+            }
+        }
+
+        if ( version_compare($stored, '1.9.0', '<') ) {
+            $advanced = get_option('trackwp_advanced', array());
+            $advanced += array(
+                'delivery_log_enabled'        => false,
+                'delivery_log_retention_days' => TrackWP_Delivery_Log::DEFAULT_RETENTION_DAYS,
+            );
+            update_option('trackwp_advanced', $advanced);
+            // Only create the table if the site actually turns the log on —
+            // an unused table on every install is pointless.
+            if ( ! empty($advanced['delivery_log_enabled']) ) {
+                TrackWP_Delivery_Log::create_table();
+                TrackWP_Delivery_Log::sync_cron();
+            }
+
+            // Give every stored event an explicit firing-trigger list. Both the
+            // browser and the admin derive one on the fly when it is missing,
+            // so this is purely to make the stored option self-describing.
+            $events = get_option('trackwp_events', array());
+            if ( is_array($events) ) {
+                $changed = false;
+                foreach ( $events as $i => $event ) {
+                    if ( ! is_array($event) || ! empty($event['firing_triggers']) ) {
+                        continue;
+                    }
+                    $triggers = TrackWP_Conditions::triggers_from_legacy_event($event);
+                    if ( ! empty($triggers) ) {
+                        $events[ $i ]['firing_triggers'] = $triggers;
+                        $changed = true;
+                    }
+                }
+                if ( $changed ) {
+                    update_option('trackwp_events', $events);
+                }
+            }
+        }
+
         update_option('trackwp_version', TRACKWP_VERSION);
     }
 
@@ -394,8 +483,16 @@ final class TrackWP {
         }
         check_admin_referer( 'trackwp_import' );
 
-        if ( empty( $_FILES['trackwp_import_file']['tmp_name'] ) ) {
+        if ( empty( $_FILES['trackwp_import_file']['tmp_name'] )
+            || ! is_uploaded_file( $_FILES['trackwp_import_file']['tmp_name'] )
+            || ! empty( $_FILES['trackwp_import_file']['error'] ) ) {
             wp_safe_redirect( add_query_arg( 'trackwp_import', 'no_file', admin_url( 'admin.php?page=trackwp' ) ) );
+            exit;
+        }
+
+        // Settings exports are a few KB; anything larger is not one of ours.
+        if ( (int) $_FILES['trackwp_import_file']['size'] > 2 * MB_IN_BYTES ) {
+            wp_safe_redirect( add_query_arg( 'trackwp_import', 'invalid_json', admin_url( 'admin.php?page=trackwp' ) ) );
             exit;
         }
 
@@ -699,6 +796,8 @@ final class TrackWP {
 
         // Remove the pending GA4 batch-flush cron event.
         wp_clear_scheduled_hook('trackwp_flush_ga4');
+        // Stop pruning while deactivated (the table itself survives; uninstall drops it).
+        wp_clear_scheduled_hook(TrackWP_Delivery_Log::CRON_HOOK);
     }
 
     public function load_textdomain() {
@@ -757,10 +856,26 @@ final class TrackWP {
 
         wp_localize_script('trackwp-admin', 'trackwpAdminConfig', array(
             'strings' => array(
-                'expand'       => __('Udvid', 'trackwp'),
-                'delete'       => __('Slet', 'trackwp'),
-                'deleteEvent'  => __('Slet denne begivenhed?', 'trackwp'),
-                'fixErrors'    => __('Ret venligst følgende fejl:', 'trackwp'),
+                'expand'        => __('Udvid', 'trackwp'),
+                'delete'        => __('Slet', 'trackwp'),
+                'deleteEvent'   => __('Slet denne begivenhed?', 'trackwp'),
+                'fixErrors'     => __('Ret venligst følgende fejl:', 'trackwp'),
+                // Firing triggers / conditions builder
+                'trigger'       => __('Trigger', 'trackwp'),
+                'addTrigger'    => __('Tilføj alternativ trigger', 'trackwp'),
+                'removeTrigger' => __('Fjern trigger', 'trackwp'),
+                'addCondition'  => __('Tilføj betingelse', 'trackwp'),
+                'anyTrigger'    => __('Begivenheden sendes når EN AF disse triggere matcher.', 'trackwp'),
+                'allConditions' => __('Udløs kun når ALLE disse betingelser er sande:', 'trackwp'),
+                'noConditions'  => __('Ingen betingelser — triggeren matcher altid.', 'trackwp'),
+                'moreTriggers'  => __('flere', 'trackwp'),
+                'conditions'    => __('betingelser', 'trackwp'),
+                'sendTo'        => __('Send til', 'trackwp'),
+                'cssSelector'   => __('CSS-selector', 'trackwp'),
+                'urlMatch'      => __('URL indeholder', 'trackwp'),
+                'scrollDepth'   => __('Scrolldybde (%)', 'trackwp'),
+                'timeSeconds'   => __('Sekunder', 'trackwp'),
+                'jsEvent'       => __('JavaScript-eventnavn', 'trackwp'),
             ),
         ));
     }
@@ -823,46 +938,26 @@ final class TrackWP {
         // Build tracking config
         $platforms = get_option('trackwp_platforms', []);
         $advanced  = get_option('trackwp_advanced', []);
-        $events    = get_option('trackwp_events', []);
         $consent   = get_option('trackwp_consent', []);
 
-        // Filter to active events only
-        $active_events = array_values(array_filter($events, function ($event) {
-            return !empty($event['enabled']);
-        }));
+        // Client-side event configs — built by TrackWP_Events so `send_to`
+        // routing reaches the browser. Duplicating this inline (as earlier
+        // versions did) is what let the Meta Pixel and the Google Ads gtag
+        // conversion fire for events routed away from those platforms.
+        $events_manager = new TrackWP_Events();
+        $client_events  = $events_manager->get_client_config();
 
-        // Build client-side event configs
-        $client_events = array_map(function ($event) {
-            return [
-                'name'         => isset($event['name']) ? $event['name'] : '',
-                'trigger_type' => isset($event['trigger_type']) ? $event['trigger_type'] : '',
-                'css_selector' => isset($event['css_selector']) ? $event['css_selector'] : '',
-                'value'        => isset($event['value']) ? $event['value'] : 0,
-                'currency'     => isset($event['currency']) ? $event['currency'] : 'DKK',
-                'ads_label'    => isset($event['ads_label']) ? $event['ads_label'] : '',
-                'url_match'    => isset($event['url_match']) ? $event['url_match'] : '',
-                'scroll_depth' => isset($event['scroll_depth']) ? $event['scroll_depth'] : 0,
-                'time_seconds' => isset($event['time_seconds']) ? $event['time_seconds'] : 0,
-                'js_event'     => isset($event['js_event']) ? $event['js_event'] : '',
-                'meta_event'   => isset($event['meta_event']) ? $event['meta_event'] : '',
-            ];
-        }, $active_events);
-
-        // Build Google Ads labels per event
-        $ads_labels = [];
-        foreach ($active_events as $event) {
-            if (!empty($event['ads_label'])) {
-                $ads_labels[$event['name']] = $event['ads_label'];
-            }
-        }
+        // Google Ads labels — already filtered on send_to['google_ads'].
+        $ads          = new TrackWP_Google_Ads();
+        $ads_config   = $ads->get_client_config();
 
         wp_localize_script('trackwp-tracking', 'trackwpConfig', [
             'restUrl'   => rest_url(),
             'events'    => $client_events,
             'measurementId' => isset($platforms['ga4_measurement_id']) ? sanitize_text_field($platforms['ga4_measurement_id']) : '',
             'googleAds' => [
-                'conversionId' => isset($platforms['google_ads_conversion_id']) ? $platforms['google_ads_conversion_id'] : '',
-                'labels'       => $ads_labels,
+                'conversionId' => isset($ads_config['conversionId']) ? $ads_config['conversionId'] : '',
+                'labels'       => isset($ads_config['conversionLabels']) ? $ads_config['conversionLabels'] : [],
             ],
             'debug'      => !empty($advanced['debug_console']),
             'cookieName' => isset($advanced['cookie_name']) ? $advanced['cookie_name'] : '_twp_cid',

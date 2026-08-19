@@ -269,6 +269,58 @@
         return null;
     }
 
+    // Per-event platform routing, mirroring the server-side rule in
+    // class-trackwp-proxy.php. A missing send_to map means "legacy config" and
+    // keeps the old send-everywhere behaviour; an explicit false must stop the
+    // client-side tag, or the Pixel/Ads conversion fires for a platform the
+    // admin deliberately routed the event away from.
+    function sendsTo(eventConfig, platform) {
+        if (!eventConfig) return false;
+        var routing = eventConfig.send_to;
+        if (!routing || typeof routing !== 'object') return true;
+        return !!routing[platform];
+    }
+
+    // === DUPLICATE-DISPATCH GUARD ===
+
+    // Themes and menu/accessibility scripts routinely re-dispatch a synthetic
+    // click (element.click()) from inside their own handler. That produces a
+    // second, distinct Event object, so a per-Event flag cannot catch it — our
+    // capture listener simply sees a fresh click and sends the event twice.
+    // The css_click and file_download listeners are also independent and can
+    // both match the same element. A short window keyed on event name + target
+    // collapses both cases without affecting genuinely repeated interactions.
+    var DEDUP_WINDOW_MS = 500;
+    var recentDispatch = {};
+
+    function dedupKey(eventName, el) {
+        var id = '';
+        if (el && typeof el.getAttribute === 'function') {
+            id = el.getAttribute('href') || el.getAttribute('id') || '';
+        }
+        if (!id && el && el.tagName) {
+            id = el.tagName + ':' + (el.className || '');
+        }
+        return eventName + '|' + id;
+    }
+
+    function isDuplicateDispatch(eventName, el) {
+        var now = Date.now();
+        var key = dedupKey(eventName, el);
+        for (var k in recentDispatch) {
+            if (Object.prototype.hasOwnProperty.call(recentDispatch, k) &&
+                (now - recentDispatch[k]) > DEDUP_WINDOW_MS) {
+                delete recentDispatch[k];
+            }
+        }
+        if (recentDispatch[key] !== undefined && (now - recentDispatch[key]) < DEDUP_WINDOW_MS) {
+            if (debug) console.log('[TrackWP] duplicate suppressed:', eventName);
+            return true;
+        }
+        recentDispatch[key] = now;
+        return false;
+    }
+
     // === GA4 SESSION COOKIE SCAN ===
 
     function collectGaSessionCookies() {
@@ -342,6 +394,7 @@
         if (!consent.marketing) return;
         if (!googleAds.conversionId) return;
         if (!eventConfig || !eventConfig.ads_label) return;
+        if (!sendsTo(eventConfig, 'google_ads')) return;
         if (typeof window.gtag !== 'function') return;
         window.gtag('event', 'conversion', {
             'send_to': googleAds.conversionId + '/' + eventConfig.ads_label,
@@ -363,6 +416,7 @@
         if (!consent.marketing) return;
         if (typeof window.fbq !== 'function') return;
         if (!eventConfig || !eventConfig.meta_event) return;
+        if (!sendsTo(eventConfig, 'meta')) return;
         var params = {};
         if (payload.value) {
             params.value = payload.value;
@@ -382,10 +436,13 @@
 
     // client_only mode: REST dispatch is skipped, so GA4 events must go via gtag.
     // In client_and_server/server_only modes GA4 custom events are server-side only.
-    function fireGa4ClientEvent(eventName, payload, consent) {
+    function fireGa4ClientEvent(eventName, payload, consent, eventConfig) {
         if (dedupMode !== 'client_only') return;
         if (!consent.statistics) return;
         if (!config.measurementId) return;
+        // Unknown events (not in config) keep the legacy send behaviour;
+        // configured events honour their routing.
+        if (eventConfig && !sendsTo(eventConfig, 'ga4')) return;
         if (typeof window.gtag !== 'function') return;
         var params = { send_to: config.measurementId };
         if (payload.value) { params.value = payload.value; params.currency = payload.currency; }
@@ -394,13 +451,32 @@
 
     // === CORE: SEND EVENT ===
 
+    // Events triggered before the visitor made a consent choice (see sendEvent).
+    var pendingEvents = [];
+    var MAX_PENDING_EVENTS = 20;
+
+    function flushPendingEvents() {
+        if (!pendingEvents.length) return;
+        var queued = pendingEvents;
+        pendingEvents = [];
+        for (var i = 0; i < queued.length; i++) {
+            sendEvent(queued[i].name, queued[i].params, queued[i].options);
+        }
+    }
+
     function sendEvent(eventName, params, options) {
         // Require an active consent choice before sending ANYTHING: until the
         // trackwp_consent cookie exists the user hasn't made a choice yet. After
         // a choice — including rejection — the flow continues as normal: the
         // server uses rejected events for cookie cleanup and forwards nothing.
         if (config.requireActiveConsent && !getCookie('trackwp_consent')) {
-            if (debug) console.log('[TrackWP] skipped (no active consent choice yet):', eventName);
+            // Queue instead of dropping. scroll_depth / time_on_page / url_match
+            // fire once per page load, so a visitor who accepts the banner
+            // afterwards would otherwise lose them permanently.
+            if (pendingEvents.length < MAX_PENDING_EVENTS) {
+                pendingEvents.push({ name: eventName, params: params, options: options });
+            }
+            if (debug) console.log('[TrackWP] queued (no active consent choice yet):', eventName);
             return;
         }
 
@@ -466,7 +542,7 @@
                 if (navEmail || navPhone) payload.enhanced = rawEnhanced;
             }
             dispatchPayload(payload, true);
-            fireGa4ClientEvent(eventName, payload, consent);
+            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
             fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
             fireMetaPixel(eventConfig, payload, eventId, consent);
             if (debug) {
@@ -478,7 +554,7 @@
         if (!hasEnhanced) {
             // Synchronous dispatch — no async work needed.
             dispatchPayload(payload);
-            fireGa4ClientEvent(eventName, payload, consent);
+            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
             fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
             fireMetaPixel(eventConfig, payload, eventId, consent);
             if (debug) {
@@ -493,7 +569,7 @@
                 payload.enhanced = hashed;
             }
             dispatchPayload(payload);
-            fireGa4ClientEvent(eventName, payload, consent);
+            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
             fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
             fireMetaPixel(eventConfig, payload, eventId, consent);
             if (debug) {
@@ -538,122 +614,287 @@
         }
     }
 
+    // === FIRING TRIGGERS & CONDITIONS ===
+    //
+    // Mirrors Google Tag Manager: an event fires when ANY of its triggers
+    // matches, and a trigger matches when ALL of its conditions are true.
+    // The server ships a normalised `triggers` array on every event; the flat
+    // legacy fields are only a fallback for configs saved before 1.9.0.
+
+    function triggersFor(evt) {
+        if (evt.triggers && evt.triggers.length) {
+            return evt.triggers;
+        }
+        // Pre-1.9.0 shape — one implicit trigger, no conditions.
+        return [{
+            type: evt.trigger_type,
+            css_selector: evt.css_selector || '',
+            url_match: evt.url_match || '',
+            scroll_depth: evt.scroll_depth || 0,
+            time_seconds: evt.time_seconds || 0,
+            js_event: evt.js_event || '',
+            conditions: []
+        }];
+    }
+
+    function normalizeText(value) {
+        if (!value) return '';
+        // Collapse runs of whitespace so "Book \n  now" compares as "Book now",
+        // and cap the length — matching against a whole page section is never
+        // what the admin meant.
+        return String(value).replace(/\s+/g, ' ').trim().substring(0, 300);
+    }
+
+    function getQueryParam(name) {
+        if (!name) return '';
+        try {
+            return new URLSearchParams(window.location.search).get(name) || '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    /**
+     * Resolve a condition variable.
+     * Returns null when the variable is not in scope (e.g. a click variable on
+     * a timer trigger) — null NEVER matches, not even with a negative operator,
+     * so "Click ID does not equal X" cannot be trivially true on a timer.
+     */
+    function computeVariable(name, param, el) {
+        switch (name) {
+            case 'page_url':      return window.location.href;
+            case 'page_hostname': return (window.location.hostname || '').toLowerCase();
+            case 'page_path':     return window.location.pathname || '';
+            case 'page_fragment': return (window.location.hash || '').replace(/^#/, '');
+            case 'query_param':   return getQueryParam(param);
+            case 'page_title':    return document.title || '';
+            case 'referrer':      return document.referrer || '';
+            case 'click_id':
+            case 'form_id':       return el ? (el.id || '') : null;
+            case 'click_classes':
+            case 'form_classes':  return el ? (el.getAttribute && el.getAttribute('class') || '') : null;
+            case 'click_text':    return el ? normalizeText(el.textContent) : null;
+            case 'click_url':     return el ? (el.getAttribute && el.getAttribute('href') || '') : null;
+            case 'form_action':   return el ? (el.getAttribute && el.getAttribute('action') || '') : null;
+            case 'click_element':
+            case 'form_element':  return el || null;
+            default:              return null;
+        }
+    }
+
+    function resolveVariable(name, param, el, cache) {
+        var key = name + '|' + (param || '');
+        if (Object.prototype.hasOwnProperty.call(cache, key)) {
+            return cache[key];
+        }
+        var value = computeVariable(name, param, el);
+        cache[key] = value;
+        return value;
+    }
+
+    function evaluateCondition(cond, el, cache) {
+        var value = resolveVariable(cond.variable, cond.param, el, cache);
+        if (value === null || value === undefined) {
+            return false; // Not in scope — never matches.
+        }
+
+        var op     = cond.operator;
+        var target = cond.value || '';
+
+        // Element variables: selector matching only.
+        if (op === 'matches_selector' || op === 'not_matches_selector') {
+            var matched = false;
+            try {
+                matched = !!(value && typeof value.matches === 'function' && value.matches(target));
+            } catch (e) {
+                matched = false; // Invalid selector — treat as no match.
+            }
+            return op === 'matches_selector' ? matched : !matched;
+        }
+
+        // Class lists are token-based: "has class btn" must not match "btn-primary".
+        if (op === 'has_class' || op === 'not_has_class') {
+            var tokens = String(value).split(/\s+/);
+            var hasIt  = false;
+            for (var i = 0; i < tokens.length; i++) {
+                if (tokens[i] === target) { hasIt = true; break; }
+            }
+            return op === 'has_class' ? hasIt : !hasIt;
+        }
+
+        var str = String(value);
+        switch (op) {
+            case 'exists':       return str !== '';
+            case 'not_exists':   return str === '';
+            case 'equals':       return str === target;
+            case 'not_equals':   return str !== target;
+            case 'contains':     return str.indexOf(target) !== -1;
+            case 'not_contains': return str.indexOf(target) === -1;
+            case 'starts_with':  return str.lastIndexOf(target, 0) === 0;
+            case 'ends_with':    return target.length <= str.length &&
+                                        str.indexOf(target, str.length - target.length) !== -1;
+            default:             return false;
+        }
+    }
+
+    /**
+     * Does this trigger's condition set pass? Variables are computed lazily and
+     * cached per call, so ten conditions on one click cost one DOM read each.
+     */
+    function triggerMatches(trg, el) {
+        var conds = trg.conditions;
+        if (!conds || !conds.length) {
+            return true;
+        }
+        var cache = {};
+        for (var i = 0; i < conds.length; i++) {
+            if (!evaluateCondition(conds[i], el, cache)) {
+                if (debug) {
+                    console.log('[TrackWP] condition failed:', conds[i].variable, conds[i].operator, conds[i].value);
+                }
+                return false;
+            }
+        }
+        return true;
+    }
+
     function initAutoDetect() {
-        var clickEvents = [];
-        var downloadEvents = [];
-        var customFormEvents = [];
+        var clickTriggers    = [];
+        var downloadTriggers = [];
+        var formTriggers     = [];
 
         for (var i = 0; i < events.length; i++) {
             var evt = events[i];
+            var triggers = triggersFor(evt);
 
-            switch (evt.trigger_type) {
-                case 'css_click':
-                    if (evt.css_selector) clickEvents.push(evt);
-                    break;
-                case 'scroll_depth':
-                    bindScrollEvent(evt);
-                    break;
-                case 'time_on_page':
-                    bindTimeEvent(evt);
-                    break;
-                case 'url_match':
-                    checkUrlMatch(evt);
-                    break;
-                case 'file_download':
-                    downloadEvents.push(evt);
-                    break;
-                case 'form_submit':
-                    // Generic 'form_submit' is handled by class-trackwp-forms.php.
-                    // Custom-named form events with their own selector are bound here.
-                    if (evt.name !== 'form_submit' && evt.css_selector) {
-                        customFormEvents.push(evt);
-                    }
-                    break;
-                case 'js_event':
-                    if (evt.js_event) bindJsEvent(evt);
-                    break;
+            for (var t = 0; t < triggers.length; t++) {
+                var trg = triggers[t];
+                switch (trg.type) {
+                    case 'css_click':
+                        if (trg.css_selector) clickTriggers.push({ evt: evt, trg: trg });
+                        break;
+                    case 'scroll_depth':
+                        bindScrollEvent(evt, trg);
+                        break;
+                    case 'time_on_page':
+                        bindTimeEvent(evt, trg);
+                        break;
+                    case 'url_match':
+                        urlTriggers.push({ evt: evt, trg: trg });
+                        break;
+                    case 'file_download':
+                        downloadTriggers.push({ evt: evt, trg: trg });
+                        break;
+                    case 'form_submit':
+                        // Generic 'form_submit' is handled by class-trackwp-forms.php.
+                        // Custom-named form events with their own selector are bound here.
+                        if (evt.name !== 'form_submit' && trg.css_selector) {
+                            formTriggers.push({ evt: evt, trg: trg });
+                        }
+                        break;
+                    case 'js_event':
+                        if (trg.js_event) bindJsEvent(evt, trg);
+                        break;
+                }
             }
         }
 
-        bindClickEvents(clickEvents);
-        bindFileDownloads(downloadEvents);
-        bindCustomFormEvents(customFormEvents);
+        bindClickEvents(clickTriggers);
+        bindFileDownloads(downloadTriggers);
+        bindCustomFormEvents(formTriggers);
+        evaluateUrlTriggers();
+        watchUrlChanges();
     }
 
     // Custom JavaScript event trigger — listens for the configured event name
     // dispatched on document (e.g. document.dispatchEvent(new CustomEvent('my_event'))).
-    function bindJsEvent(evt) {
-        document.addEventListener(evt.js_event, function () {
+    function bindJsEvent(evt, trg) {
+        document.addEventListener(trg.js_event, function (e) {
+            if (isDuplicateDispatch(evt.name, e && e.target)) return;
+            if (!triggerMatches(trg, null)) return;
             sendEvent(evt.name);
         });
     }
 
     // Custom-named form events (trigger form_submit + own selector). The generic
     // 'form_submit' event is handled by class-trackwp-forms.php.
-    function bindCustomFormEvents(formEvents) {
-        if (!formEvents.length) return;
+    function bindCustomFormEvents(formTriggers) {
+        if (!formTriggers.length) return;
         document.addEventListener('submit', function (e) {
             var form = e.target;
             if (!form || typeof form.matches !== 'function') return;
-            for (var i = 0; i < formEvents.length; i++) {
-                var evt = formEvents[i];
+            for (var i = 0; i < formTriggers.length; i++) {
+                var evt = formTriggers[i].evt;
+                var trg = formTriggers[i].trg;
                 try {
-                    if (form.matches(evt.css_selector)) {
-                        sendEvent(evt.name, {}, { nav: true });
-                    }
-                } catch (err) { /* invalid selector — skip */ }
+                    if (!form.matches(trg.css_selector)) continue;
+                } catch (err) {
+                    continue; // invalid selector — skip
+                }
+                if (!triggerMatches(trg, form)) continue;
+                if (isDuplicateDispatch(evt.name, form)) continue;
+                sendEvent(evt.name, {}, { nav: true });
             }
         }, true);
     }
 
-    function bindClickEvents(clickEvents) {
-        if (!clickEvents.length) return;
+    function bindClickEvents(clickTriggers) {
+        if (!clickTriggers.length) return;
         // Delegation on document — works for dynamically-injected links (AJAX/SPA).
         // Capture phase so we dispatch before any inline onclick handlers.
         // We do NOT preventDefault — mailto/tel/outbound must navigate as normal.
         document.addEventListener('click', function(e) {
             if (!e.target || typeof e.target.closest !== 'function') return;
-            for (var i = 0; i < clickEvents.length; i++) {
-                var ev = clickEvents[i];
+            for (var i = 0; i < clickTriggers.length; i++) {
+                var evt = clickTriggers[i].evt;
+                var trg = clickTriggers[i].trg;
                 var match;
                 try {
-                    match = e.target.closest(ev.css_selector);
+                    // closest() so a click on a <span>/<svg> inside a link
+                    // resolves to the element the selector actually targets —
+                    // conditions must be evaluated against THAT element.
+                    match = e.target.closest(trg.css_selector);
                 } catch (err) {
                     continue;
                 }
                 if (!match) continue;
-                var nav = isNavLikeSelector(ev.css_selector) || isOutboundLink(match);
-                sendEvent(ev.name, {}, { nav: nav });
+                if (!triggerMatches(trg, match)) continue;
+                if (isDuplicateDispatch(evt.name, match)) continue;
+                var nav = isNavLikeSelector(trg.css_selector) || isOutboundLink(match);
+                sendEvent(evt.name, {}, { nav: nav });
                 // continue loop — one element may match multiple events
             }
         }, true);
     }
 
-    function bindFileDownloads(downloadEvents) {
-        if (!downloadEvents.length) return;
+    function bindFileDownloads(downloadTriggers) {
+        if (!downloadTriggers.length) return;
         var defaultSelector = FILE_EXT_SELECTORS.join(',');
         document.addEventListener('click', function(e) {
             if (!e.target || typeof e.target.closest !== 'function') return;
-            for (var i = 0; i < downloadEvents.length; i++) {
-                var evt = downloadEvents[i];
-                // Events with their own selector only fire when it matches the
+            for (var i = 0; i < downloadTriggers.length; i++) {
+                var evt = downloadTriggers[i].evt;
+                var trg = downloadTriggers[i].trg;
+                // Triggers with their own selector only fire when it matches the
                 // clicked element; others use the default file-extension list.
-                var selector = evt.css_selector ? evt.css_selector : defaultSelector;
+                var selector = trg.css_selector ? trg.css_selector : defaultSelector;
                 var match;
                 try {
                     match = e.target.closest(selector);
                 } catch (err) {
-                    continue; // invalid selector — skip this event
+                    continue; // invalid selector — skip this trigger
                 }
                 if (!match) continue;
+                if (!triggerMatches(trg, match)) continue;
+                if (isDuplicateDispatch(evt.name, match)) continue;
                 // File downloads always trigger navigation/unload — send synchronously.
                 sendEvent(evt.name, {}, { nav: true });
             }
         }, true);
     }
 
-    function bindScrollEvent(evt) {
-        var depth = parseInt(evt.scroll_depth, 10) || 50;
+    function bindScrollEvent(evt, trg) {
+        var depth = parseInt(trg.scroll_depth, 10) || 50;
         var fired = false;
 
         function checkScroll() {
@@ -664,28 +905,73 @@
             var percent = (scrollTop / docHeight) * 100;
             if (percent >= depth) {
                 fired = true;
-                sendEvent(evt.name);
                 window.removeEventListener('scroll', checkScroll);
+                if (!triggerMatches(trg, null)) return;
+                sendEvent(evt.name);
             }
         }
 
         window.addEventListener('scroll', checkScroll, { passive: true });
     }
 
-    function bindTimeEvent(evt) {
-        var seconds = parseInt(evt.time_seconds, 10) || 30;
+    function bindTimeEvent(evt, trg) {
+        var seconds = parseInt(trg.time_seconds, 10) || 30;
         setTimeout(function() {
+            if (!triggerMatches(trg, null)) return;
             sendEvent(evt.name);
         }, seconds * 1000);
     }
 
-    function checkUrlMatch(evt) {
-        if (!evt.url_match) return;
-        if (window.location.href.indexOf(evt.url_match) !== -1) {
+    // === URL / PAGE-VIEW TRIGGERS ===
+    //
+    // Re-evaluated on SPA navigation too: many WordPress themes and page
+    // builders swap content via the History API, where no page load happens and
+    // a one-shot check at init would miss every subsequent "page".
+
+    var urlTriggers  = [];
+    var firedUrlKeys = {};
+
+    function evaluateUrlTriggers() {
+        for (var i = 0; i < urlTriggers.length; i++) {
+            var evt = urlTriggers[i].evt;
+            var trg = urlTriggers[i].trg;
+            // Dedupe per event + URL so a re-render does not re-fire.
+            var key = evt.name + '|' + window.location.href;
+            if (firedUrlKeys[key]) continue;
+            if (trg.url_match && window.location.href.indexOf(trg.url_match) === -1) continue;
+            if (!triggerMatches(trg, null)) continue;
+            firedUrlKeys[key] = true;
             sendEvent(evt.name);
         }
     }
 
+    function watchUrlChanges() {
+        if (!urlTriggers.length) return;
+
+        // Defer one tick: an SPA router updates location before it swaps the
+        // DOM/title, so conditions on Page Title would read the old value.
+        function reEvaluate() {
+            setTimeout(evaluateUrlTriggers, 0);
+        }
+
+        try {
+            var methods = ['pushState', 'replaceState'];
+            for (var i = 0; i < methods.length; i++) {
+                (function (name) {
+                    var original = window.history[name];
+                    if (typeof original !== 'function') return;
+                    window.history[name] = function () {
+                        var result = original.apply(this, arguments);
+                        reEvaluate();
+                        return result;
+                    };
+                })(methods[i]);
+            }
+        } catch (e) { /* history is not patchable here — popstate still works */ }
+
+        window.addEventListener('popstate', reEvaluate);
+        window.addEventListener('hashchange', reEvaluate);
+    }
     // === EXPOSE API ===
 
     window.trackwp = {
@@ -714,8 +1000,10 @@
         }
     }
 
-    // Also renew cookies right after the user grants statistics consent in-page.
+    // Replay events that fired before the visitor made a choice, and renew
+    // cookies right after statistics consent is granted in-page.
     document.addEventListener('trackwp:consent_updated', function(e) {
+        flushPendingEvents();
         if (e && e.detail && e.detail.statistics) {
             fireKeepalive();
         }

@@ -216,15 +216,24 @@ class TrackWP_GA4 {
      * reaches Google. The REST endpoint is called via async fetch from the
      * browser, so a short blocking request does not affect the user experience.
      *
-     * Retries: 3 attempts (backoff 200ms / 600ms) when $blocking is true
+     * Retries: ONLY on HTTP 5xx — a 5xx proves Google received the request and
+     * refused it, so resending is safe. A transport error (WP_Error, in
+     * practice almost always the 2s timeout) is NOT retried: the hit may well
+     * have been delivered already, and GA4 Measurement Protocol performs no
+     * server-side deduplication (unlike Meta CAPI, which dedups on event_id).
+     * Retrying there double-counts the event in GA4.
+     *
+     * Retry count: 3 attempts (backoff 200ms / 600ms) when $blocking is true
      * (cron/flush context) or capi_debug_logging_enabled is set; otherwise a
      * single attempt so the REST response is not delayed unnecessarily.
      *
      * @param string    $url
      * @param array     $body
      * @param string    $context
-     * @param bool|null $blocking True enables retries (cron/flush context); null = retry only in debug mode.
-     * @return bool True on 2xx; false on failure.
+     * @param bool|null $blocking True enables 5xx retries (cron/flush context); null = retry only in debug mode.
+     * @return bool|null True on 2xx; false on a definitive rejection (safe to
+     *                   re-queue); null when the outcome is unknown (transport
+     *                   error — must NOT be re-queued, see above).
      */
     private function dispatch_with_retry($url, $body, $context = 'ga4', $blocking = null) {
         $retry      = ($blocking === true) || !empty($this->advanced['capi_debug_logging_enabled']);
@@ -242,16 +251,22 @@ class TrackWP_GA4 {
             ));
 
             if (is_wp_error($response)) {
-                $last_error = $response->get_error_message();
-                $last_code  = '';
-            } else {
-                $code = (int) wp_remote_retrieve_response_code($response);
-                if ($code < 500) {
-                    return ($code >= 200 && $code < 300);
-                }
-                $last_error = 'HTTP ' . $code;
-                $last_code  = $code;
+                // Outcome unknown — do not resend (see docblock).
+                $this->log_capi_error('transport error, not retried: ' . $response->get_error_message(), '');
+                return null;
             }
+
+            $code = (int) wp_remote_retrieve_response_code($response);
+            if ($code < 500) {
+                if ($code >= 200 && $code < 300) {
+                    return true;
+                }
+                $this->log_capi_error('HTTP ' . $code, $code);
+                return false;
+            }
+
+            $last_error = 'HTTP ' . $code;
+            $last_code  = $code;
 
             if ($i < $attempts - 1 && isset($delays[$i])) {
                 usleep($delays[$i]);
@@ -295,7 +310,9 @@ class TrackWP_GA4 {
 
         $body = $this->build_body($event_data, $client_id);
 
-        return $this->dispatch_with_retry($url, $body, 'ga4');
+        // dispatch_with_retry() may return null (outcome unknown) — only a
+        // confirmed 2xx counts as a successful dispatch.
+        return $this->dispatch_with_retry($url, $body, 'ga4') === true;
     }
 
     /**
@@ -568,9 +585,19 @@ class TrackWP_GA4 {
                 );
                 $body = array_merge($body, $body_extras);
 
-                // Cron context: blocking + retries are safe -- they do not block end-user response.
-                if (!$this->dispatch_with_retry($url, $body, 'ga4', true)) {
+                // Cron context: 5xx retries are safe -- they do not block the
+                // end-user response. Only a definitive rejection (false) is
+                // re-queued; an unknown outcome (null, transport error) is
+                // dropped, because the batch may already have been delivered
+                // and GA4 MP would count it twice on a resend.
+                $result = $this->dispatch_with_retry($url, $body, 'ga4', true);
+                if ($result === false) {
                     $failed = array_merge($failed, $chunk);
+                } elseif ($result === null) {
+                    $this->log_capi_error(
+                        'batch outcome unknown (' . count($chunk) . ' events) -- dropped instead of re-queued to avoid double counting',
+                        ''
+                    );
                 }
             }
         }

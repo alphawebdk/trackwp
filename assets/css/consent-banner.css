@@ -298,9 +298,12 @@
     max-width: 880px;
     max-height: 90vh;
     overflow: auto;
-    background: #fff;
-    color: #1d2327;
-    border-radius: 8px;
+    /* Was hardcoded #fff/#1d2327, which silently overrode the admin's colour
+       settings on this style — the preview applied them, the real banner did
+       not. The light modal is now only the FALLBACK. */
+    background: var(--twp-bg, #fff);
+    color: var(--twp-text, #1d2327);
+    border-radius: var(--twp-radius, 8px);
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     z-index: 999999;
 }
@@ -315,7 +318,7 @@
 
 .trackwp-consent--style-cookiebot .trackwp-consent__heading,
 .trackwp-consent--style-cookiebot .trackwp-consent__description {
-    color: #1d2327;
+    color: var(--twp-text, #1d2327);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__description {
@@ -325,7 +328,7 @@
 /* Tabs */
 .trackwp-consent--style-cookiebot .trackwp-consent__tabs {
     display: flex;
-    border-bottom: 1px solid #e0e0e0;
+    border-bottom: 1px solid rgba(128, 128, 128, 0.3);
     gap: 32px;
     margin-bottom: 24px;
 }
@@ -335,7 +338,8 @@
     border: none;
     padding: 12px 4px;
     font-weight: 500;
-    color: #666;
+    color: var(--twp-text, #1d2327);
+    opacity: .65;
     cursor: pointer;
     position: relative;
     font-family: inherit;
@@ -344,7 +348,8 @@
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__tab:hover {
-    color: #1d2327;
+    color: var(--twp-text, #1d2327);
+    opacity: 1;
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__tab.is-active {
@@ -382,18 +387,18 @@
 
 .trackwp-consent--style-cookiebot .trackwp-consent__category {
     padding: 16px;
-    border: 1px solid #e0e0e0;
+    border: 1px solid rgba(128, 128, 128, 0.3);
     border-radius: 6px;
-    background: #fafafa;
+    background: rgba(128, 128, 128, 0.08);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__category-name {
-    color: #1d2327;
+    color: var(--twp-text, #1d2327);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__category-desc {
-    color: #555;
-    opacity: 1;
+    color: var(--twp-text, #1d2327);
+    opacity: .75;
 }
 
 /* Toggle in cookiebot — vertical: label above, switch below */
@@ -405,7 +410,7 @@
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__toggle-slider {
-    background: #d0d0d0;
+    background: rgba(128, 128, 128, 0.45);
 }
 
 /* Actions footer */
@@ -414,7 +419,7 @@
     gap: 12px;
     justify-content: flex-end;
     padding-top: 24px;
-    border-top: 1px solid #e0e0e0;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
     margin-top: 24px;
 }
 
@@ -424,46 +429,47 @@
 
 /* Reject + Save in cookiebot — outline on white bg */
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--reject {
-    background: #fff;
-    color: #1d2327;
-    border-color: #c0c0c0;
+    background: transparent;
+    color: var(--twp-text, #1d2327);
+    border-color: rgba(128, 128, 128, 0.5);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--reject:hover {
-    background: #f5f5f5;
-    border-color: #999;
+    background: rgba(128, 128, 128, 0.12);
+    border-color: rgba(128, 128, 128, 0.8);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--save {
-    background: #fff;
-    color: #1d2327;
-    border-color: #c0c0c0;
+    background: transparent;
+    color: var(--twp-text, #1d2327);
+    border-color: rgba(128, 128, 128, 0.5);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--save:hover {
-    background: #f5f5f5;
-    border-color: #999;
+    background: rgba(128, 128, 128, 0.12);
+    border-color: rgba(128, 128, 128, 0.8);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--customize {
-    background: #fff;
-    color: #1d2327;
-    border-color: #c0c0c0;
+    background: transparent;
+    color: var(--twp-text, #1d2327);
+    border-color: rgba(128, 128, 128, 0.5);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--customize:hover {
-    background: #f5f5f5;
-    border-color: #999;
+    background: rgba(128, 128, 128, 0.12);
+    border-color: rgba(128, 128, 128, 0.8);
 }
 
 /* Accept stays solid accent (already defined globally) */
 
 .trackwp-consent--style-cookiebot .trackwp-consent__link {
-    color: #555;
+    color: var(--twp-accent, #555);
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__link:hover {
-    color: #1d2327;
+    color: var(--twp-accent, #1d2327);
+    opacity: .8;
 }
 
 /* Cookiebot mobile: 2 cols, stacked buttons */
@@ -546,8 +552,10 @@
     width: 100%;
     max-width: 100%;
     z-index: 999999;
-    background: var(--bg, var(--twp-bg, #1d2327));
-    color: #fff;
+    /* --bg was never defined by anything — the indirection was dead. Text was
+       locked to #fff, so the "Tekst"-colour setting did nothing on this style. */
+    background: var(--twp-bg, #1d2327);
+    color: var(--twp-text, #fff);
     padding: 16px 24px;
     border-radius: 0;
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);

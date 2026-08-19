@@ -36,6 +36,10 @@ $wpdb->query(
 
 // Clear scheduled cron events (covers WP-CLI uninstall without prior deactivation).
 wp_clear_scheduled_hook( 'trackwp_flush_ga4' );
+wp_clear_scheduled_hook( 'trackwp_prune_delivery_log' );
+
+// Drop the delivery-log table.
+$wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}trackwp_delivery_log" );
 
 // Delete all plugin files in the log directory, then the directory itself.
 $log_dir = WP_CONTENT_DIR . '/trackwp';

@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.8.0
+Stable tag: 1.9.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -111,6 +111,37 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.9.0 =
+* Ny: Custom events med firing triggers og betingelser — bygget efter Google Tag Managers model: en begivenhed sendes når EN AF dens triggere matcher, og en trigger matcher når ALLE dens betingelser er sande (OR mellem triggere, AND indeni)
+* Ny: Betingelser på sidevariable (Page URL, Hostname, Path, URL Fragment, Query Parameter, Page Title, Referrer), klikvariable (Click ID, Classes, Text, URL, Element) og formularvariable (Form ID, Classes, Action, Element)
+* Ny: Operatorer equals / does not equal / contains / does not contain / starts with / ends with / has CSS class / matches CSS selector / exists — med GTM's egne betegnelser
+* Ny: Klassematching er token-baseret ("has CSS class btn" matcher ikke "btn-primary"), og kliktekst normaliseres (whitespace kollapses)
+* Ny: URL-triggere reevalueres ved SPA-navigation (pushState/replaceState/popstate/hashchange) med dedup pr. URL — tidligere blev de kun tjekket ved sideindlæsning
+* Ny: Leveringslog (fra som standard) — gemmer i egen databasetabel hvilke begivenheder der blev sendt til hver platform og om de kom frem. Gemmer KUN begivenhedsnavn, tilfældigt begivenheds-id, tidspunkt afrundet til minut, platform, leveringsstatus og samtykketilstand — hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefon, client_id, gclid eller Facebook-cookies
+* Ny: Oversigt i admin over hvilke begivenheder der faktisk er sendt de seneste dage, med graf pr. dag og leveret/fejlet pr. platform
+* Ny: Automatisk advarsel i admin når loggen viser samme begivenhed sendt flere gange til samme platform inden for samme minut (dobbelttælling)
+* Ny: Slettefrist 7 dage som standard, maks. 30. Dagligt oprydningsjob, "Tøm leveringslog"-knap, tabellen fjernes ved afinstallation
+* Fix: /my-data beskriver nu korrekt hvad der gemmes server-side når leveringsloggen er slået til
+* Fix: Endpoint-sluggen kunne skygge for pluginets egne ruter — kun "consent-log" var reserveret, så "loader", "keepalive", "consent", "c" og "my-data" kunne overskrive førsteparts-loaderen eller GDPR-endpointet. Hele sættet er nu reserveret
+* Fix: Engelsk oversættelse virkede ikke — kun .po blev distribueret, ikke den kompilerede .mo (145 strenge)
+* Tilføjet: LICENSE-fil (GPLv2) manglede i plugin-roden trods GPL-headeren
+* Fix: Banner-farverne virkede ikke på "cookiebot"- og "bottombar"-stilene — CSS'en havde hardkodet hvid baggrund/mørk tekst (cookiebot) og hvid tekst (bottombar), som overskrev de valgte farver. Admin-forhåndsvisningen viste farverne, men det rigtige banner ignorerede dem. Bemærk: bruger du cookiebot-stilen, får banneret nu dine faktisk valgte farver i stedet for den hvide standard
+* Fix: PHP 8-warning "Undefined array key meta_event" ved validering af begivenheder uden Meta-event
+* Doc: Google Ads CAPI-noten var forkert — allowlisten for uploadClickConversions går på dokumenteret brug dec 2025–maj 2026, ikke på tokenets alder
+* Fix: Begivenheder kunne ikke gemmes — sanitizeren afslashede JSON'en en ekstra gang (WordPress havde allerede gjort det), så enhver selector med anførselstegn (fx a[href^="tel:"]) ødelagde payloaden og hele listen blev stille nulstillet til standardbegivenhederne. Samme fejl ramte cookie-deklarationerne
+* Fix: Afviste begivenheder droppes ikke længere i stilhed — admin får nu en konkret fejlbesked pr. række, og en ugyldig indsendelse overskriver aldrig den gemte liste
+* Fix: Dobbelttælling i GA4 — et Measurement Protocol-kald der timede ud blev sendt igen, selvom hittet var leveret (GA4 MP deduplikerer ikke på event_id som Meta CAPI). Der retryes nu kun på HTTP 5xx, og batches med ukendt udfald genkøes ikke
+* Fix: send_to-platformvalget håndhæves nu også klient-side — Meta Pixel og Google Ads gtag-konverteringer fyrer ikke længere for begivenheder der er routet væk fra platformen
+* Fix: Dublerede begivenhedsnavne afvises (bandt to gange på frontenden og sendte to events med forskellige event_id); eksisterende dubletter ryddes op ved opdatering
+* Fix: Guard mod syntetiske klik — temaer/menu-scripts der gendispatcher element.click() udløste event'et to gange
+* Fix: AJAX-formularer trackes nu ved hver indsendelse; tidligere blev kun den første talt med pr. sideindlæsning
+* Fix: Begivenheder udløst før samtykkevalget (scrolldybde, tid på siden, URL-match) køes og sendes nu når besøgende accepterer, i stedet for at gå tabt
+* Fix: Fejl- og bekræftelsesbeskeder vises nu på TrackWP-siden (settings_errors() blev aldrig kaldt)
+* Fix: Cookie-deklarationer er nu med i eksport/import
+* Ny: Ny begivenhed får automatisk et ledigt navn, og detaljepanelet åbnes så CSS-selectoren kan udfyldes med det samme
+* Sikkerhed: Import validerer at filen faktisk er uploadet (is_uploaded_file) og afviser filer over 2 MB
+* Oprydning: Døde options async_loading/defer_tracking fjernes; klient-config bygges nu ét sted (TrackWP_Events::get_client_config)
 
 = 1.8.0 =
 * Ny: Automatiske opdateringer via GitHub Releases (Plugin Update Checker v5.7) — opdateringsnotifikation og 1-klik-opdatering i wp-admin som standard-plugins
