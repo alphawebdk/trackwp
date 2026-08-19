@@ -1508,16 +1508,19 @@ $has_woocommerce = class_exists('WooCommerce');
             <table class="widefat striped">
                 <thead><tr>
                     <th><?php esc_html_e( 'Begivenhed', 'trackwp' ); ?></th>
-                    <th><?php esc_html_e( 'Leveret', 'trackwp' ); ?></th>
-                    <th><?php esc_html_e( 'Pr. platform', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Udløst', 'trackwp' ); ?></th>
+                    <th><?php esc_html_e( 'Videresendt', 'trackwp' ); ?></th>
                     <th><?php esc_html_e( 'Senest', 'trackwp' ); ?></th>
                 </tr></thead>
                 <tbody>
                 <?php foreach ( $log_overview as $ov ) : ?>
                     <tr>
                         <td><code><?php echo esc_html( $ov['event_name'] ); ?></code></td>
-                        <td><strong><?php echo esc_html( number_format_i18n( $ov['total'] ) ); ?></strong></td>
+                        <td><strong><?php echo esc_html( number_format_i18n( $ov['received'] ? $ov['received'] : $ov['delivered'] ) ); ?></strong></td>
                         <td>
+                            <?php if ( empty( $ov['destinations'] ) ) : ?>
+                                <span class="description"><?php esc_html_e( 'Ingen platform modtog denne begivenhed', 'trackwp' ); ?></span>
+                            <?php endif; ?>
                             <?php foreach ( $ov['destinations'] as $dest => $counts ) : ?>
                                 <?php
                                 $label = isset( $dest_labels[ $dest ] ) ? $dest_labels[ $dest ] : $dest;

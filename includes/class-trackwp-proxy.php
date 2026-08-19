@@ -339,19 +339,25 @@ class TrackWP_Proxy {
         $dedup_mode = isset($advanced['dedup_mode']) ? $advanced['dedup_mode'] : 'client_and_server';
         $server_dispatch = ( $dedup_mode !== 'client_only' );
 
+        // Delivery-log context: metadata only, never identifiers (see
+        // TrackWP_Delivery_Log). Recording is a no-op while the log is off.
+        $log_consent = array( 'analytics' => $analytics_consent, 'marketing' => $marketing_consent );
+        $log_id      = isset( $event_data['event_id'] ) ? $event_data['event_id'] : '';
+
         // Bot/crawler filtering — short-circuit platform dispatch (but log the event).
         if ( self::is_bot( $event_data['user_agent'] ) ) {
+            TrackWP_Delivery_Log::record( $log_id, $event_name, 'received', 'skipped', $log_consent );
             $this->maybe_log( $event_data, $analytics_consent, $marketing_consent );
             TrackWP_Settings::record_event_hit( 'bot_skipped', $event_name );
             return new WP_REST_Response( array( 'status' => 'ok', 'skipped' => 'bot' ), 200 );
         }
 
-        // === PLATFORM ROUTING ===
+        // One row per incoming event, independent of how many platforms it is
+        // forwarded to. This is what makes the log answer "what fired?" even on
+        // a site with no platform configured or in client_only mode.
+        TrackWP_Delivery_Log::record( $log_id, $event_name, 'received', 'ok', $log_consent );
 
-        // Delivery-log context: metadata only, never identifiers (see
-        // TrackWP_Delivery_Log). Recording is a no-op while the log is off.
-        $log_consent = array( 'analytics' => $analytics_consent, 'marketing' => $marketing_consent );
-        $log_id      = isset( $event_data['event_id'] ) ? $event_data['event_id'] : '';
+        // === PLATFORM ROUTING ===
 
         if ( $server_dispatch ) {
             // GA4

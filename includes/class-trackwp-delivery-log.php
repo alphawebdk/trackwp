@@ -2,9 +2,19 @@
 /**
  * Delivery log — records WHETHER an event reached each platform, never WHO sent it.
  *
- * Purpose is diagnostics and delivery verification: proving an event was
- * dispatched, spotting failures, and catching double-counting (two rows with
- * the same event_name in the same minute but different event_ids).
+ * Purpose is diagnostics and delivery verification: showing the site owner
+ * which events fired, proving they were dispatched, spotting failures, and
+ * catching double-counting (two rows with the same event_name in the same
+ * minute but different event_ids).
+ *
+ * Two kinds of row are written per event:
+ *   destination 'received'          — exactly one per incoming event
+ *   destination ga4|meta|google_ads — one per forwarding attempt
+ * The 'received' row is what makes the log answer "what fired?" rather than
+ * only "what did we forward?" — without it the log looks empty on a site with
+ * no platform configured, or in client_only mode, while events arrive normally.
+ * It is also why the overview counts 'received' for the headline number: summing
+ * the platform rows would multiply an event by the number of destinations.
  *
  * Deliberately NOT an analytics or identity store. The following are never
  * written here, because they would turn the log into a second personal-data
@@ -151,7 +161,7 @@ class TrackWP_Delivery_Log {
      *
      * @param string $event_id    Our per-event random id (evt_…).
      * @param string $event_name  Configured event name.
-     * @param string $destination One of: ga4, meta, google_ads.
+     * @param string $destination One of: received, ga4, meta, google_ads.
      * @param string $status      One of: ok, failed, unknown, skipped.
      * @param array  $consent     Keys: analytics, marketing (booleans).
      * @param int    $http_code   Optional upstream HTTP status.
@@ -162,7 +172,11 @@ class TrackWP_Delivery_Log {
             return;
         }
 
-        $allowed_destinations = array('ga4', 'meta', 'google_ads');
+        // 'received' is not a platform: it is one row per incoming event, so the
+        // log answers "what fired?" and not only "what did we forward?".
+        // Without it the log looks empty on a site with no platform configured,
+        // or in client_only mode, even while events are arriving normally.
+        $allowed_destinations = array('received', 'ga4', 'meta', 'google_ads');
         $allowed_statuses     = array('ok', 'failed', 'unknown', 'skipped');
         if ( ! in_array($destination, $allowed_destinations, true) ) {
             return;
@@ -304,29 +318,45 @@ class TrackWP_Delivery_Log {
             if ( ! isset($out[ $name ]) ) {
                 $out[ $name ] = array(
                     'event_name'   => $name,
-                    'total'        => 0,
+                    'received'     => 0,
+                    'delivered'    => 0,
                     'last_seen'    => '',
                     'destinations' => array(),
                 );
             }
-            $dest = $row['destination'];
-            if ( ! isset($out[ $name ]['destinations'][ $dest ]) ) {
-                $out[ $name ]['destinations'][ $dest ] = array('ok' => 0, 'failed' => 0, 'skipped' => 0, 'unknown' => 0);
-            }
-            $status = isset($out[ $name ]['destinations'][ $dest ][ $row['status'] ]) ? $row['status'] : 'unknown';
-            $out[ $name ]['destinations'][ $dest ][ $status ] += (int) $row['hits'];
+            $dest   = $row['destination'];
+            $hits   = (int) $row['hits'];
+            $status = $row['status'];
 
-            if ( $row['status'] === 'ok' ) {
-                $out[ $name ]['total'] += (int) $row['hits'];
+            if ( $dest === 'received' ) {
+                // The headline count: one row per incoming event. Summing the
+                // per-platform rows instead would multiply an event by the
+                // number of platforms it was forwarded to.
+                if ( $status === 'ok' ) {
+                    $out[ $name ]['received'] += $hits;
+                }
+            } else {
+                if ( ! isset($out[ $name ]['destinations'][ $dest ]) ) {
+                    $out[ $name ]['destinations'][ $dest ] = array('ok' => 0, 'failed' => 0, 'skipped' => 0, 'unknown' => 0);
+                }
+                $bucket = isset($out[ $name ]['destinations'][ $dest ][ $status ]) ? $status : 'unknown';
+                $out[ $name ]['destinations'][ $dest ][ $bucket ] += $hits;
+                if ( $status === 'ok' ) {
+                    $out[ $name ]['delivered'] += $hits;
+                }
             }
+
             if ( $row['last_seen'] > $out[ $name ]['last_seen'] ) {
                 $out[ $name ]['last_seen'] = $row['last_seen'];
             }
         }
 
-        // Busiest event first.
+        // Busiest event first. Fall back to delivered for logs written before
+        // 'received' rows existed, so old data still sorts sensibly.
         uasort( $out, function( $a, $b ) {
-            return $b['total'] <=> $a['total'];
+            $an = $a['received'] ? $a['received'] : $a['delivered'];
+            $bn = $b['received'] ? $b['received'] : $b['delivered'];
+            return $bn <=> $an;
         } );
 
         return $out;
