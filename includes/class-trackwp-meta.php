@@ -108,29 +108,58 @@ class TrackWP_Meta {
             $event_entry['data_processing_options_state']   = 0;
         }
 
-        // Custom data (value, currency)
-        if (!empty($event_data['value'])) {
+        // Custom data (value, currency).
+        // Meta requires BOTH on Purchase, including when the amount is 0 (a
+        // fully discounted order is still a purchase). The old `!empty($value)`
+        // test dropped them in that case.
+        $internal_event = isset($event_data['event']) ? $event_data['event'] : '';
+        $is_transaction = in_array($internal_event, array('purchase', 'refund'), true);
+        if (!empty($event_data['value']) || $is_transaction) {
             $event_entry['custom_data'] = array(
-                'value'    => floatval($event_data['value']),
-                'currency' => isset($event_data['currency']) ? $event_data['currency'] : 'DKK',
+                'value'    => floatval(isset($event_data['value']) ? $event_data['value'] : 0),
+                'currency' => self::normalize_currency(isset($event_data['currency']) ? $event_data['currency'] : ''),
             );
         }
 
-        // Ecommerce items
-        if (!empty($event_data['ecommerce']['items'])) {
-            $contents = array();
-            foreach ($event_data['ecommerce']['items'] as $item) {
+        // Ecommerce. Already sanitised by TrackWP_Proxy::sanitize_ecommerce().
+        $ecommerce = (isset($event_data['ecommerce']) && is_array($event_data['ecommerce']))
+            ? $event_data['ecommerce']
+            : array();
+
+        if (!empty($ecommerce['items'])) {
+            $contents  = array();
+            $num_items = 0;
+            foreach ($ecommerce['items'] as $item) {
+                $quantity = isset($item['quantity']) ? max(1, intval($item['quantity'])) : 1;
                 $contents[] = array(
-                    'id'       => isset($item['item_id']) ? $item['item_id'] : '',
-                    'quantity' => isset($item['quantity']) ? intval($item['quantity']) : 1,
+                    // Meta's contents spec: id, quantity, item_price.
+                    'id'         => isset($item['item_id']) ? (string) $item['item_id'] : (isset($item['item_name']) ? (string) $item['item_name'] : ''),
+                    'quantity'   => $quantity,
                     'item_price' => isset($item['price']) ? floatval($item['price']) : 0,
                 );
+                $num_items += $quantity;
             }
             if (!isset($event_entry['custom_data'])) {
                 $event_entry['custom_data'] = array();
             }
-            $event_entry['custom_data']['contents'] = $contents;
+            $event_entry['custom_data']['contents']     = $contents;
             $event_entry['custom_data']['content_type'] = 'product';
+
+            // num_items is documented for InitiateCheckout ONLY — sending it on
+            // Purchase is not part of the spec, so it is gated on the mapped
+            // Meta event rather than set unconditionally.
+            if ($meta_event === 'InitiateCheckout') {
+                $event_entry['custom_data']['num_items'] = $num_items;
+            }
+        }
+
+        // order_id lets Meta reconcile this purchase with catalog and offline
+        // data, and is a second dedup key alongside event_id.
+        if (!empty($ecommerce['transaction_id'])) {
+            if (!isset($event_entry['custom_data'])) {
+                $event_entry['custom_data'] = array();
+            }
+            $event_entry['custom_data']['order_id'] = (string) $ecommerce['transaction_id'];
         }
 
         $body = array(
@@ -144,6 +173,20 @@ class TrackWP_Meta {
         }
 
         return $this->dispatch_with_retry($url, $body, 'meta');
+    }
+
+    /**
+     * Normalise a currency to the ISO 4217 shape Meta expects (3 letters).
+     *
+     * @param string $currency
+     * @return string
+     */
+    private static function normalize_currency($currency) {
+        $clean = preg_replace('/[^A-Za-z]/', '', (string) $currency);
+        if (strlen((string) $clean) < 3) {
+            return 'DKK';
+        }
+        return strtoupper(substr($clean, 0, 3));
     }
 
     /**

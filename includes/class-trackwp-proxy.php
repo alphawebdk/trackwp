@@ -109,6 +109,15 @@ class TrackWP_Proxy {
                     'default'           => '',
                     'sanitize_callback' => 'sanitize_text_field',
                 ),
+                // Ecommerce payload: {items: [...], transaction_id, coupon}.
+                // Sanitised through sanitize_ecommerce() below, which is the
+                // single gate for this data — the GA4 and Meta classes consume
+                // it as trusted, the same way they do with `enhanced`.
+                'ecommerce' => array(
+                    'default'           => array(),
+                    'type'              => 'object',
+                    'sanitize_callback' => array(__CLASS__, 'sanitize_ecommerce'),
+                ),
             ),
         ));
 
@@ -132,6 +141,117 @@ class TrackWP_Proxy {
                 'permission_callback' => array( $this, 'check_origin_only' ),
             ),
         ) );
+    }
+
+    /** Hard cap on ecommerce line items per event. */
+    const MAX_ECOMMERCE_ITEMS = 50;
+
+    /** Max length of a single ecommerce string field (GA4 caps param values at 100). */
+    const MAX_ECOMMERCE_STR = 100;
+
+    /**
+     * Sanitise an ecommerce payload.
+     *
+     * This is the ONLY place ecommerce data is validated. The GA4 class passes
+     * `items` straight into the Measurement Protocol body and the Meta class
+     * maps it into `custom_data.contents`, so anything not filtered here would
+     * reach Google and Meta verbatim.
+     *
+     * Rules:
+     *  - unknown item keys are dropped (whitelist, not blacklist)
+     *  - GA4 requires item_id or item_name on every item; items with neither
+     *    are dropped rather than sent and silently rejected
+     *  - numbers are cast, strings are sanitised and length-capped
+     *  - at most MAX_ECOMMERCE_ITEMS items survive
+     *
+     * No unslashing happens here: REST JSON bodies are decoded straight from
+     * the request and are never slashed by WordPress. Calling stripslashes()
+     * on them would corrupt legitimate values.
+     *
+     * @param mixed $raw Raw ecommerce object from the request (or built in PHP).
+     * @return array Empty array when there is nothing usable.
+     */
+    public static function sanitize_ecommerce( $raw ) {
+        if ( ! is_array( $raw ) || empty( $raw ) ) {
+            return array();
+        }
+
+        $out = array();
+
+        // Whitelisted item fields => cast. GA4 item spec field names.
+        $string_fields = array(
+            'item_id', 'item_name', 'item_brand', 'item_category', 'item_category2',
+            'item_category3', 'item_category4', 'item_category5', 'item_variant',
+            'coupon', 'affiliation', 'item_list_id', 'item_list_name',
+        );
+        $float_fields = array( 'price', 'discount' );
+
+        if ( ! empty( $raw['items'] ) && is_array( $raw['items'] ) ) {
+            $items = array();
+            foreach ( $raw['items'] as $item ) {
+                if ( ! is_array( $item ) ) {
+                    continue;
+                }
+                $clean = array();
+                foreach ( $string_fields as $field ) {
+                    if ( isset( $item[ $field ] ) && is_scalar( $item[ $field ] ) ) {
+                        $value = substr( sanitize_text_field( (string) $item[ $field ] ), 0, self::MAX_ECOMMERCE_STR );
+                        if ( '' !== $value ) {
+                            $clean[ $field ] = $value;
+                        }
+                    }
+                }
+                foreach ( $float_fields as $field ) {
+                    if ( isset( $item[ $field ] ) && is_numeric( $item[ $field ] ) ) {
+                        $clean[ $field ] = round( (float) $item[ $field ], 6 );
+                    }
+                }
+                // quantity is only kept when positive. A zero or negative
+                // quantity is malformed input, and clamping it to 1 would
+                // invent a sale that did not happen; omitting the key lets GA4
+                // apply its own default of 1 instead.
+                if ( isset( $item['quantity'] ) && is_numeric( $item['quantity'] ) ) {
+                    $quantity = (int) $item['quantity'];
+                    if ( $quantity > 0 ) {
+                        $clean['quantity'] = $quantity;
+                    }
+                }
+
+                // index is a list position, where 0 is legitimate.
+                if ( isset( $item['index'] ) && is_numeric( $item['index'] ) ) {
+                    $clean['index'] = max( 0, (int) $item['index'] );
+                }
+
+                // GA4 drops items without an identifier — do not send them.
+                if ( empty( $clean['item_id'] ) && empty( $clean['item_name'] ) ) {
+                    continue;
+                }
+
+                $items[] = $clean;
+                if ( count( $items ) >= self::MAX_ECOMMERCE_ITEMS ) {
+                    break;
+                }
+            }
+            if ( ! empty( $items ) ) {
+                $out['items'] = $items;
+            }
+        }
+
+        if ( isset( $raw['transaction_id'] ) && is_scalar( $raw['transaction_id'] ) ) {
+            $transaction_id = substr( sanitize_text_field( (string) $raw['transaction_id'] ), 0, 64 );
+            if ( '' !== $transaction_id ) {
+                $out['transaction_id'] = $transaction_id;
+            }
+        }
+
+        if ( isset( $raw['coupon'] ) && is_scalar( $raw['coupon'] ) ) {
+            $coupon = substr( sanitize_text_field( (string) $raw['coupon'] ), 0, self::MAX_ECOMMERCE_STR );
+            if ( '' !== $coupon ) {
+                $out['coupon'] = $coupon;
+            }
+        }
+
+        return $out;
     }
 
     /**
@@ -286,6 +406,7 @@ class TrackWP_Proxy {
             'fbc'               => $fbc,
             'fbp'               => $fbp,
             'enhanced'          => $request->get_param('enhanced'),
+            'ecommerce'         => $request->get_param('ecommerce'),
             'meta_event_name'   => $meta_event_name,
             'ga_cookie'         => $ga_cookie,
             'ga_session_cookie' => $ga_session_cookie,

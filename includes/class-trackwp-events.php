@@ -215,6 +215,73 @@ class TrackWP_Events {
             'time_on_page'  => __('Tid på siden', 'trackwp'),
             'js_event'      => __('JavaScript-event', 'trackwp'),
             'file_download' => __('Fildownload', 'trackwp'),
+            // Fired programmatically by TrackWP_WooCommerce, never bound in the
+            // browser: initAutoDetect() has no case for this type, so it binds
+            // nothing. Page-scope conditions still apply, which lets an admin
+            // restrict a shop event to certain URLs.
+            'woocommerce'   => __('WooCommerce (styres på WooCommerce-fanen)', 'trackwp'),
+        );
+    }
+
+    /**
+     * Event names TrackWP_WooCommerce can emit, in funnel order.
+     *
+     * @return array
+     */
+    public static function get_woocommerce_event_names() {
+        return array('view_item', 'add_to_cart', 'begin_checkout', 'purchase');
+    }
+
+    /**
+     * Templates for the WooCommerce shop events.
+     *
+     * These are seeded into `trackwp_events` (not a separate option) so shop
+     * events inherit the whole existing pipeline: per-event `send_to` routing,
+     * the Meta event mapping, the Google Ads label, the delivery log and the
+     * dedup mode. The WooCommerce tab configures only where the VALUE and the
+     * item data come from.
+     *
+     * `value` stays 0: the real amount is passed per event as a `sendEvent`
+     * param, which overrides the config default (see trackwp.js).
+     *
+     * @return array Keyed by event name.
+     */
+    public static function get_woocommerce_event_templates() {
+        $base = array(
+            'enabled'      => true,
+            'trigger_type' => 'woocommerce',
+            'css_selector' => '',
+            'value'        => 0,
+            'currency'     => 'DKK',
+            'ads_label'    => '',
+            'send_to'      => array('ga4' => true, 'google_ads' => false, 'meta' => true),
+        );
+
+        return array(
+            'view_item' => array_merge($base, array(
+                'name'         => 'view_item',
+                'display_name' => 'View Item',
+                'meta_event'   => 'ViewContent',
+            )),
+            'add_to_cart' => array_merge($base, array(
+                'name'         => 'add_to_cart',
+                'display_name' => 'Add To Cart',
+                'meta_event'   => 'AddToCart',
+            )),
+            'begin_checkout' => array_merge($base, array(
+                'name'         => 'begin_checkout',
+                'display_name' => 'Begin Checkout',
+                'meta_event'   => 'InitiateCheckout',
+            )),
+            // Purchase defaults to Google Ads ON: it is the one shop event a
+            // store actually wants as a conversion. It still needs an
+            // ads_label before the client-side gtag conversion fires.
+            'purchase' => array_merge($base, array(
+                'name'         => 'purchase',
+                'display_name' => 'Purchase',
+                'meta_event'   => 'Purchase',
+                'send_to'      => array('ga4' => true, 'google_ads' => true, 'meta' => true),
+            )),
         );
     }
 

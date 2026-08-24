@@ -316,6 +316,30 @@ class TrackWP_GA4 {
     }
 
     /**
+     * Event names GA4 treats as monetary transactions, where currency and
+     * value are required parameters rather than optional ones.
+     *
+     * @return array
+     */
+    private static function transaction_events() {
+        return array('purchase', 'refund');
+    }
+
+    /**
+     * Normalise a currency to the ISO 4217 shape GA4 expects (3 letters).
+     *
+     * @param string $currency
+     * @return string
+     */
+    private static function normalize_currency($currency) {
+        $clean = preg_replace('/[^A-Za-z]/', '', (string) $currency);
+        if (strlen((string) $clean) < 3) {
+            return 'DKK';
+        }
+        return strtoupper(substr($clean, 0, 3));
+    }
+
+    /**
      * Build a single-event GA4 MP body from event data.
      *
      * @param array  $event_data
@@ -323,15 +347,23 @@ class TrackWP_GA4 {
      * @return array
      */
     private function build_body($event_data, $client_id) {
+        $event_name = isset($event_data['event']) ? $event_data['event'] : '';
+
         $params = array(
             'page_location'        => isset($event_data['page_url']) ? $event_data['page_url'] : '',
             'page_title'           => isset($event_data['page_title']) ? $event_data['page_title'] : '',
             'engagement_time_msec' => 100,
         );
 
-        if (!empty($event_data['value'])) {
-            $params['value']    = floatval($event_data['value']);
-            $params['currency'] = isset($event_data['currency']) ? $event_data['currency'] : 'DKK';
+        // GA4 requires BOTH currency and value on transaction events, and it
+        // requires them even when the amount is 0 — a fully discounted order
+        // (100% coupon, gift card) is still a purchase. The old `!empty($value)`
+        // test dropped both fields in that case, which left the event without
+        // the parameters the purchase spec demands.
+        $is_transaction = in_array($event_name, self::transaction_events(), true);
+        if (!empty($event_data['value']) || $is_transaction) {
+            $params['value']    = floatval(isset($event_data['value']) ? $event_data['value'] : 0);
+            $params['currency'] = self::normalize_currency(isset($event_data['currency']) ? $event_data['currency'] : '');
         }
 
         $session_id = $this->derive_session_id($event_data);
@@ -344,19 +376,32 @@ class TrackWP_GA4 {
             $params['event_id'] = $event_data['event_id'];
         }
 
-        // Ecommerce items
-        if (!empty($event_data['ecommerce']['items'])) {
-            $params['items'] = $event_data['ecommerce']['items'];
-            if (!empty($event_data['ecommerce']['transaction_id'])) {
-                $params['transaction_id'] = $event_data['ecommerce']['transaction_id'];
-            }
+        // Ecommerce. Already sanitised by TrackWP_Proxy::sanitize_ecommerce(),
+        // which is the single gate for this data (same contract as `enhanced`).
+        //
+        // transaction_id is set independently of items: GA4 needs it on
+        // purchase/refund for its own deduplication, so an order whose line
+        // items could not be resolved must still carry it — otherwise a repeat
+        // delivery of the same order counts twice.
+        $ecommerce = (isset($event_data['ecommerce']) && is_array($event_data['ecommerce']))
+            ? $event_data['ecommerce']
+            : array();
+
+        if (!empty($ecommerce['items'])) {
+            $params['items'] = $ecommerce['items'];
+        }
+        if (!empty($ecommerce['transaction_id'])) {
+            $params['transaction_id'] = $ecommerce['transaction_id'];
+        }
+        if (!empty($ecommerce['coupon'])) {
+            $params['coupon'] = $ecommerce['coupon'];
         }
 
         $body = array(
             'client_id' => $client_id,
             'events'    => array(
                 array(
-                    'name'   => isset($event_data['event']) ? $event_data['event'] : '',
+                    'name'   => $event_name,
                     'params' => $params,
                 ),
             ),

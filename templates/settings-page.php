@@ -19,6 +19,7 @@ $events    = get_option('trackwp_events', array());
 $consent   = get_option('trackwp_consent', array());
 $advanced  = get_option('trackwp_advanced', array());
 $cookie_declarations = get_option('trackwp_cookie_declarations', array());
+$woocommerce = TrackWP_WooCommerce::get_settings();
 
 $trigger_types    = TrackWP_Events::get_trigger_types();
 $meta_event_types = TrackWP_Events::get_meta_event_types();
@@ -753,12 +754,127 @@ $has_woocommerce = class_exists('WooCommerce');
          ================================================================ -->
     <?php if ( $has_woocommerce ) : ?>
     <div id="tab-woocommerce" class="trackwp-tab-content" data-tab="woocommerce">
-        <div class="notice notice-info inline" style="margin-top: 20px;">
-            <p>
-                <strong><?php echo esc_html__('Kommer snart', 'trackwp'); ?></strong><br>
-                <?php echo esc_html__('WooCommerce-tracking er planlagt til TrackWP v1.5.', 'trackwp'); ?>
-            </p>
-        </div>
+        <form method="post" action="options.php">
+            <?php settings_fields('trackwp_woocommerce_group'); ?>
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Shop-tracking', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php echo esc_html__('Aktivér', 'trackwp'); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox"
+                                   name="trackwp_woocommerce[enabled]"
+                                   value="1"
+                                   <?php checked( ! empty($woocommerce['enabled']) ); ?> />
+                            <?php echo esc_html__('Send WooCommerce-begivenheder', 'trackwp'); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo esc_html__('Slået fra som standard: det ændrer hvad der sendes til Google og Meta, så det skal være et bevidst valg. Når du slår det til, oprettes de valgte begivenheder automatisk på fanen Begivenheder, hvor du styrer platform-routing, Meta-event og Google Ads-label.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Begivenheder', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <?php
+                $woo_event_labels = array(
+                    'view_item'      => array(
+                        __('Produktside vist', 'trackwp'),
+                        __('Sendes ved visning af en enkelt produktside. Værdi: produktets pris.', 'trackwp'),
+                    ),
+                    'add_to_cart'    => array(
+                        __('Tilføj til kurv', 'trackwp'),
+                        __('Dækker både klassisk WooCommerce (med og uden AJAX) og Cart/Checkout-blokkene.', 'trackwp'),
+                    ),
+                    'begin_checkout' => array(
+                        __('Checkout påbegyndt', 'trackwp'),
+                        __('Sendes ved visning af checkout-siden. Værdi: kurvens beløb.', 'trackwp'),
+                    ),
+                    'purchase'       => array(
+                        __('Ordre gennemført', 'trackwp'),
+                        __('Sendes på ordrebekræftelsessiden, én gang pr. ordre. Ordrenummeret bruges som transaction_id, så GA4 og Google Ads ikke tæller samme ordre to gange.', 'trackwp'),
+                    ),
+                );
+                foreach ( TrackWP_Events::get_woocommerce_event_names() as $woo_event ) :
+                    $woo_key = 'event_' . $woo_event;
+                    ?>
+                    <tr>
+                        <th scope="row"><code><?php echo esc_html($woo_event); ?></code></th>
+                        <td>
+                            <label>
+                                <input type="checkbox"
+                                       name="trackwp_woocommerce[<?php echo esc_attr($woo_key); ?>]"
+                                       value="1"
+                                       <?php checked( ! empty($woocommerce[ $woo_key ]) ); ?> />
+                                <?php echo esc_html($woo_event_labels[ $woo_event ][0]); ?>
+                            </label>
+                            <p class="description"><?php echo esc_html($woo_event_labels[ $woo_event ][1]); ?></p>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Værdi og produktdata', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="trackwp_woo_value_basis"><?php echo esc_html__('Konverteringsværdi', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <?php $value_basis = isset($woocommerce['value_basis']) ? $woocommerce['value_basis'] : 'total'; ?>
+                        <select name="trackwp_woocommerce[value_basis]" id="trackwp_woo_value_basis">
+                            <option value="total" <?php selected($value_basis, 'total'); ?>><?php esc_html_e('Ordreværdi inkl. moms og fragt', 'trackwp'); ?></option>
+                            <option value="ex_tax" <?php selected($value_basis, 'ex_tax'); ?>><?php esc_html_e('Ordreværdi uden moms', 'trackwp'); ?></option>
+                            <option value="ex_shipping" <?php selected($value_basis, 'ex_shipping'); ?>><?php esc_html_e('Ordreværdi uden fragt', 'trackwp'); ?></option>
+                            <option value="ex_tax_shipping" <?php selected($value_basis, 'ex_tax_shipping'); ?>><?php esc_html_e('Ordreværdi uden moms og fragt', 'trackwp'); ?></option>
+                        </select>
+                        <p class="description">
+                            <?php echo esc_html__('Gælder både ordre- og kurvværdi, og bestemmer også om produktpriserne sendes med eller uden moms. Vælg det samme grundlag som dine budkampagner optimerer på.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="trackwp_woo_item_id_source"><?php echo esc_html__('Produkt-ID', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <?php $item_id_source = isset($woocommerce['item_id_source']) ? $woocommerce['item_id_source'] : 'product_id'; ?>
+                        <select name="trackwp_woocommerce[item_id_source]" id="trackwp_woo_item_id_source">
+                            <option value="product_id" <?php selected($item_id_source, 'product_id'); ?>><?php esc_html_e('WooCommerce produkt-ID', 'trackwp'); ?></option>
+                            <option value="sku" <?php selected($item_id_source, 'sku'); ?>><?php esc_html_e('SKU (falder tilbage til produkt-ID hvis tom)', 'trackwp'); ?></option>
+                        </select>
+                        <p class="description">
+                            <?php echo esc_html__('Skal matche det ID dit Merchant Center-feed bruger, ellers kan Google ikke koble konverteringer til produkterne.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php echo esc_html__('Kategorier', 'trackwp'); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox"
+                                   name="trackwp_woocommerce[include_categories]"
+                                   value="1"
+                                   <?php checked( ! empty($woocommerce['include_categories']) ); ?> />
+                            <?php echo esc_html__('Send produktkategori med', 'trackwp'); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo esc_html__('Sendes som item_category til item_category5. Kurv-blokken leverer ikke kategorier, så de mangler på begivenheder der udelukkende kommer derfra.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <div class="notice notice-info inline" style="margin-top:16px;">
+                <p>
+                    <?php echo esc_html__('purchase sendes fra browseren på ordrebekræftelsessiden. Det giver den rigtige attribution, fordi klient-ID, session og annonce-cookies stadig findes der. Prisen er ordrer hvor kunden aldrig når siden, fx ved nogle betalingsgateways.', 'trackwp'); ?>
+                </p>
+            </div>
+
+            <?php submit_button(); ?>
+        </form>
     </div>
     <?php endif; ?>
 

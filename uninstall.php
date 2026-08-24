@@ -22,6 +22,7 @@ $options = array(
     'trackwp_consent_log',
     'trackwp_stats',
     'trackwp_cookie_declarations',
+    'trackwp_woocommerce',
 );
 
 foreach ( $options as $option ) {
@@ -40,6 +41,18 @@ wp_clear_scheduled_hook( 'trackwp_prune_delivery_log' );
 
 // Drop the delivery-log table.
 $wpdb->query( "DROP TABLE IF EXISTS {$wpdb->prefix}trackwp_delivery_log" );
+
+// Remove the per-order "purchase already counted" flag. Both storage backends
+// are cleaned: HPOS keeps order meta in its own table, and the legacy postmeta
+// table still holds it on sites that never migrated (or that run in sync mode).
+$wpdb->query( "DELETE FROM {$wpdb->postmeta} WHERE meta_key = '_trackwp_purchase_sent'" );
+$hpos_meta = $wpdb->prefix . 'wc_orders_meta';
+if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $hpos_meta ) ) === $hpos_meta ) {
+    // The prefix is interpolated directly, matching the delivery-log drop above:
+    // a table name cannot be passed as a prepare() placeholder, and $wpdb->prefix
+    // is not user input.
+    $wpdb->query( "DELETE FROM {$wpdb->prefix}wc_orders_meta WHERE meta_key = '_trackwp_purchase_sent'" );
+}
 
 // Delete all plugin files in the log directory, then the directory itself.
 $log_dir = WP_CONTENT_DIR . '/trackwp';

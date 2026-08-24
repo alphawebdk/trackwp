@@ -55,6 +55,53 @@ class TrackWP_Settings {
         register_setting('trackwp_cookie_declarations_group', 'trackwp_cookie_declarations', array(
             'sanitize_callback' => array($this, 'sanitize_cookie_declarations'),
         ));
+        register_setting('trackwp_woocommerce_group', 'trackwp_woocommerce', array(
+            'sanitize_callback' => array($this, 'sanitize_woocommerce'),
+        ));
+    }
+
+    /**
+     * Sanitize the WooCommerce tab.
+     *
+     * Unchecked checkboxes are absent from the POST, so every boolean is read
+     * with !empty() and the whole set is rewritten — the same pattern as
+     * sanitize_advanced(). Selects are validated against their own source of
+     * truth in TrackWP_WooCommerce rather than a duplicated literal list.
+     *
+     * No stripslashes() here: options.php has already run wp_unslash() on the
+     * input, and unslashing twice eats legitimate escapes.
+     *
+     * @param mixed $input Raw POST value.
+     * @return array
+     */
+    public function sanitize_woocommerce($input) {
+        $defaults = TrackWP_WooCommerce::get_defaults();
+
+        if (!is_array($input)) {
+            return $defaults;
+        }
+
+        $output = array();
+        $output['enabled'] = !empty($input['enabled']);
+
+        foreach (TrackWP_Events::get_woocommerce_event_names() as $event_name) {
+            $key            = 'event_' . $event_name;
+            $output[ $key ] = !empty($input[ $key ]);
+        }
+
+        $basis                 = isset($input['value_basis']) ? sanitize_key($input['value_basis']) : '';
+        $output['value_basis'] = array_key_exists($basis, TrackWP_WooCommerce::value_bases())
+            ? $basis
+            : $defaults['value_basis'];
+
+        $source                   = isset($input['item_id_source']) ? sanitize_key($input['item_id_source']) : '';
+        $output['item_id_source'] = in_array($source, array('product_id', 'sku'), true)
+            ? $source
+            : $defaults['item_id_source'];
+
+        $output['include_categories'] = !empty($input['include_categories']);
+
+        return $output;
     }
 
     /**

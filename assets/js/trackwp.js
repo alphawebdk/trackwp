@@ -389,6 +389,45 @@
         } catch (e) {}
     }
 
+    // Events GA4 and Meta treat as monetary transactions: value and currency
+    // are REQUIRED on these, including when the amount is 0 (a fully
+    // discounted order is still a purchase).
+    var TRANSACTION_EVENTS = ['purchase', 'refund'];
+
+    function isTransactionEvent(eventName) {
+        return TRANSACTION_EVENTS.indexOf(eventName) !== -1;
+    }
+
+    // Google Ads and GA4 deduplicate on transaction_id. For a shop event that
+    // must be the ORDER NUMBER, not our random per-event id: only then does the
+    // client-side gtag conversion resolve to the same conversion as a later
+    // server-side upload, and only then can a refund be matched to the order.
+    function transactionIdFor(payload, eventId) {
+        if (payload.ecommerce && payload.ecommerce.transaction_id) {
+            return String(payload.ecommerce.transaction_id);
+        }
+        return eventId;
+    }
+
+    // Map sanitised GA4-shaped items to Meta's contents spec
+    // (id / quantity / item_price) and return the total quantity alongside.
+    function metaContentsFrom(items) {
+        var contents = [];
+        var numItems = 0;
+        for (var i = 0; i < items.length; i++) {
+            var item = items[i];
+            var quantity = parseInt(item.quantity, 10);
+            if (!(quantity > 0)) quantity = 1;
+            contents.push({
+                id: String(item.item_id || item.item_name || ''),
+                quantity: quantity,
+                item_price: parseFloat(item.price) || 0
+            });
+            numItems += quantity;
+        }
+        return { contents: contents, numItems: numItems };
+    }
+
     function fireGoogleAdsConversion(eventConfig, payload, eventId, consent) {
         if (dedupMode === 'server_only') return;
         if (!consent.marketing) return;
@@ -400,7 +439,7 @@
             'send_to': googleAds.conversionId + '/' + eventConfig.ads_label,
             'value': payload.value,
             'currency': payload.currency,
-            'transaction_id': eventId
+            'transaction_id': transactionIdFor(payload, eventId)
         });
     }
 
@@ -418,10 +457,27 @@
         if (!eventConfig || !eventConfig.meta_event) return;
         if (!sendsTo(eventConfig, 'meta')) return;
         var params = {};
-        if (payload.value) {
-            params.value = payload.value;
+        if (payload.value || isTransactionEvent(payload.event)) {
+            params.value = payload.value || 0;
             params.currency = payload.currency;
         }
+
+        // Ecommerce: mirror what the server-side CAPI event sends, so the two
+        // halves of a deduplicated pair do not disagree on their parameters.
+        var ecommerce = payload.ecommerce;
+        if (ecommerce && ecommerce.items && ecommerce.items.length) {
+            var mapped = metaContentsFrom(ecommerce.items);
+            params.contents = mapped.contents;
+            params.content_type = 'product';
+            // num_items is documented for InitiateCheckout only.
+            if (eventConfig.meta_event === 'InitiateCheckout') {
+                params.num_items = mapped.numItems;
+            }
+        }
+        if (ecommerce && ecommerce.transaction_id) {
+            params.order_id = String(ecommerce.transaction_id);
+        }
+
         // Same eventID as the server-side CAPI event — Meta dedups the pair.
         if (META_STANDARD_EVENTS.indexOf(eventConfig.meta_event) !== -1) {
             window.fbq('track', eventConfig.meta_event, params, { eventID: eventId });
@@ -445,7 +501,16 @@
         if (eventConfig && !sendsTo(eventConfig, 'ga4')) return;
         if (typeof window.gtag !== 'function') return;
         var params = { send_to: config.measurementId };
-        if (payload.value) { params.value = payload.value; params.currency = payload.currency; }
+        if (payload.value || isTransactionEvent(eventName)) {
+            params.value = payload.value || 0;
+            params.currency = payload.currency;
+        }
+        var ecommerce = payload.ecommerce;
+        if (ecommerce) {
+            if (ecommerce.items && ecommerce.items.length) params.items = ecommerce.items;
+            if (ecommerce.transaction_id) params.transaction_id = String(ecommerce.transaction_id);
+            if (ecommerce.coupon) params.coupon = ecommerce.coupon;
+        }
         window.gtag('event', eventName, params);
     }
 
@@ -520,6 +585,13 @@
         // Form data
         if (params.form_id) payload.form_id = params.form_id;
         if (params.form_name) payload.form_name = params.form_name;
+
+        // Ecommerce data (WooCommerce integration). Passed through untouched:
+        // the server is the single validation gate for it
+        // (TrackWP_Proxy::sanitize_ecommerce), the same contract as `enhanced`.
+        if (params.ecommerce && typeof params.ecommerce === 'object') {
+            payload.ecommerce = params.ecommerce;
+        }
 
         var hasEnhanced = !!(params.enhanced && (params.enhanced.email || params.enhanced.phone));
         var isNavLike = options.nav === true;

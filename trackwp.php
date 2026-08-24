@@ -3,7 +3,7 @@
  * Plugin Name: TrackWP
  * Plugin URI: https://trackwp.com
  * Description: Server-side tracking proxy with built-in cookie consent and Consent Mode v2. Supports GA4, Google Ads, and Meta.
- * Version: 1.9.0
+ * Version: 1.10.0
  * Author: TrackWP
  * Author URI: https://trackwp.com
  * License: GPLv2 or later
@@ -17,7 +17,7 @@
 
 defined('ABSPATH') || exit;
 
-define('TRACKWP_VERSION', '1.9.0');
+define('TRACKWP_VERSION', '1.10.0');
 define('TRACKWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRACKWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -87,6 +87,9 @@ final class TrackWP {
 
     /** @var TrackWP_Forms|null */
     private $forms;
+
+    /** @var TrackWP_WooCommerce|null */
+    private $woocommerce;
 
     /**
      * Get singleton instance.
@@ -599,7 +602,7 @@ final class TrackWP {
             echo "var loaded=false;";
             echo "function loadTag(){";
             echo "if(loaded)return;loaded=true;";
-            echo "(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.start'});";
+            echo "(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});";
             echo "var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';";
             echo "j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);";
             echo "})(window,document,'script','dataLayer','" . esc_js($id) . "');";
@@ -611,7 +614,7 @@ final class TrackWP {
             return;
         }
         echo "\n<!-- Google Tag Manager (TrackWP) -->\n<script>";
-        echo "(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.start'});";
+        echo "(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':new Date().getTime(),event:'gtm.js'});";
         echo "var f=d.getElementsByTagName(s)[0],j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';";
         echo "j.async=true;j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);";
         echo "})(window,document,'script','dataLayer','" . esc_js($id) . "');";
@@ -666,9 +669,21 @@ final class TrackWP {
         $config_js .= "gtag('js',new Date());";
         foreach ( $ids as $id ) {
             if ( $use_fp && strpos($id, 'G-') === 0 ) {
+                // transport_url only — deliberately NOT 'first_party_collection'.
+                // That flag tells gtag.js the endpoint is a server-side GTM
+                // container (gtag's internal "sst mode" 2), which has two
+                // consequences we do not want: gtag probes
+                // <transport_url>/_/service_worker/<v>/sw_iframe.html for the
+                // sGTM service worker — a 404 in the console, since this proxy
+                // is not an sGTM container — and it stops appending the
+                // first-party Google Ads click ids (gclgs/gclst/gcllp), because
+                // a real server container would read those cookies itself.
+                // Our proxy just forwards the raw hit to google-analytics.com,
+                // so the client must keep doing that enrichment.
+                // The collect URL is built from transport_url regardless of the
+                // flag, so dropping it does not change where hits are sent.
                 $config_js .= "gtag('config','" . esc_js($id) . "',{";
-                $config_js .= "'transport_url':'" . esc_js( untrailingslashit( rest_url('trackwp/v1/c') ) ) . "',";
-                $config_js .= "'first_party_collection':true";
+                $config_js .= "'transport_url':'" . esc_js( untrailingslashit( rest_url('trackwp/v1/c') ) ) . "'";
                 $config_js .= "});";
             } else {
                 $config_js .= "gtag('config','" . esc_js($id) . "');";
@@ -808,6 +823,8 @@ final class TrackWP {
         $this->consent = new TrackWP_Consent();
         $this->forms   = new TrackWP_Forms();
         new TrackWP_Cookie_Scanner();
+        // Registers nothing unless WooCommerce is active; see the class docblock.
+        $this->woocommerce = new TrackWP_WooCommerce();
     }
 
     public function admin_menu() {
@@ -841,14 +858,14 @@ final class TrackWP {
         wp_enqueue_style('wp-color-picker');
         wp_enqueue_style(
             'trackwp-admin',
-            $this->asset_url('assets/admin/admin.css'),
+            self::asset_url('assets/admin/admin.css'),
             [],
             TRACKWP_VERSION
         );
 
         wp_enqueue_script(
             'trackwp-admin',
-            $this->asset_url('assets/admin/admin.js'),
+            self::asset_url('assets/admin/admin.js'),
             ['jquery', 'wp-color-picker'],
             TRACKWP_VERSION,
             true
@@ -882,13 +899,15 @@ final class TrackWP {
 
     /**
      * Build full asset URL with `.min` suffix in production when the minified
-     * file exists on disk. Falls back to unminified when `.min` is missing,
+     * file exists on disk. Static so integration classes that enqueue their own
+     * script (TrackWP_WooCommerce) resolve assets the same way.
+     * Falls back to unminified when `.min` is missing,
      * so the plugin works out of the box without running `npm run build`.
      *
      * @param string $relative_path Path relative to plugin root, e.g. 'assets/js/trackwp.js'.
      * @return string Full URL.
      */
-    private function asset_url($relative_path) {
+    public static function asset_url($relative_path) {
         $use_min = ! ( defined('SCRIPT_DEBUG') && SCRIPT_DEBUG );
         if ( $use_min ) {
             $min_path = preg_replace('/\.(js|css)$/', '.min.$1', $relative_path);
@@ -910,7 +929,7 @@ final class TrackWP {
         // Consent banner styles
         wp_enqueue_style(
             'trackwp-consent',
-            $this->asset_url('assets/css/consent-banner.css'),
+            self::asset_url('assets/css/consent-banner.css'),
             [],
             TRACKWP_VERSION
         );
@@ -918,7 +937,7 @@ final class TrackWP {
         // Consent script — loads early (not in footer)
         wp_enqueue_script(
             'trackwp-consent',
-            $this->asset_url('assets/js/consent.js'),
+            self::asset_url('assets/js/consent.js'),
             [],
             TRACKWP_VERSION,
             false
@@ -928,7 +947,7 @@ final class TrackWP {
         // Tracking script — depends on consent, loads in footer
         wp_enqueue_script(
             'trackwp-tracking',
-            $this->asset_url('assets/js/trackwp.js'),
+            self::asset_url('assets/js/trackwp.js'),
             ['trackwp-consent'],
             TRACKWP_VERSION,
             true

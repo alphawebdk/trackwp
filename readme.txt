@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.9.0
+Stable tag: 1.10.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -39,6 +39,7 @@ TrackWP er et gratis, open-source WordPress-plugin der leverer server-side track
 * **Førsteparts-cookies** — Server-sat for bedre Safari ITP-håndtering
 * **Event-dedup** — Forhindrer dobbelttælling via event_id på tværs af klient og server
 * **NYT i 1.1: Build pipeline** — esbuild + cssnano med transparent .min fallback
+* **NYT i 1.10: WooCommerce** — view_item, add_to_cart, begin_checkout og purchase, med produktdata, valgfrit værdigrundlag (moms/fragt), understøttelse af både klassisk checkout og Cart/Checkout-blokkene, og ordrenummeret som transaction_id
 * **Lille fodaftryk** — ~7 KB total frontend (vs. 120 KB+ for GTM + Cookiebot + pixels)
 
 **Understøttede platforme:**
@@ -47,6 +48,7 @@ TrackWP er et gratis, open-source WordPress-plugin der leverer server-side track
 * Google Ads
 * Meta / Facebook
 * Google Tag Manager (NYT i 1.1)
+* WooCommerce e-commerce events (NYT i 1.10)
 
 **Understøttede formular-plugins:**
 
@@ -111,6 +113,33 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.10.0 =
+
+**WooCommerce-fanen virker nu.** Den har siden 1.5 kun indeholdt en "kommer snart"-besked; `class-trackwp-woocommerce.php` var en tom stub og `assets/js/woocommerce.js` indeholdt ingen kode.
+
+* Ny: Shop-begivenhederne `view_item`, `add_to_cart`, `begin_checkout` og `purchase`. Slået fra som standard — det ændrer hvad der sendes til Google og Meta, så det skal være et bevidst valg
+* Ny: Begivenhederne oprettes i den almindelige liste på fanen Begivenheder, ikke i en separat opsætning. Dermed arver de platform-routing (send_to), Meta-event-mapping, Google Ads-label, leveringsloggen og dedup-tilstanden. Kun `purchase` er som standard routet til Google Ads — en konverteringsupload skal være et aktivt valg
+* Ny: Ny trigger-type "WooCommerce" der styres fra WooCommerce-fanen. Den binder intet i browseren, men sidebetingelser (fx Page URL) virker stadig, så en shop-begivenhed kan afgrænses til bestemte sider
+* Ny: Valg af konverteringsværdi: inkl. moms og fragt, uden moms, uden fragt, eller uden moms og fragt. Grundlaget gælder både ordre- og kurvværdi og bestemmer også om produktpriserne sendes med eller uden moms — alle fire begivenheder bruger samme grundlag
+* Ny: Valg af produkt-ID: WooCommerce-ID eller SKU, så `item_id` kan matche Merchant Center-feedet. Både serveren og browseren følger valget, så samme produkt ikke optræder under to id'er
+* Ny: Produktdata sendes med som GA4 `items` (item_id, item_name, item_category til item_category5, item_variant, quantity, price, discount) og som Meta `contents` med `content_type` og `order_id`
+* Ny: Priser sendes som pris FØR rabat med rabatten i `discount`, hvilket er GA4's egen model. At lægge rabatten ind i prisen fjerner forskellen på en billig vare og en nedsat vare
+* Ny: `purchase` sendes fra ordrebekræftelsessiden, hvor klient-ID, session og annonce-cookies stadig findes. En server-side afsendelse ved statusskift ville køre uden for den besøgendes request, hvor GA4 opfinder et nyt client_id og hvert salg bliver til en ny Direct-bruger. Prisen er ordrer hvor kunden aldrig når siden
+* Ny: Ordrenummeret bruges som `transaction_id`, ikke et tilfældigt event-id. Det er det GA4 og Google Ads deduplikerer på, og det der gør en senere refusion mulig at koble til ordren
+* Ny: Ordren tælles kun én gang. Et flag på ordren forhindrer gentagelse ved genindlæsning (HPOS-sikkert via CRUD-API'et, aldrig `update_post_meta`), og et ekstra værn i browseren fanger det tilfælde hvor ordrebekræftelsen genbruges fra browserens egen cache — WooCommerce sender den med kort `max-age`, så serveren aldrig bliver spurgt. GA4 og Ads deduplikerer på ordrenummer, men Meta gør ikke, så uden det værn blev salget talt to gange dér
+* Ny: Ordrebekræftelsen kontrolleres med ordrenøglen (`hash_equals`). Ordre-id'et står i URL'en, så uden den kontrol kunne enhver besøgende afspille en fremmed ordre ind i butikkens statistik
+* Ny: `add_to_cart` dækker alle tre veje WooCommerce har: klassisk formularindsendelse (registreres server-side og afspilles ved næste sidevisning), klassisk AJAX i produktlister, og Cart/Checkout-blokkene
+* Ny: Blok-understøttelse aflytter svarene fra Store API'et (`/wc/store/v1/cart/*`) i stedet for at læse et JavaScript-globalt objekt. WooCommerce har flyttet blokkene til Interactivity API'et, og `window.wp.data` findes ikke længere på en aktuel installation — verificeret mod WooCommerce 11 og WordPress 7.1. Antallet rapporteres som ændringen, ikke som den nye total, og nedjustering eller fjernelse udløser ingen begivenhed
+* Fix: GTM-snippet'et pushede `event: 'gtm.start'` i stedet for Googles `event: 'gtm.js'`. Alle "All Pages"-triggere i GTM lytter på `gtm.js`, så med TrackWP som container-loader fyrede ingen af dem — hverken Google-tagget, conversion linkeren eller tredjeparts-tags. Fejlen var usynlig i GTM Preview, fordi Tag Assistant selv indsætter en korrekt container-load
+* Fix: 404 på `/wp-json/trackwp/v1/c/_/service_worker/.../sw_iframe.html` i konsollen ved førsteparts-loader. `first_party_collection: true` fik gtag.js til at behandle proxyen som en server-side GTM-container og lede efter dens service worker, som proxyen ikke er. Flaget er fjernet — hits sendes fortsat til `transport_url`, uændret. Sidegevinst: gtag vedhæfter nu igen førsteparts Google Ads-klik-id'er (gclgs/gclst/gcllp), som en rigtig server-container ellers selv skulle have læst
+* Fix: GA4 og Meta udelod `value` og `currency` på et køb til 0 kroner (100% rabatkode eller gavekort), fordi feltet kun blev sat når værdien var forskellig fra nul. Begge platforme kræver dem på Purchase
+* Fix: `transaction_id` sættes nu uafhængigt af om varelinjerne kunne opløses. Før lå det inde i items-blokken, så en ordre uden genkendelige linjer mistede det felt GA4 deduplikerer på
+* Fix: Ecommerce-data valideres nu ét sted, før det når Google og Meta. Ukendte felter fjernes, varer uden `item_id` eller `item_name` droppes (GA4 afviser dem alligevel), ikke-numeriske priser fjernes, et antal på nul eller derunder gemmes ikke, og der sendes højst 50 varelinjer pr. begivenhed
+* Fix: Google Ads-konverteringen fra browseren brugte et tilfældigt event-id som `transaction_id`. Den bruger nu ordrenummeret, så klient og server peger på samme konvertering
+* Fix: Meta Pixel i browseren sendte hverken produktdata eller `order_id`, så de to halvdele af et dedupliceret par var uenige om deres parametre. `num_items` sendes kun på InitiateCheckout, som Metas dokumentation foreskriver
+* Ny: Leveringsloggen skriver nu én "modtaget"-række pr. indkommende begivenhed, så oversigten viser hvad der faktisk fyrede — også på sites uden platform konfigureret eller i client_only-tilstand
+* Test: Pluginets phpunit-suite er udvidet med 20 nye tests af ecommerce-sanitizeren, shop-skabelonerne og WooCommerce-indstillingerne. Hele funktionaliteten er desuden verificeret mod en kørende WooCommerce-butik med moms, rabatkoder, HPOS og blok-baseret kurv og checkout, samt i en rigtig browser
 
 = 1.9.0 =
 * Ny: Custom events med firing triggers og betingelser — bygget efter Google Tag Managers model: en begivenhed sendes når EN AF dens triggere matcher, og en trigger matcher når ALLE dens betingelser er sande (OR mellem triggere, AND indeni)
