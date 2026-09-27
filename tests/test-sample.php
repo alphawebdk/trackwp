@@ -28,6 +28,11 @@ class TrackWP_Sample_Test extends WP_UnitTestCase {
     }
 
     public function test_default_platforms_have_gtm_keys() {
+        // The defaults are written by activate(); the test bootstrap loads the
+        // plugin without activating it, so the option did not exist and the
+        // test read an empty array. Run the real producer on a clean option.
+        delete_option( 'trackwp_platforms' );
+        TrackWP::instance()->activate();
         $defaults = get_option( 'trackwp_platforms', array() );
         $this->assertArrayHasKey( 'gtm_enabled', $defaults );
         $this->assertArrayHasKey( 'gtm_container_id', $defaults );

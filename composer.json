@@ -1,0 +1,15 @@
+{
+    "name": "trackwp/trackwp",
+    "description": "Test tooling for the TrackWP plugin. Runtime dependencies (Plugin Update Checker) live in vendor/ and ship in the release zip; this file only manages dev/test tooling and is kept out of vendor/ via config.vendor-dir below, so `composer install` never touches vendor/.",
+    "type": "project",
+    "license": "GPL-2.0-or-later",
+    "config": {
+        "vendor-dir": "vendor-dev",
+        "sort-packages": true
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^9.6",
+        "yoast/phpunit-polyfills": "^2.0",
+        "wp-phpunit/wp-phpunit": "^7.1"
+    }
+}

@@ -1,0 +1,20 @@
+{
+  "generated_at": "2026-09-27T11:35:15.256Z",
+  "generated_by": "tests/fixtures/gen-consent-cookie.mjs (real consent.js in headless Chromium)",
+  "consent_config": {
+    "cookieLifetimeMonths": 12,
+    "consentVersion": 1,
+    "log_consent": false,
+    "restUrl": ""
+  },
+  "raw_cookie_value": "{\"v\":1,\"ts\":\"2026-09-27T11:35:15.197Z\",\"id\":\"31e0b175-31de-464a-baed-5f7322863a11\",\"necessary\":true,\"statistics\":true,\"marketing\":true,\"personalisation\":true}",
+  "parsed": {
+    "v": 1,
+    "ts": "2026-09-27T11:35:15.197Z",
+    "id": "31e0b175-31de-464a-baed-5f7322863a11",
+    "necessary": true,
+    "statistics": true,
+    "marketing": true,
+    "personalisation": true
+  }
+}

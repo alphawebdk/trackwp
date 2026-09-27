@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.10.0
+Stable tag: 1.10.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -113,6 +113,27 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.10.1 =
+
+**Stabilisering og compliance.** Samtykket håndhæves nu ens i browseren og på serveren, køb tælles autoritativt og præcis én gang, og banneret lever op til kravene om lige nemt afslag. Efter opdateringen bør du tømme cache og CDN. Kendte cache-plugins forsøges tømt automatisk, og en notice i admin minder om resten.
+
+* Fix: Samtykkecookien læses ét sted (`window.trackwpConsentReader`). Alle inline-tags (GTM, gtag og Meta Pixel), consent.js, trackwp.js og woocommerce.js bruger den samme læser. En forældet, ugyldig eller tilbagekaldt cookie tæller som "intet valg" alle steder.
+* Fix: Serveren bruger samtykket fra requesten med versionstjek. Svarer versionen ikke til den aktuelle, sendes intet, og banneret vises igen. Ældre, cachet JavaScript uden version falder tilbage til cookien med versionstjek. REST-felterne accepterer kun ægte JSON `true`, så "true", "1" og 1 giver afslag.
+* Ny: Knappen "Træk samtykke tilbage" udløber tracking-cookies, rydder data i hukommelsen og kalder `fbq('consent','revoke')`. Nedjusterer man én kategori, bevares resten.
+* Ny: Samtykkeloggen flyttes fra en option til en egen tabel med snapshot af bannerteksten, oprydning efter alder (standard 24 måneder), CSV-eksport og opslag på samtykke-ID. Migreringen kører i bidder, kan genoptages, og den gamle option slettes først efter en optælling.
+* Ny: "Afvis valgfrie" står altid på første lag med samme vægt som accept. Standardteksterne "Afvis alle" og "Kun nødvendige" omdøbes ved opdateringen, mens egne tekster bevares. En uændret standardbeskrivelse skifter til den nye dynamiske tekst ud fra de aktive platforme.
+* Fix: Banneret kaldte hashede data for noget, de ikke er. De beskrives nu som data "i kodet form, som stadig gør det muligt for modtageren at genkende dig".
+* Ny: WooCommerce-køb verificeres på serveren. Serveren bygger værdi, varer og moms fra ordren og ignorerer browserens tal. Ordren claimes atomisk i databasen, så to faner og genindlæsning giver ét køb. Ordrebekræftelsen sendes med `no-store`.
+* Ny: Advanced matching på Meta Pixel (`fbq('init', id, am)`) og enhanced conversions i gtag (`allow_enhanced_conversions`) på ordrebekræftelsen. Begge kan slås fra med "Send ikke kundedata" til sites i følsomme brancher.
+* Fix: URL'er, referrer og sidetitler renses for e-mailadresser, ordrenøgler og parametre som `key`, `email`, `token` og `password`, både før de sendes til GA4 og Meta og i gtag's `page_location`. Listen kan udvides med filteret `trackwp_url_param_denylist`.
+* Fix: GA4 Measurement Protocol sender `ip_override`, `user_agent`, `page_referrer`, `session_id` og en målt `engagement_time_msec`.
+* Fix: Meta Graph API er løftet til v25.0. v21.0-v24.0 opgraderes automatisk.
+* Fix: Google Ads API v25 med ordrenummeret som `orderId`, samt gbraid og wbraid.
+* Fix: Leveringsloggen skelner mellem sendt, fejlet, ukendt (timeout), sprunget over, i kø og dublet.
+* Fix: Scripts indlæses med `defer` på WordPress 6.3 og nyere. På ældre versioner bruges den gamle indlæsning, så consent.js bliver i `<head>`.
+* Fix: Cookie-levetider begrænses: samtykke 1-12 måneder, klient-ID 1-24 måneder.
+* Ny: Debug i konsollen virker kun, når det er tilladt i indstillingerne, og kun med `?trackwp_debug=1`. Administratorer har et link til det i admin-bjælken.
 
 = 1.10.0 =
 

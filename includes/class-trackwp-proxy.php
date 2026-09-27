@@ -4,6 +4,87 @@ defined('ABSPATH') || exit;
 class TrackWP_Proxy {
 
     /**
+     * Total wall-clock budget in seconds for platform dispatch in one public
+     * request (K1). Each adapter receives what is left as its timeout.
+     */
+    const TIME_BUDGET = 4.0;
+
+    /** Below this many seconds of remaining budget an adapter is not called. */
+    const MIN_ADAPTER_TIMEOUT = 0.25;
+
+    /** Statuses a destination result may carry (K1). */
+    const RESULT_STATUSES = array( 'ok', 'failed', 'unknown', 'skipped', 'queued', 'duplicate' );
+
+    /** Reasons a destination result may carry (K1 + R21). */
+    const RESULT_REASONS = array(
+        'sent', 'batched', 'no_consent', 'not_configured', 'routed_off', 'event_disabled',
+        'no_click_id', 'bot', 'client_only', 'stale_version', 'invalid_order_ref',
+        'order_not_countable', 'already_claimed', 'timeout', 'transport', 'http_4xx',
+        'http_5xx', 'http_429', 'partial_failure', 'claim_error', 'unverified_purchase',
+    );
+
+    /** Destinations in dispatch order. */
+    const DESTINATIONS = array( 'ga4', 'meta', 'google_ads' );
+
+    /**
+     * The single table of accepted event fields (K2).
+     *
+     * - type:     how the value is sanitised (see sanitize_field())
+     * - category: none | analytics | marketing | any (see strip_by_category())
+     * - key:      key in $event_data when it differs from the REST name
+     * - required: REST-required
+     *
+     * An invalid value is DROPPED (sanitised to null), not rejected: a single
+     * malformed optional field from a cached or third-party client must not
+     * lose the whole event. Only `event` and `consent` are validated hard.
+     */
+    const EVENT_FIELDS = array(
+        'event'              => array( 'type' => 'event_name', 'category' => 'none', 'required' => true ),
+        'event_id'           => array( 'type' => 'pattern', 'pattern' => '/^evt_[a-f0-9]{16,64}$/', 'category' => 'none' ),
+        'value'              => array( 'type' => 'float_nonneg', 'category' => 'none' ),
+        'currency'           => array( 'type' => 'currency', 'category' => 'none' ),
+        'page_url'           => array( 'type' => 'url', 'max' => 2048, 'category' => 'none' ),
+        'page_title'         => array( 'type' => 'text', 'max' => 300, 'category' => 'none' ),
+        'page_referrer'      => array( 'type' => 'url', 'max' => 2048, 'category' => 'analytics' ),
+        'client_id'          => array( 'type' => 'pattern', 'pattern' => '/^\d+\.\d+$/', 'category' => 'analytics' ),
+        'session_id'         => array( 'type' => 'pattern', 'pattern' => '/^\d{1,12}$/', 'category' => 'analytics' ),
+        '_ga'                => array( 'type' => 'text', 'max' => 200, 'category' => 'analytics', 'key' => 'ga_cookie' ),
+        'ga_session_cookie'  => array( 'type' => 'text', 'max' => 200, 'category' => 'analytics' ),
+        'ga_session_cookies' => array( 'type' => 'ga_session_cookies', 'category' => 'analytics' ),
+        'engaged_ms'         => array( 'type' => 'int_range', 'min' => 0, 'max' => 3600000, 'category' => 'analytics' ),
+        'user_agent'         => array( 'type' => 'text', 'max' => 500, 'category' => 'any' ),
+        'fbp'                => array( 'type' => 'text', 'max' => 200, 'category' => 'marketing' ),
+        'fbc'                => array( 'type' => 'text', 'max' => 200, 'category' => 'marketing' ),
+        'gclid'              => array( 'type' => 'pattern', 'pattern' => '/^[A-Za-z0-9_\-]{1,200}$/', 'category' => 'marketing' ),
+        'gbraid'             => array( 'type' => 'pattern', 'pattern' => '/^[A-Za-z0-9_\-]{1,200}$/', 'category' => 'marketing' ),
+        'wbraid'             => array( 'type' => 'pattern', 'pattern' => '/^[A-Za-z0-9_\-]{1,200}$/', 'category' => 'marketing' ),
+        'enhanced'           => array( 'type' => 'enhanced', 'category' => 'marketing' ),
+        'ecommerce'          => array( 'type' => 'ecommerce', 'category' => 'none' ),
+        'form_id'            => array( 'type' => 'pattern', 'pattern' => '/^[A-Za-z0-9_\-:]{1,64}$/', 'category' => 'none' ),
+        'form_name'          => array( 'type' => 'form_name', 'max' => 100, 'category' => 'none' ),
+        'order_ref'          => array( 'type' => 'pattern', 'pattern' => '/^\d+\.[a-f0-9]{24}$/', 'category' => 'none' ),
+        'consent'            => array( 'type' => 'consent', 'category' => 'none' ),
+    );
+
+    /**
+     * Categories of $event_data keys that are derived on the server rather
+     * than taken from a REST field of the same name. Used by the final filter.
+     */
+    const DERIVED_CATEGORIES = array(
+        'gcl_au'      => 'marketing',
+        'external_id' => 'marketing',
+    );
+
+    /** K2a: keys accepted inside `enhanced`. */
+    const ENHANCED_KEYS = array(
+        'email', 'phone', 'email_sha256', 'email_meta_sha256', 'phone_sha256',
+        'phone_e164_sha256', 'first_name', 'last_name', 'city', 'zip', 'country',
+    );
+
+    /** K2a: pre-hashed keys, accepted only as 64 hex characters. */
+    const ENHANCED_HASH_KEYS = array( 'email_sha256', 'email_meta_sha256', 'phone_sha256', 'phone_e164_sha256' );
+
+    /**
      * Register the REST route.
      */
     public function register_routes() {
@@ -15,110 +96,7 @@ class TrackWP_Proxy {
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => array($this, 'handle_event'),
             'permission_callback' => array($this, 'check_permission'),
-            'args' => array(
-                'event' => array(
-                    'required'          => true,
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'value' => array(
-                    'default'           => 0,
-                    'sanitize_callback' => function( $v ) { return floatval( $v ); },
-                ),
-                'currency' => array(
-                    'default'           => 'DKK',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'page_url' => array(
-                    'required'          => true,
-                    'sanitize_callback' => 'esc_url_raw',
-                ),
-                'page_title' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'client_id' => array(
-                    'required'          => true,
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'event_id' => array(
-                    'required'          => true,
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'consent' => array(
-                    'required' => true,
-                    'type'     => 'object',
-                ),
-                'session_id' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'user_agent' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'fbc' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'fbp' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'gclid' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                '_ga' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'ga_session_cookie' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'ga_session_cookies' => array(
-                    'type'              => 'array',
-                    'default'           => array(),
-                    'sanitize_callback' => function( $v ) {
-                        if ( ! is_array( $v ) ) {
-                            return array();
-                        }
-                        $out = array();
-                        foreach ( $v as $item ) {
-                            if ( ! is_array( $item ) ) {
-                                continue;
-                            }
-                            $id    = isset( $item['id'] ) ? sanitize_text_field( $item['id'] ) : '';
-                            $value = isset( $item['value'] ) ? sanitize_text_field( $item['value'] ) : '';
-                            if ( $id && $value ) {
-                                $out[] = array( 'id' => $id, 'value' => $value );
-                            }
-                        }
-                        return $out;
-                    },
-                ),
-                'enhanced' => array(
-                    'default' => array(),
-                    'type'    => 'object',
-                ),
-                'form_id' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                'form_name' => array(
-                    'default'           => '',
-                    'sanitize_callback' => 'sanitize_text_field',
-                ),
-                // Ecommerce payload: {items: [...], transaction_id, coupon}.
-                // Sanitised through sanitize_ecommerce() below, which is the
-                // single gate for this data — the GA4 and Meta classes consume
-                // it as trusted, the same way they do with `enhanced`.
-                'ecommerce' => array(
-                    'default'           => array(),
-                    'type'              => 'object',
-                    'sanitize_callback' => array(__CLASS__, 'sanitize_ecommerce'),
-                ),
-            ),
+            'args'                => self::rest_args(),
         ));
 
         // First-party cookie keepalive — renews ITP-durable cookies via HTTP Set-Cookie on each page load.
@@ -141,6 +119,184 @@ class TrackWP_Proxy {
                 'permission_callback' => array( $this, 'check_origin_only' ),
             ),
         ) );
+    }
+
+    /**
+     * REST args for the event route, generated from EVENT_FIELDS.
+     *
+     * No `type` is declared: WordPress would then run its own schema
+     * coercion first (rest_sanitize_boolean turns "false" into false and "1"
+     * into true), which is exactly what K3 forbids for `consent`. Every field
+     * goes through sanitize_field() instead.
+     *
+     * @return array
+     */
+    public static function rest_args() {
+        $args = array();
+        foreach ( self::EVENT_FIELDS as $name => $spec ) {
+            $arg = array(
+                'required'          => ! empty( $spec['required'] ),
+                'sanitize_callback' => function( $value ) use ( $name ) {
+                    return TrackWP_Proxy::sanitize_field( $name, $value );
+                },
+            );
+            if ( 'event' === $name ) {
+                $arg['validate_callback'] = function( $value ) {
+                    return is_string( $value ) && 1 === preg_match( '/^[a-z][a-z0-9_]{0,39}$/', $value );
+                };
+            }
+            if ( 'consent' === $name ) {
+                // R2: pass-through. Sub-fields are read raw from the JSON body
+                // and compared with === true (see handle_event()).
+                $arg['validate_callback'] = function( $value ) {
+                    return is_array( $value );
+                };
+            }
+            $args[ $name ] = $arg;
+        }
+        return $args;
+    }
+
+    /**
+     * Sanitise one EVENT_FIELDS value. Returns null when the value is invalid
+     * so the field is simply absent downstream.
+     *
+     * @param string $name  Field name (key of EVENT_FIELDS).
+     * @param mixed  $value Raw value.
+     * @return mixed
+     */
+    public static function sanitize_field( $name, $value ) {
+        if ( ! isset( self::EVENT_FIELDS[ $name ] ) ) {
+            return null;
+        }
+        $spec = self::EVENT_FIELDS[ $name ];
+
+        switch ( $spec['type'] ) {
+            case 'consent':
+                return is_array( $value ) ? $value : array();
+
+            case 'event_name':
+                return ( is_string( $value ) && preg_match( '/^[a-z][a-z0-9_]{0,39}$/', $value ) ) ? $value : null;
+
+            case 'pattern':
+                if ( ! is_scalar( $value ) || is_bool( $value ) ) {
+                    return null;
+                }
+                $value = trim( (string) $value );
+                return preg_match( $spec['pattern'], $value ) ? $value : null;
+
+            case 'float_nonneg':
+                if ( ! is_numeric( $value ) ) {
+                    return null;
+                }
+                $value = (float) $value;
+                return ( $value >= 0 && is_finite( $value ) ) ? $value : null;
+
+            case 'int_range':
+                if ( ! is_numeric( $value ) ) {
+                    return null;
+                }
+                $value = (int) $value;
+                return ( $value >= $spec['min'] && $value <= $spec['max'] ) ? $value : null;
+
+            case 'currency':
+                if ( ! is_string( $value ) ) {
+                    return null;
+                }
+                $value = strtoupper( trim( $value ) );
+                return preg_match( '/^[A-Z]{3}$/', $value ) ? $value : null;
+
+            case 'url':
+                if ( ! is_string( $value ) || '' === $value || strlen( $value ) > $spec['max'] ) {
+                    return null;
+                }
+                $url    = esc_url_raw( $value, array( 'http', 'https' ) );
+                return '' === $url ? null : $url;
+
+            case 'text':
+                if ( ! is_scalar( $value ) || is_bool( $value ) ) {
+                    return null;
+                }
+                $value = sanitize_text_field( (string) $value );
+                if ( '' === $value ) {
+                    return null;
+                }
+                return function_exists( 'mb_substr' ) ? mb_substr( $value, 0, $spec['max'] ) : substr( $value, 0, $spec['max'] );
+
+            case 'form_name':
+                if ( ! is_scalar( $value ) || is_bool( $value ) ) {
+                    return null;
+                }
+                $value = TrackWP_Privacy::clean_title( sanitize_text_field( (string) $value ) );
+                $value = function_exists( 'mb_substr' ) ? mb_substr( $value, 0, $spec['max'] ) : substr( $value, 0, $spec['max'] );
+                return '' === $value ? null : $value;
+
+            case 'ga_session_cookies':
+                if ( ! is_array( $value ) ) {
+                    return array();
+                }
+                $out = array();
+                foreach ( $value as $item ) {
+                    if ( ! is_array( $item ) ) {
+                        continue;
+                    }
+                    $id  = isset( $item['id'] ) && is_scalar( $item['id'] ) ? substr( sanitize_text_field( (string) $item['id'] ), 0, 64 ) : '';
+                    $val = isset( $item['value'] ) && is_scalar( $item['value'] ) ? substr( sanitize_text_field( (string) $item['value'] ), 0, 200 ) : '';
+                    if ( '' !== $id && '' !== $val ) {
+                        $out[] = array( 'id' => $id, 'value' => $val );
+                    }
+                    if ( count( $out ) >= 10 ) {
+                        break;
+                    }
+                }
+                return $out;
+
+            case 'enhanced':
+                return self::sanitize_enhanced( $value );
+
+            case 'ecommerce':
+                return self::sanitize_ecommerce( $value );
+        }
+
+        return null;
+    }
+
+    /**
+     * K2a schema for `enhanced`: key allowlist, pre-hashed keys only as 64 hex
+     * characters under their own names, and a raw `email` that is 64 hex is
+     * dropped (it must never be mistaken for a hash).
+     *
+     * @param mixed $raw
+     * @return array
+     */
+    public static function sanitize_enhanced( $raw ) {
+        if ( ! is_array( $raw ) ) {
+            return array();
+        }
+        $out = array();
+        foreach ( self::ENHANCED_KEYS as $key ) {
+            if ( ! isset( $raw[ $key ] ) || ! is_scalar( $raw[ $key ] ) || is_bool( $raw[ $key ] ) ) {
+                continue;
+            }
+            $value = trim( (string) $raw[ $key ] );
+            if ( '' === $value || strlen( $value ) > 200 ) {
+                continue;
+            }
+            $is_hex64 = (bool) preg_match( '/^[a-f0-9]{64}$/i', $value );
+            if ( in_array( $key, self::ENHANCED_HASH_KEYS, true ) ) {
+                if ( $is_hex64 ) {
+                    $out[ $key ] = strtolower( $value );
+                }
+                continue;
+            }
+            if ( $is_hex64 ) {
+                // A 64-hex value under a raw key is neither a usable raw
+                // value nor a trustworthy hash.
+                continue;
+            }
+            $out[ $key ] = sanitize_text_field( $value );
+        }
+        return $out;
     }
 
     /** Hard cap on ecommerce line items per event. */
@@ -251,375 +407,736 @@ class TrackWP_Proxy {
             }
         }
 
+        // R15: order-level amounts. GA4 uses value_ga4 (+ tax + shipping);
+        // Meta and Google Ads keep `value` (value_basis).
+        foreach ( array( 'value_ga4', 'tax', 'shipping' ) as $field ) {
+            if ( isset( $raw[ $field ] ) && is_numeric( $raw[ $field ] ) ) {
+                $amount = (float) $raw[ $field ];
+                if ( $amount >= 0 && is_finite( $amount ) ) {
+                    $out[ $field ] = round( $amount, 6 );
+                }
+            }
+        }
+
+        if ( isset( $raw['order_ref'] ) && is_string( $raw['order_ref'] ) && preg_match( '/^\d+\.[a-f0-9]{24}$/', $raw['order_ref'] ) ) {
+            $out['order_ref'] = $raw['order_ref'];
+        }
+
         return $out;
     }
 
     /**
-     * Permission check: origin + rate limit.
-     * No nonce: cached pages serve stale nonces, and the endpoint is public and non-mutating.
+     * Permission check for the tracking endpoints: same-site origin plus a
+     * per-IP rate limit of 20 requests per 2-second window.
+     * No nonce: cached pages serve stale nonces, and the endpoint is public.
      */
     public function check_permission($request) {
-        // Origin check — only allow from own domain
-        $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '';
-        $referer = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '';
-        $home = home_url();
-        $home_host = wp_parse_url($home, PHP_URL_HOST);
-
-        $origin_ok = false;
-        if ($origin && wp_parse_url($origin, PHP_URL_HOST) === $home_host) {
-            $origin_ok = true;
-        }
-        if (!$origin_ok && $referer && wp_parse_url($referer, PHP_URL_HOST) === $home_host) {
-            $origin_ok = true;
-        }
-        if (!$origin_ok) {
-            return new WP_Error('rest_forbidden', __('Cross-origin-forespørgsel afvist.', 'trackwp'), array('status' => 403));
-        }
-
-        // Rate limiting: 20 requests per 2-second fixed window per IP.
-        // The window bucket is part of the key so the TTL is never extended
-        // by subsequent requests (a steady stream would otherwise never reset the count).
-        $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
-        $bucket = (int) floor( time() / 2 );
-        $ip_key = 'trackwp_rate_' . md5($ip) . '_' . $bucket;
-        $count = (int) get_transient($ip_key);
-        if ($count >= 20) {
-            return new WP_Error('rate_limited', __('For mange forespørgsler.', 'trackwp'), array('status' => 429));
-        }
-        set_transient($ip_key, $count + 1, 5);
-
-        return true;
+        return TrackWP_Request_Guard::permission( 'event', 20 );
     }
 
     /**
-     * Permission check for GDPR endpoints — origin + rate-limit only, no nonce.
+     * Permission check for the GDPR endpoints: same-site origin plus a lower
+     * rate limit (5 requests per 2-second window).
      */
     public function check_origin_only( $request ) {
-        $origin  = isset( $_SERVER['HTTP_ORIGIN'] ) ? $_SERVER['HTTP_ORIGIN'] : '';
-        $referer = isset( $_SERVER['HTTP_REFERER'] ) ? $_SERVER['HTTP_REFERER'] : '';
-        $home_host = wp_parse_url( home_url(), PHP_URL_HOST );
+        return TrackWP_Request_Guard::permission( 'gdpr', 5 );
+    }
 
-        $ok = false;
-        if ( $origin && wp_parse_url( $origin, PHP_URL_HOST ) === $home_host ) {
-            $ok = true;
+    /**
+     * Final filter (K2 step 5, first half): drop every field the effective
+     * consent does not allow, reduce page_url to origin + path without any
+     * consent, and remove click-ID parameters from URLs without marketing.
+     *
+     * Runs AFTER the trackwp_event_data filter so an extension cannot
+     * re-introduce identifiers.
+     *
+     * @param array $event_data
+     * @param array $effective  Keys analytics, marketing (bool).
+     * @return array
+     */
+    public static function strip_by_category( $event_data, $effective ) {
+        if ( ! is_array( $event_data ) ) {
+            return array();
         }
-        if ( ! $ok && $referer && wp_parse_url( $referer, PHP_URL_HOST ) === $home_host ) {
-            $ok = true;
-        }
-        if ( ! $ok ) {
-            return new WP_Error( 'rest_forbidden', __( 'Cross-origin-forespørgsel afvist.', 'trackwp' ), array( 'status' => 403 ) );
+        $analytics = ! empty( $effective['analytics'] ) && true === $effective['analytics'];
+        $marketing = ! empty( $effective['marketing'] ) && true === $effective['marketing'];
+
+        $categories = self::DERIVED_CATEGORIES;
+        foreach ( self::EVENT_FIELDS as $name => $spec ) {
+            $categories[ isset( $spec['key'] ) ? $spec['key'] : $name ] = $spec['category'];
         }
 
-        // Rate limit: 5 requests per 2-second window per IP for GDPR endpoint (lower than tracking).
-        $ip = isset( $_SERVER['REMOTE_ADDR'] ) ? $_SERVER['REMOTE_ADDR'] : '';
-        $key = 'trackwp_gdpr_' . md5( $ip );
-        $rate = get_transient( $key );
-        if ( $rate === false ) {
-            set_transient( $key, array( 'count' => 1 ), 2 );
-        } else {
-            if ( $rate['count'] >= 5 ) {
-                return new WP_Error( 'rate_limited', __( 'For mange forespørgsler.', 'trackwp' ), array( 'status' => 429 ) );
+        foreach ( array_keys( $event_data ) as $key ) {
+            if ( ! isset( $categories[ $key ] ) ) {
+                continue;
             }
-            $rate['count']++;
-            set_transient( $key, $rate, 2 );
+            $category = $categories[ $key ];
+            $allowed  = ( 'none' === $category )
+                || ( 'analytics' === $category && $analytics )
+                || ( 'marketing' === $category && $marketing )
+                || ( 'any' === $category && ( $analytics || $marketing ) );
+            if ( ! $allowed ) {
+                unset( $event_data[ $key ] );
+            }
         }
-        return true;
+
+        if ( isset( $event_data['enhanced'] ) && ! TrackWP_Hash::customer_data_sharing_enabled() ) {
+            unset( $event_data['enhanced'] );
+        }
+
+        if ( ! $marketing ) {
+            foreach ( TrackWP_Privacy::URL_FIELDS as $field ) {
+                if ( isset( $event_data[ $field ] ) ) {
+                    $event_data[ $field ] = TrackWP_Privacy::clean_url( (string) $event_data[ $field ], TrackWP_Privacy::CLICK_ID_PARAMS );
+                }
+            }
+        }
+        if ( ! $analytics && ! $marketing && isset( $event_data['page_url'] ) ) {
+            $event_data['page_url'] = TrackWP_Privacy::origin_and_path( (string) $event_data['page_url'] );
+        }
+
+        return $event_data;
+    }
+
+    /**
+     * Read the raw consent object from the request (R2): JSON body first so
+     * no REST coercion can have touched the sub-fields.
+     *
+     * @param WP_REST_Request $request
+     * @return mixed Array, or null when absent.
+     */
+    private static function raw_consent( $request ) {
+        $json = $request->get_json_params();
+        if ( is_array( $json ) && array_key_exists( 'consent', $json ) ) {
+            return $json['consent'];
+        }
+        return $request->get_param( 'consent' );
+    }
+
+    /**
+     * Response helper: every answer from the public endpoints is no-store.
+     *
+     * @param array $data
+     * @param int   $status
+     * @return WP_REST_Response
+     */
+    private static function respond( $data, $status = 200 ) {
+        $response = new WP_REST_Response( $data, $status );
+        $response->header( 'Cache-Control', 'no-store, max-age=0' );
+        return $response;
+    }
+
+    /**
+     * Build a K1 result.
+     *
+     * @return array
+     */
+    private static function result( $destination, $status, $reason, $http_code = 0, $attempts = 0, $detail = '' ) {
+        return array(
+            'destination' => $destination,
+            'status'      => $status,
+            'reason'      => $reason,
+            'http_code'   => (int) $http_code,
+            'attempts'    => (int) $attempts,
+            'detail'      => substr( (string) $detail, 0, 500 ),
+        );
+    }
+
+    /**
+     * Normalise whatever an adapter returned into a K1 result. Adapters from
+     * 1.10.0 return true / false / null (null = unknown outcome after a
+     * timeout); those map to ok / failed / unknown.
+     *
+     * @param string $destination
+     * @param mixed  $raw
+     * @return array
+     */
+    public static function normalize_result( $destination, $raw ) {
+        if ( is_array( $raw ) && isset( $raw['status'] ) ) {
+            $status = in_array( $raw['status'], self::RESULT_STATUSES, true ) ? $raw['status'] : 'unknown';
+            $reason = ( isset( $raw['reason'] ) && in_array( $raw['reason'], self::RESULT_REASONS, true ) ) ? $raw['reason'] : '';
+            return self::result(
+                $destination,
+                $status,
+                $reason,
+                isset( $raw['http_code'] ) ? (int) $raw['http_code'] : 0,
+                isset( $raw['attempts'] ) ? (int) $raw['attempts'] : 0,
+                isset( $raw['detail'] ) && is_scalar( $raw['detail'] ) ? (string) $raw['detail'] : ''
+            );
+        }
+        if ( true === $raw ) {
+            return self::result( $destination, 'ok', 'sent', 0, 1 );
+        }
+        if ( null === $raw ) {
+            return self::result( $destination, 'unknown', 'timeout', 0, 1 );
+        }
+        return self::result( $destination, 'failed', 'transport', 0, 1 );
     }
 
     /**
      * Handle incoming tracking event.
-     * Routes to platforms based on consent, sets first-party cookie.
-     * ALWAYS returns 200 — tracking must never block UX.
+     *
+     * Order (K2): schema -> effective consent (K3) -> build $event_data ->
+     * trackwp_event_data filter -> final filter (strip_by_category +
+     * TrackWP_Privacy::clean_event) -> routing -> purchase claim (R9) ->
+     * dispatch within the time budget (K1).
+     *
+     * Always answers 200 (except for reserved names) with no-store.
      */
     public function handle_event($request) {
-        $event_name = $request->get_param('event');
-        $consent = $request->get_param('consent');
+        $deadline   = microtime( true ) + self::TIME_BUDGET;
+        $event_name = (string) $request->get_param('event');
 
-        $analytics_consent = !empty($consent['analytics']);
-        $marketing_consent = !empty($consent['marketing']);
+        if ( TrackWP_Events::is_reserved_name( $event_name ) ) {
+            return self::respond( array(
+                'code'    => 'trackwp_reserved_event',
+                'message' => __( 'Begivenhedsnavnet er reserveret af Google Analytics.', 'trackwp' ),
+            ), 400 );
+        }
 
-        // Verify event is registered
+        // --- 2. Effective consent (K3, R1, R2) ---------------------------
+        $raw_consent = self::raw_consent( $request );
+        $has_version = is_array( $raw_consent ) && array_key_exists( 'v', $raw_consent );
+        $eff         = TrackWP_Consent::effective_consent( $raw_consent, $has_version );
+        $effective   = array(
+            'analytics' => isset( $eff['analytics'] ) && true === $eff['analytics'],
+            'marketing' => isset( $eff['marketing'] ) && true === $eff['marketing'],
+            'v'         => isset( $eff['v'] ) ? (int) $eff['v'] : 0,
+            'source'    => isset( $eff['source'] ) ? (string) $eff['source'] : 'none',
+            'stale'     => ! empty( $eff['stale'] ),
+        );
+        if ( $effective['stale'] ) {
+            $effective['analytics'] = false;
+            $effective['marketing'] = false;
+        }
+        $consent_flags = array( 'analytics' => $effective['analytics'], 'marketing' => $effective['marketing'] );
+
+        // --- Event configuration ------------------------------------------
         $events_manager = new TrackWP_Events();
-        $event_config = $events_manager->get_event_config($event_name);
+        $event_config   = $events_manager->find_event( $event_name );
+        $known_event    = is_array( $event_config );
+        $event_enabled  = ! $known_event || ! empty( $event_config['enabled'] );
+        $stats_name     = $known_event ? $event_name : '_other';
 
-        // Allow the event even if not in config (for flexibility)
-        // But use config for meta_event mapping if available
-        $meta_event_name = '';
-        if ($event_config) {
-            $meta_event_name = isset($event_config['meta_event']) ? $event_config['meta_event'] : '';
+        // The unscrubbed URL is kept locally, only for the fbclid fallback and
+        // the legacy order-key lookup. It never enters $event_data.
+        $raw_page_url = (string) $request->get_param( 'page_url' );
+
+        $user_agent = (string) $request->get_param( 'user_agent' );
+        if ( '' === $user_agent && isset( $_SERVER['HTTP_USER_AGENT'] ) ) {
+            $user_agent = (string) self::sanitize_field( 'user_agent', wp_unslash( $_SERVER['HTTP_USER_AGENT'] ) );
         }
 
-        // Per-event platform routing. Unknown events (not in config) keep the
-        // legacy behavior for GA4/Meta (send) but are NEVER uploaded as Google
-        // Ads conversions — a conversion upload must be an explicit choice.
-        $send_to    = ( $event_config && isset( $event_config['send_to'] ) && is_array( $event_config['send_to'] ) ) ? $event_config['send_to'] : null;
-        $to_ga4     = ( $send_to === null ) || ! empty( $send_to['ga4'] );
-        $to_meta    = ( $send_to === null ) || ! empty( $send_to['meta'] );
-        $to_ads     = ( $send_to !== null ) && ! empty( $send_to['google_ads'] );
-
-        // === Cookie sources (server-side, in addition to payload) ===
-        // _ga (GA client_id) — payload-prioritised, then cookie fallback.
-        $ga_cookie_payload = $request->get_param('_ga');
-        $ga_cookie         = $ga_cookie_payload !== '' ? $ga_cookie_payload : sanitize_text_field( wp_unslash( $_COOKIE['_ga'] ?? '' ) );
-
-        // _ga_<container> session cookie — payload-prioritised, then scan $_COOKIE.
-        $ga_session_cookie = sanitize_text_field( $request->get_param('ga_session_cookie') );
-        if ( '' === $ga_session_cookie ) {
-            foreach ( $_COOKIE as $ck_name => $ck_val ) {
-                if ( is_string( $ck_name ) && strpos( $ck_name, '_ga_' ) === 0 ) {
-                    $ga_session_cookie = sanitize_text_field( wp_unslash( $ck_val ) );
-                    break;
-                }
-            }
+        // --- Bots: logged and counted, never forwarded ----------------------
+        if ( self::is_bot( $user_agent ) ) {
+            $log_id = (string) $request->get_param( 'event_id' );
+            TrackWP_Delivery_Log::record( $log_id, $event_name, 'received', 'skipped', $consent_flags, 0, 'bot' );
+            TrackWP_Settings::record_event_hit( 'bot_skipped', $stats_name );
+            $this->maybe_log( $event_name, $effective, array(), true );
+            return self::respond( array( 'status' => 'ok', 'skipped' => 'bot' ) );
         }
 
-        // _gcl_au (Google Ads first-party).
-        $gcl_au = sanitize_text_field( wp_unslash( $_COOKIE['_gcl_au'] ?? '' ) );
+        // --- 3. Build $event_data from EVENT_FIELDS -------------------------
+        $event_data = $this->build_event_data( $request, $effective, $event_config, $user_agent, $raw_page_url );
 
-        // gclid — payload first, then parse _gcl_aw cookie (format: GCL.<ts>.<gclid>).
-        $gclid = sanitize_text_field( $request->get_param('gclid') );
-        if ( '' === $gclid && ! empty( $_COOKIE['_gcl_aw'] ) ) {
-            $gcl_aw_raw  = sanitize_text_field( wp_unslash( $_COOKIE['_gcl_aw'] ) );
-            $gcl_aw_parts = explode( '.', $gcl_aw_raw );
-            if ( isset( $gcl_aw_parts[2] ) && $gcl_aw_parts[2] !== '' ) {
-                $gclid = $gcl_aw_parts[2];
-            }
+        // --- Purchase authority (K5, R9, R11) --------------------------------
+        $purchase = $this->resolve_purchase( $event_name, $event_data, $raw_page_url, $effective );
+        if ( 'verified' === $purchase['mode'] ) {
+            // The client's value, currency, ecommerce and enhanced are ignored.
+            unset( $event_data['value'], $event_data['currency'], $event_data['ecommerce'], $event_data['enhanced'] );
+            $event_data = array_merge( $event_data, $purchase['overrides'] );
         }
 
-        // _fbp / _fbc — payload-prioritised, fallback to cookie.
-        $fbp_payload = $request->get_param('fbp');
-        $fbp         = $fbp_payload !== '' ? $fbp_payload : sanitize_text_field( wp_unslash( $_COOKIE['_fbp'] ?? '' ) );
-        $fbc_payload = $request->get_param('fbc');
-        $fbc         = $fbc_payload !== '' ? $fbc_payload : sanitize_text_field( wp_unslash( $_COOKIE['_fbc'] ?? '' ) );
+        // --- 4. Extension filter ---------------------------------------------
+        $filtered = apply_filters( 'trackwp_event_data', $event_data, $effective );
+        if ( is_array( $filtered ) ) {
+            $event_data = $filtered;
+        }
+        // Identity of the event and the consent state are not the filter's to change.
+        $event_data['event']    = $event_name;
+        $event_data['event_id'] = $purchase['event_id_lock'] ? $purchase['event_id_lock'] : ( isset( $event_data['event_id'] ) && is_string( $event_data['event_id'] ) && preg_match( '/^evt_[a-f0-9]{16,64}$/', $event_data['event_id'] ) ? $event_data['event_id'] : TrackWP_Hash::generate_event_id() );
+        $event_data['consent']  = $consent_flags;
 
-        // Build event data array
-        $event_data = array(
-            'event'             => $event_name,
-            'value'             => $request->get_param('value'),
-            'currency'          => $request->get_param('currency'),
-            'page_url'          => $request->get_param('page_url'),
-            'page_title'        => $request->get_param('page_title'),
-            'client_id'         => $request->get_param('client_id'),
-            'event_id'          => $request->get_param('event_id'),
-            'session_id'        => $request->get_param('session_id'),
-            'user_agent'        => $request->get_param('user_agent') ?: (isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : ''),
-            'fbc'               => $fbc,
-            'fbp'               => $fbp,
-            'enhanced'          => $request->get_param('enhanced'),
-            'ecommerce'         => $request->get_param('ecommerce'),
-            'meta_event_name'   => $meta_event_name,
-            'ga_cookie'         => $ga_cookie,
-            'ga_session_cookie' => $ga_session_cookie,
-            'ga_session_cookies' => ( function() use ( $request ) {
-                $v = $request->get_param( 'ga_session_cookies' );
-                if ( ! is_array( $v ) ) {
-                    return array();
-                }
-                $out = array();
-                foreach ( $v as $item ) {
-                    if ( ! is_array( $item ) ) {
-                        continue;
-                    }
-                    if ( ! empty( $item['id'] ) && ! empty( $item['value'] ) ) {
-                        $out[] = array(
-                            'id'    => (string) $item['id'],
-                            'value' => (string) $item['value'],
-                        );
-                    }
-                }
-                return $out;
-            } )(),
-            'gcl_au'            => $gcl_au,
-            'gclid'             => $gclid,
-            // Payload consent state — platform classes (GA4/Meta) read this
-            // instead of falling back to a server-side cookie lookup.
-            'consent'           => array(
-                'analytics' => $analytics_consent,
-                'marketing' => $marketing_consent,
-            ),
+        // --- 5. Final filter ---------------------------------------------------
+        $event_data = self::strip_by_category( $event_data, $effective );
+        $event_data = TrackWP_Privacy::clean_event( $event_data );
+
+        // --- Cookies -------------------------------------------------------------
+        $this->apply_cookies( $event_data, $effective );
+
+        $log_id = $event_data['event_id'];
+        TrackWP_Delivery_Log::record(
+            $log_id,
+            $event_name,
+            'received',
+            'ok',
+            $consent_flags,
+            0,
+            'unverified' === $purchase['mode'] ? 'unverified_purchase' : ''
         );
 
-        // Normalise enhanced payload (hash raw email/phone; keep existing 64-hex untouched).
-        if ( class_exists( 'TrackWP_Hash' ) && method_exists( 'TrackWP_Hash', 'normalize_enhanced' ) ) {
-            $event_data['enhanced'] = TrackWP_Hash::normalize_enhanced( $event_data['enhanced'] ?? array() );
+        // --- 6. Routing ------------------------------------------------------------
+        $results = $this->route( $event_config, $event_enabled, $effective );
+
+        // Purchase gate: invalid order refs are never sent; a verified purchase
+        // is claimed only when at least one destination will really be tried.
+        $to_attempt = array_keys( array_filter( $results, function( $r ) { return null === $r; } ) );
+        if ( ! empty( $to_attempt ) && 'skip' === $purchase['mode'] ) {
+            foreach ( $to_attempt as $dest ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', $purchase['reason'] );
+            }
+            $to_attempt = array();
+        }
+        if ( ! empty( $to_attempt ) && 'verified' === $purchase['mode'] ) {
+            $claim = TrackWP_Order_Claims::claim( $purchase['order_id'], 'purchase', 'browser' );
+            if ( TrackWP_Order_Claims::CLAIMED !== $claim ) {
+                $status = ( TrackWP_Order_Claims::DUPLICATE === $claim ) ? 'duplicate' : 'failed';
+                $reason = ( TrackWP_Order_Claims::DUPLICATE === $claim ) ? 'already_claimed' : 'claim_error';
+                foreach ( $to_attempt as $dest ) {
+                    $results[ $dest ] = self::result( $dest, $status, $reason );
+                }
+                $to_attempt = array();
+            }
         }
 
-        // Restore 3rd-party cookies (Safari ITP renewal) BEFORE first-party cookie.
-        // Consent-gated: only renew cookies where the matching category is granted;
-        // otherwise expire them (compliance with GDPR/ePrivacy).
-        $this->restore_third_party_cookies($consent);
-
-        // First-party cookie handling
-        $this->handle_first_party_cookie($event_data);
-
-        // Get advanced config for consent mode settings
-        $advanced = get_option('trackwp_advanced', array());
-
-        // Dedup mode: in client_only mode, skip server-side GA4/Meta dispatch.
-        // First-party cookie and logging always run regardless of mode.
-        $dedup_mode = isset($advanced['dedup_mode']) ? $advanced['dedup_mode'] : 'client_and_server';
-        $server_dispatch = ( $dedup_mode !== 'client_only' );
-
-        // Delivery-log context: metadata only, never identifiers (see
-        // TrackWP_Delivery_Log). Recording is a no-op while the log is off.
-        $log_consent = array( 'analytics' => $analytics_consent, 'marketing' => $marketing_consent );
-        $log_id      = isset( $event_data['event_id'] ) ? $event_data['event_id'] : '';
-
-        // Bot/crawler filtering — short-circuit platform dispatch (but log the event).
-        if ( self::is_bot( $event_data['user_agent'] ) ) {
-            TrackWP_Delivery_Log::record( $log_id, $event_name, 'received', 'skipped', $log_consent );
-            $this->maybe_log( $event_data, $analytics_consent, $marketing_consent );
-            TrackWP_Settings::record_event_hit( 'bot_skipped', $event_name );
-            return new WP_REST_Response( array( 'status' => 'ok', 'skipped' => 'bot' ), 200 );
+        // --- Dispatch within the budget ----------------------------------------------
+        foreach ( $to_attempt as $dest ) {
+            $remaining = $deadline - microtime( true );
+            if ( $remaining < self::MIN_ADAPTER_TIMEOUT ) {
+                $results[ $dest ] = self::result( $dest, 'failed', 'timeout', 0, 0, 'time budget exhausted before dispatch' );
+                continue;
+            }
+            $results[ $dest ] = $this->dispatch( $dest, $event_data, $consent_flags, $remaining );
+            if ( 'unverified' === $purchase['mode'] && '' === $results[ $dest ]['detail'] ) {
+                $results[ $dest ]['detail'] = 'unverified_purchase';
+            }
         }
 
-        // One row per incoming event, independent of how many platforms it is
-        // forwarded to. This is what makes the log answer "what fired?" even on
-        // a site with no platform configured or in client_only mode.
-        TrackWP_Delivery_Log::record( $log_id, $event_name, 'received', 'ok', $log_consent );
-
-        // === PLATFORM ROUTING ===
-
-        if ( $server_dispatch ) {
-            // GA4
-            $ga4 = new TrackWP_GA4();
-            if ($ga4->is_enabled() && $analytics_consent && $to_ga4) {
-                $sent = $ga4->send_event($event_data);
-                TrackWP_Delivery_Log::record( $log_id, $event_name, 'ga4', $sent ? 'ok' : 'failed', $log_consent );
-            } elseif ( $ga4->is_enabled() ) {
-                TrackWP_Delivery_Log::record( $log_id, $event_name, 'ga4', 'skipped', $log_consent );
+        // --- Log and stats ---------------------------------------------------------------
+        $forwarded = false;
+        foreach ( $results as $dest => $result ) {
+            if ( in_array( $result['status'], array( 'ok', 'queued' ), true ) ) {
+                $forwarded = true;
             }
-
-            // Meta — only with marketing consent
-            $meta = new TrackWP_Meta();
-            if ($marketing_consent && $to_meta && $meta->is_enabled()) {
-                $sent = $meta->send_event($event_data);
-                TrackWP_Delivery_Log::record( $log_id, $event_name, 'meta', $sent ? 'ok' : 'failed', $log_consent );
-            } elseif ( $meta->is_enabled() ) {
-                TrackWP_Delivery_Log::record( $log_id, $event_name, 'meta', 'skipped', $log_consent );
+            // Destinations that are not configured on this site add nothing
+            // to the delivery log but noise.
+            if ( 'not_configured' === $result['reason'] ) {
+                continue;
             }
+            TrackWP_Delivery_Log::record( $log_id, $event_name, $dest, $result['status'], $consent_flags, $result['http_code'], $result['reason'] );
+        }
 
-            // Google Ads CAPI (server-side) — gated by the class's own is_capi_enabled() check.
-            if ( $to_ads && class_exists( 'TrackWP_Google_Ads' ) ) {
-                $ads_capi = new TrackWP_Google_Ads();
-                if ( method_exists( $ads_capi, 'is_capi_enabled' ) && $ads_capi->is_capi_enabled() ) {
-                    $sent = $ads_capi->send_conversion( $event_data, $consent );
-                    TrackWP_Delivery_Log::record( $log_id, $event_name, 'google_ads', $sent ? 'ok' : 'failed', $log_consent );
+        TrackWP_Settings::record_event_hit( 'events', $stats_name );
+        if ( $forwarded ) {
+            TrackWP_Settings::record_event_hit( 'forwarded', $stats_name );
+        }
+
+        $this->maybe_log( $event_name, $effective, $results, false );
+
+        $data = array( 'status' => 'ok' );
+        if ( $effective['stale'] ) {
+            $data['consent']         = 'stale_version';
+            $data['current_version'] = TrackWP_Consent::server_version();
+        }
+        return self::respond( $data );
+    }
+
+    /**
+     * K2 step 3: build $event_data from EVENT_FIELDS, only with the
+     * categories the effective consent allows, plus server-side cookie
+     * fallbacks for the same categories.
+     *
+     * @param WP_REST_Request $request
+     * @param array           $effective
+     * @param array|null      $event_config
+     * @param string          $user_agent
+     * @param string          $raw_page_url
+     * @return array
+     */
+    private function build_event_data( $request, $effective, $event_config, $user_agent, $raw_page_url ) {
+        $event_data = array();
+        foreach ( self::EVENT_FIELDS as $name => $spec ) {
+            if ( 'consent' === $name ) {
+                continue;
+            }
+            $value = $request->get_param( $name );
+            if ( null === $value || '' === $value || array() === $value ) {
+                continue;
+            }
+            $event_data[ isset( $spec['key'] ) ? $spec['key'] : $name ] = $value;
+        }
+
+        $event_data['value']    = isset( $event_data['value'] ) ? (float) $event_data['value'] : 0.0;
+        $event_data['currency'] = isset( $event_data['currency'] ) ? $event_data['currency'] : 'DKK';
+        if ( '' !== $user_agent ) {
+            $event_data['user_agent'] = $user_agent;
+        }
+        $event_data['meta_event_name'] = ( is_array( $event_config ) && isset( $event_config['meta_event'] ) ) ? (string) $event_config['meta_event'] : '';
+
+        if ( ! empty( $effective['analytics'] ) ) {
+            if ( empty( $event_data['ga_cookie'] ) && ! empty( $_COOKIE['_ga'] ) ) {
+                $event_data['ga_cookie'] = (string) self::sanitize_field( '_ga', wp_unslash( $_COOKIE['_ga'] ) );
+            }
+            if ( empty( $event_data['ga_session_cookie'] ) ) {
+                foreach ( $_COOKIE as $ck_name => $ck_val ) {
+                    if ( is_string( $ck_name ) && 0 === strpos( $ck_name, '_ga_' ) && is_string( $ck_val ) ) {
+                        $event_data['ga_session_cookie'] = (string) self::sanitize_field( 'ga_session_cookie', wp_unslash( $ck_val ) );
+                        break;
+                    }
                 }
             }
         }
 
-        // Google Ads (client-side gtag.js) is still rendered in the frontend in parallel with CAPI above.
+        if ( ! empty( $effective['marketing'] ) ) {
+            if ( ! empty( $_COOKIE['_gcl_au'] ) && is_string( $_COOKIE['_gcl_au'] ) ) {
+                $event_data['gcl_au'] = sanitize_text_field( wp_unslash( $_COOKIE['_gcl_au'] ) );
+            }
+            // gclid fallback from _gcl_aw (format GCL.<ts>.<gclid>).
+            if ( empty( $event_data['gclid'] ) && empty( $event_data['gbraid'] ) && empty( $event_data['wbraid'] ) && ! empty( $_COOKIE['_gcl_aw'] ) && is_string( $_COOKIE['_gcl_aw'] ) ) {
+                $parts = explode( '.', sanitize_text_field( wp_unslash( $_COOKIE['_gcl_aw'] ) ) );
+                if ( isset( $parts[2] ) ) {
+                    $gclid = self::sanitize_field( 'gclid', $parts[2] );
+                    if ( null !== $gclid ) {
+                        $event_data['gclid'] = $gclid;
+                    }
+                }
+            }
+            foreach ( array( 'fbp' => '_fbp', 'fbc' => '_fbc' ) as $field => $cookie ) {
+                if ( empty( $event_data[ $field ] ) && ! empty( $_COOKIE[ $cookie ] ) && is_string( $_COOKIE[ $cookie ] ) ) {
+                    $clean = self::sanitize_field( $field, wp_unslash( $_COOKIE[ $cookie ] ) );
+                    if ( null !== $clean ) {
+                        $event_data[ $field ] = $clean;
+                    }
+                }
+            }
+            // fbc fallback: fbclid in the UNSCRUBBED page URL.
+            if ( empty( $event_data['fbc'] ) ) {
+                $fbclid = self::query_param( $raw_page_url, 'fbclid' );
+                if ( '' !== $fbclid ) {
+                    $fbc = TrackWP_Meta::fbc_from_fbclid( $fbclid );
+                    if ( is_string( $fbc ) && '' !== $fbc ) {
+                        $event_data['fbc'] = $fbc;
+                        TrackWP_Cookies::set( '_fbc', $fbc, time() + TrackWP_Cookies::lifetime_days( '_fbc' ) * DAY_IN_SECONDS, 'registrable' );
+                    }
+                }
+            }
+        }
 
-        // Stats: count this as a real (non-bot) event (single option write).
-        TrackWP_Settings::record_event_hit( 'events', $event_name );
+        if ( ! empty( $event_data['enhanced'] ) && is_array( $event_data['enhanced'] ) ) {
+            $event_data['enhanced'] = TrackWP_Hash::normalize_enhanced( $event_data['enhanced'] );
+        }
 
-        // Debug logging
-        $this->maybe_log($event_data, $analytics_consent, $marketing_consent);
+        // Only what the consent allows leaves this method; the final filter
+        // repeats this after the extension hook.
+        return self::strip_by_category( $event_data, $effective );
+    }
 
-        return new WP_REST_Response(array('status' => 'ok'), 200);
+    /**
+     * Value of one query parameter in a URL, or ''.
+     *
+     * @param string $url
+     * @param string $param
+     * @return string
+     */
+    private static function query_param( $url, $param ) {
+        $query = wp_parse_url( (string) $url, PHP_URL_QUERY );
+        if ( ! is_string( $query ) || '' === $query ) {
+            return '';
+        }
+        $vars = array();
+        parse_str( $query, $vars );
+        return ( isset( $vars[ $param ] ) && is_string( $vars[ $param ] ) ) ? $vars[ $param ] : '';
+    }
+
+    /**
+     * Decide how a purchase is handled (K5, R9, R11), via
+     * TrackWP_WooCommerce::authoritative_purchase(), which verifies the
+     * order_ref (or, for a cached 1.10.0 client, the order key in the
+     * UNSCRUBBED page URL plus a matching order number) and builds the
+     * payload from the order. The claim itself is made here, after routing.
+     *
+     * Modes:
+     *  - none:       not a WooCommerce purchase; ordinary event
+     *  - verified:   the order was verified; overrides come from the order
+     *  - skip:       did not verify (invalid_order_ref, order_not_countable);
+     *                nothing is sent
+     *  - unverified: a purchase without order_ref or order key (third party);
+     *                sent as in 1.10.0 with the client payload, no claim
+     *
+     * @param string $event_name
+     * @param array  $event_data   Already consent-filtered payload.
+     * @param string $raw_page_url Unscrubbed page URL.
+     * @param array  $effective    Effective consent (K3).
+     * @return array
+     */
+    private function resolve_purchase( $event_name, $event_data, $raw_page_url, $effective ) {
+        $out = array(
+            'mode'          => 'none',
+            'reason'        => '',
+            'order_id'      => 0,
+            'overrides'     => array(),
+            'event_id_lock' => '',
+        );
+        if ( 'purchase' !== $event_name || ! function_exists( 'wc_get_order' ) || ! class_exists( 'TrackWP_WooCommerce' ) ) {
+            return $out;
+        }
+
+        $authoritative = TrackWP_WooCommerce::authoritative_purchase(
+            isset( $event_data['order_ref'] ) ? (string) $event_data['order_ref'] : '',
+            array(
+                'effective'      => array( 'analytics' => $effective['analytics'], 'marketing' => $effective['marketing'] ),
+                'page_url'       => $raw_page_url,
+                'transaction_id' => isset( $event_data['ecommerce']['transaction_id'] ) ? (string) $event_data['ecommerce']['transaction_id'] : '',
+            )
+        );
+        $status = ( is_array( $authoritative ) && isset( $authoritative['status'] ) ) ? $authoritative['status'] : 'skip';
+
+        if ( 'unverified' === $status ) {
+            $out['mode']   = 'unverified';
+            $out['reason'] = 'unverified_purchase';
+            return $out;
+        }
+        if ( 'verified' !== $status || empty( $authoritative['order_id'] ) ) {
+            $reason        = ( is_array( $authoritative ) && isset( $authoritative['reason'] ) ) ? $authoritative['reason'] : '';
+            $out['mode']   = 'skip';
+            $out['reason'] = in_array( $reason, array( 'invalid_order_ref', 'order_not_countable' ), true ) ? $reason : 'invalid_order_ref';
+            return $out;
+        }
+
+        $overrides = isset( $authoritative['overrides'] ) && is_array( $authoritative['overrides'] ) ? $authoritative['overrides'] : array();
+        // Server-built ecommerce still goes through the single allowlist.
+        if ( isset( $overrides['ecommerce'] ) ) {
+            $overrides['ecommerce'] = self::sanitize_ecommerce( $overrides['ecommerce'] );
+        }
+        // Raw K2a keys from the order are hashed exactly like client data.
+        if ( ! empty( $overrides['enhanced'] ) && is_array( $overrides['enhanced'] ) ) {
+            $overrides['enhanced'] = TrackWP_Hash::normalize_enhanced( self::sanitize_enhanced( $overrides['enhanced'] ) );
+        }
+
+        $out['mode']      = 'verified';
+        $out['order_id']  = (int) $authoritative['order_id'];
+        $out['overrides'] = $overrides;
+        if ( isset( $overrides['event_id'] ) && is_string( $overrides['event_id'] ) && preg_match( '/^evt_[a-f0-9]{16,64}$/', $overrides['event_id'] ) ) {
+            $out['event_id_lock'] = $overrides['event_id'];
+        }
+        return $out;
+    }
+
+    /**
+     * Routing: a K1 result for every destination that will NOT be tried, and
+     * null for every destination that should be tried.
+     *
+     * Reason precedence: not_configured, event_disabled, routed_off,
+     * client_only, stale_version / no_consent.
+     *
+     * @param array|null $event_config
+     * @param bool       $event_enabled
+     * @param array      $effective
+     * @return array destination => array|null
+     */
+    private function route( $event_config, $event_enabled, $effective ) {
+        $advanced        = get_option( 'trackwp_advanced', array() );
+        $dedup_mode      = isset( $advanced['dedup_mode'] ) ? $advanced['dedup_mode'] : 'client_and_server';
+        $server_dispatch = ( 'client_only' !== $dedup_mode );
+
+        // Unknown events keep the legacy behaviour for GA4/Meta (send) but are
+        // NEVER uploaded as Google Ads conversions — that must be explicit.
+        $send_to = ( is_array( $event_config ) && isset( $event_config['send_to'] ) && is_array( $event_config['send_to'] ) ) ? $event_config['send_to'] : null;
+        $routed  = array(
+            'ga4'        => ( null === $send_to ) || ! empty( $send_to['ga4'] ),
+            'meta'       => ( null === $send_to ) || ! empty( $send_to['meta'] ),
+            'google_ads' => ( null !== $send_to ) && ! empty( $send_to['google_ads'] ),
+        );
+
+        $ga4  = new TrackWP_GA4();
+        $meta = new TrackWP_Meta();
+        $ads  = new TrackWP_Google_Ads();
+        $configured = array(
+            'ga4'        => $ga4->is_enabled(),
+            'meta'       => $meta->is_enabled(),
+            'google_ads' => $ads->is_capi_enabled(),
+        );
+        $needs = array( 'ga4' => 'analytics', 'meta' => 'marketing', 'google_ads' => 'marketing' );
+
+        $results = array();
+        foreach ( self::DESTINATIONS as $dest ) {
+            if ( ! $configured[ $dest ] ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', 'not_configured' );
+            } elseif ( ! $event_enabled ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', 'event_disabled' );
+            } elseif ( ! $routed[ $dest ] ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', 'routed_off' );
+            } elseif ( ! $server_dispatch ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', 'client_only' );
+            } elseif ( empty( $effective[ $needs[ $dest ] ] ) ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', ! empty( $effective['stale'] ) ? 'stale_version' : 'no_consent' );
+            } else {
+                $results[ $dest ] = null;
+            }
+        }
+        return $results;
+    }
+
+    /**
+     * Call one adapter with the remaining time budget as its timeout.
+     *
+     * @param string $dest
+     * @param array  $event_data
+     * @param array  $consent_flags
+     * @param float  $timeout Seconds.
+     * @return array K1 result.
+     */
+    private function dispatch( $dest, $event_data, $consent_flags, $timeout ) {
+        switch ( $dest ) {
+            case 'ga4':
+                $adapter = new TrackWP_GA4();
+                return self::normalize_result( $dest, $adapter->send_event( $event_data, $timeout ) );
+            case 'meta':
+                $adapter = new TrackWP_Meta();
+                return self::normalize_result( $dest, $adapter->send_event( $event_data, $timeout ) );
+            case 'google_ads':
+                $adapter = new TrackWP_Google_Ads();
+                return self::normalize_result( $dest, $adapter->send_conversion( $event_data, $consent_flags, $timeout ) );
+        }
+        return self::result( $dest, 'skipped', 'not_configured' );
+    }
+
+    /**
+     * Cookie side effects of an /event request, all from the EFFECTIVE consent:
+     * expire tracking cookies of refused categories, renew marketing cookies
+     * (Safari ITP), and write the first-party id cookie host-only (K7, R17).
+     *
+     * @param array $event_data
+     * @param array $effective
+     * @return void
+     */
+    private function apply_cookies( $event_data, $effective ) {
+        TrackWP_Cookies::expire_tracking_cookies( array(
+            'analytics' => $effective['analytics'],
+            'marketing' => $effective['marketing'],
+        ) );
+
+        if ( $effective['marketing'] ) {
+            $this->renew_marketing_cookies();
+        }
+
+        $this->handle_first_party_cookie( $event_data, $effective['analytics'] );
+    }
+
+    /**
+     * Renew the vendor marketing cookies the browser presented, with their
+     * declared lifetime on the registrable domain (where gtag/fbevents set
+     * them; a host-only re-issue would create a duplicate).
+     *
+     * @return void
+     */
+    private function renew_marketing_cookies() {
+        foreach ( $_COOKIE as $name => $value ) {
+            if ( ! is_string( $name ) || ! is_string( $value ) ) {
+                continue;
+            }
+            if ( '_fbp' !== $name && '_fbc' !== $name && 0 !== strpos( $name, '_gcl_' ) ) {
+                continue;
+            }
+            $value = sanitize_text_field( wp_unslash( $value ) );
+            if ( '' === $value ) {
+                continue;
+            }
+            TrackWP_Cookies::set( $name, $value, time() + TrackWP_Cookies::lifetime_days( $name ) * DAY_IN_SECONDS, 'registrable' );
+        }
+    }
+
+    /**
+     * Write (or migrate) the first-party id cookie host-only (K7, R17).
+     * Without analytics consent nothing is written; expiry is handled by
+     * TrackWP_Cookies::expire_tracking_cookies().
+     *
+     * @param array $event_data
+     * @param bool  $analytics
+     * @return void
+     */
+    private function handle_first_party_cookie( $event_data, $analytics ) {
+        $advanced = get_option( 'trackwp_advanced', array() );
+        if ( empty( $advanced['first_party_cookie_enabled'] ) || ! $analytics ) {
+            return;
+        }
+        $cookie_name = TrackWP_Cookies::fp_cookie_name();
+
+        $client_id = isset( $event_data['client_id'] ) ? (string) $event_data['client_id'] : '';
+        if ( '' === $client_id ) {
+            $client_id = self::existing_client_id( $cookie_name );
+        }
+        if ( '' === $client_id ) {
+            $client_id = TrackWP_Hash::generate_client_id();
+        }
+
+        TrackWP_Cookies::rewrite_host_only( $cookie_name, $client_id, time() + TrackWP_Cookies::lifetime_days( $cookie_name ) * DAY_IN_SECONDS );
+    }
+
+    /**
+     * A valid client id from the first-party cookie, or from _ga
+     * (GA1.1.<random>.<ts> -> <random>.<ts>), or ''.
+     *
+     * @param string $cookie_name
+     * @return string
+     */
+    private static function existing_client_id( $cookie_name ) {
+        $cid = isset( $_COOKIE[ $cookie_name ] ) && is_string( $_COOKIE[ $cookie_name ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ $cookie_name ] ) ) : '';
+        if ( '' !== $cid && ( preg_match( '/^\d+\.\d+$/', $cid ) || 0 === strpos( $cid, 'twp_' ) ) ) {
+            return $cid;
+        }
+        if ( ! empty( $_COOKIE['_ga'] ) && is_string( $_COOKIE['_ga'] ) ) {
+            $parts = explode( '.', sanitize_text_field( wp_unslash( $_COOKIE['_ga'] ) ) );
+            if ( count( $parts ) >= 4 && preg_match( '/^\d+$/', $parts[2] ) && preg_match( '/^\d+$/', $parts[3] ) ) {
+                return $parts[2] . '.' . $parts[3];
+            }
+        }
+        return '';
     }
 
     /**
      * Renew first-party cookies via HTTP Set-Cookie so Safari ITP does not cap
-     * them at 7 days (same-host HTTP-set cookies get full duration). Called by
-     * trackwp.js on every page load. Consent-gated per category.
+     * them at 7 days. Consent comes from the consent cookie
+     * (get_current_consent()), and this endpoint NEVER sets trackwp_consent (K4).
      *
-     * - _twp_cid + _ga + _ga_*          : renewed when statistics consent is granted.
-     * - _fbp / _fbc / _gcl_au / _gcl_aw : renewed when marketing consent is granted
-     *                                     (90-day lifetime, matching the banner declaration).
-     *
-     * Chrome clamps any cookie to 400 days regardless of the value we send.
+     * - first-party id cookie: rewritten host-only (R17 migration) under statistics
+     * - _ga / _ga_*: renewed on the registrable domain under statistics
+     * - _fbp / _fbc / _gcl_*: renewed under marketing
      */
     public function handle_keepalive($request) {
         $consent  = TrackWP_Consent::get_current_consent();
         $advanced = get_option('trackwp_advanced', array());
 
-        $host = wp_parse_url(home_url(), PHP_URL_HOST);
-        // Registrable-domain form (leading dot) so we refresh the SAME
-        // _ga cookie gtag set (domain-wide) instead of creating a host-only duplicate.
-        $reg_domain = self::get_registrable_domain($host);
-
-        // Lifetime: align with the consent cookie lifetime, capped at Chrome's 400-day max.
-        $consent_cfg = get_option('trackwp_consent', array());
-        $months      = !empty($consent_cfg['cookie_lifetime_months']) ? absint($consent_cfg['cookie_lifetime_months']) : 12;
-        $lifetime    = min(400 * DAY_IN_SECONDS, $months * 30 * DAY_IN_SECONDS);
-        $expires     = time() + $lifetime;
-
-        // Vendor-documented lifetime — matches the consent banner declaration (90 days).
-        $mk_expires = time() + 90 * DAY_IN_SECONDS;
-
-        if (!empty($consent['statistics'])) {
-            // First-party id cookie.
-            if (!empty($advanced['first_party_cookie_enabled'])) {
-                $cookie_name = !empty($advanced['cookie_name']) ? $advanced['cookie_name'] : '_twp_cid';
-                $cid = isset($_COOKIE[$cookie_name]) ? sanitize_text_field(wp_unslash($_COOKIE[$cookie_name])) : '';
-                if ('' === $cid && !empty($_COOKIE['_ga'])) {
-                    // Reuse GA client id (strip GA1.1. prefix → <random>.<ts>).
-                    $ga_parts = explode('.', sanitize_text_field(wp_unslash($_COOKIE['_ga'])));
-                    if (count($ga_parts) >= 4) {
-                        $cid = $ga_parts[2] . '.' . $ga_parts[3];
-                    }
-                }
-                if ('' === $cid) {
+        if ( ! empty( $consent['statistics'] ) ) {
+            if ( ! empty( $advanced['first_party_cookie_enabled'] ) ) {
+                $cookie_name = TrackWP_Cookies::fp_cookie_name();
+                $cid         = self::existing_client_id( $cookie_name );
+                if ( '' === $cid ) {
                     $cid = TrackWP_Hash::generate_client_id();
                 }
-                setcookie($cookie_name, $cid, array(
-                    'expires'  => $expires,
-                    'path'     => '/',
-                    'domain'   => $host,
-                    'secure'   => is_ssl(),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ));
+                TrackWP_Cookies::rewrite_host_only( $cookie_name, $cid, time() + TrackWP_Cookies::lifetime_days( $cookie_name ) * DAY_IN_SECONDS );
             }
-            // Renew GA cookies (_ga and any _ga_* session cookie) on the registrable domain.
-            foreach ($_COOKIE as $ck_name => $ck_val) {
-                if (!is_string($ck_name)) {
+
+            // _ga lifetime as in 1.10.0: the consent cookie lifetime, capped at 400 days.
+            $ga_expires = time() + min( 400, TrackWP_Cookies::lifetime_days( 'trackwp_consent' ) ) * DAY_IN_SECONDS;
+            foreach ( $_COOKIE as $ck_name => $ck_val ) {
+                if ( ! is_string( $ck_name ) || ! is_string( $ck_val ) ) {
                     continue;
                 }
-                if ($ck_name === '_ga' || strpos($ck_name, '_ga_') === 0) {
-                    $val = sanitize_text_field(wp_unslash($ck_val));
-                    if ('' === $val) {
-                        continue;
+                if ( '_ga' === $ck_name || 0 === strpos( $ck_name, '_ga_' ) ) {
+                    $val = sanitize_text_field( wp_unslash( $ck_val ) );
+                    if ( '' !== $val ) {
+                        TrackWP_Cookies::set( $ck_name, $val, $ga_expires, 'registrable' );
                     }
-                    setcookie($ck_name, $val, array(
-                        'expires'  => $expires,
-                        'path'     => '/',
-                        'domain'   => $reg_domain,
-                        'secure'   => is_ssl(),
-                        'httponly' => false,
-                        'samesite' => 'Lax',
-                    ));
                 }
             }
         }
 
-        if (!empty($consent['marketing'])) {
-            foreach (array('_fbp', '_fbc', '_gcl_au', '_gcl_aw') as $mk) {
-                if (empty($_COOKIE[$mk])) {
-                    continue;
-                }
-                $val = sanitize_text_field(wp_unslash($_COOKIE[$mk]));
-                if ('' === $val) {
-                    continue;
-                }
-                // Registrable domain — these cookies are set domain-wide by
-                // gtag/fbevents; a host-only re-issue would create a duplicate.
-                setcookie($mk, $val, array(
-                    'expires'  => $mk_expires,
-                    'path'     => '/',
-                    'domain'   => $reg_domain,
-                    'secure'   => is_ssl(),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ));
-            }
+        if ( ! empty( $consent['marketing'] ) ) {
+            $this->renew_marketing_cookies();
         }
 
-        $response = new WP_REST_Response(array('status' => 'ok'), 200);
-        $response->header( 'Cache-Control', 'no-store, max-age=0' );
-        return $response;
+        return self::respond( array( 'status' => 'ok' ) );
     }
 
     /**
@@ -627,18 +1144,13 @@ class TrackWP_Proxy {
      * Identifies user via _twp_cid cookie (sent automatically by browser).
      */
     public function handle_my_data_get( $request ) {
-        $advanced    = get_option( 'trackwp_advanced', array() );
-        $cookie_name = ! empty( $advanced['cookie_name'] ) ? $advanced['cookie_name'] : '_twp_cid';
-        $client_id   = isset( $_COOKIE[ $cookie_name ] ) ? sanitize_text_field( $_COOKIE[ $cookie_name ] ) : '';
+        $cookie_name = TrackWP_Cookies::fp_cookie_name();
+        $client_id   = isset( $_COOKIE[ $cookie_name ] ) && is_string( $_COOKIE[ $cookie_name ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ $cookie_name ] ) ) : '';
 
-        $consent_cookie = isset( $_COOKIE['trackwp_consent'] ) ? wp_unslash( $_COOKIE['trackwp_consent'] ) : '';
-        $consent_state  = null;
-        if ( $consent_cookie ) {
-            $decoded = json_decode( $consent_cookie, true );
-            if ( is_array( $decoded ) ) {
-                $consent_state = $decoded;
-            }
-        }
+        // R3: the consent cookie is only ever parsed by TrackWP_Consent. The
+        // raw decoded content is shown (including a stale or outdated choice),
+        // because this endpoint reports what is stored in the browser.
+        $consent_state = TrackWP_Consent::decode_cookie();
 
         // The wording below must match reality: when the delivery log is on,
         // the site DOES keep something server-side (metadata only), and saying
@@ -669,35 +1181,17 @@ class TrackWP_Proxy {
     }
 
     /**
-     * GDPR erasure — instruct browser to drop the first-party cookie.
+     * GDPR erasure — instruct browser to drop the first-party and consent
+     * cookies, in every domain variant.
      */
     public function handle_my_data_delete( $request ) {
-        $advanced    = get_option( 'trackwp_advanced', array() );
-        $cookie_name = ! empty( $advanced['cookie_name'] ) ? $advanced['cookie_name'] : '_twp_cid';
-        $domain      = wp_parse_url( home_url(), PHP_URL_HOST );
+        TrackWP_Cookies::expire( TrackWP_Cookies::fp_cookie_name() );
+        TrackWP_Cookies::expire( 'trackwp_consent' );
 
-        // Expire the cookie.
-        setcookie( $cookie_name, '', array(
-            'expires'  => time() - 3600,
-            'path'     => '/',
-            'domain'   => $domain,
-            'secure'   => is_ssl(),
-            'httponly' => false,
-            'samesite' => 'Lax',
-        ) );
-        setcookie( 'trackwp_consent', '', array(
-            'expires'  => time() - 3600,
-            'path'     => '/',
-            'domain'   => $domain,
-            'secure'   => is_ssl(),
-            'httponly' => false,
-            'samesite' => 'Lax',
-        ) );
-
-        return new WP_REST_Response( array(
+        return self::respond( array(
             'status'  => 'ok',
             'message' => __( 'Dine cookies er slettet. Genindlæs siden for at fortsætte uden tracking.', 'trackwp' ),
-        ), 200 );
+        ) );
     }
 
     /**
@@ -740,249 +1234,40 @@ class TrackWP_Proxy {
     }
 
     /**
-     * Registrable-domain form of a host ('.example.dk') for domain-wide cookies.
+     * Debug logging. Only the event name, the consent state and the
+     * per-destination statuses are written — never a URL, a click id or any
+     * other identifier.
      *
-     * IPs and 'localhost' return '' (host-only cookie). With >= 3 labels the
-     * first label (www, shop, ...) is dropped; with 2 labels the host is used
-     * as-is. NOTE: multi-label public suffixes (co.uk-style TLDs) are not
-     * handled — the plugin targets Danish sites (.dk), where two labels is
-     * always the registrable domain.
-     *
-     * @param string $host Hostname (no scheme/port).
-     * @return string Leading-dot domain, or '' for host-only.
+     * @param string $event_name
+     * @param array  $effective
+     * @param array  $results
+     * @param bool   $is_bot
+     * @return void
      */
-    private static function get_registrable_domain( $host ) {
-        $host = strtolower( (string) $host );
-        if ( '' === $host || 'localhost' === $host || filter_var( $host, FILTER_VALIDATE_IP ) ) {
-            return '';
-        }
-        $labels = explode( '.', $host );
-        if ( count( $labels ) < 2 ) {
-            return '';
-        }
-        if ( count( $labels ) >= 3 ) {
-            array_shift( $labels );
-        }
-        return '.' . implode( '.', $labels );
-    }
-
-    /**
-     * Restore (renew) third-party tracking cookies server-side so Safari ITP's
-     * 7-day client-set-cookie cap is bypassed. We re-issue _fbp, _fbc,
-     * _gcl_au and _gcl_aw with a 90-day lifetime whenever the browser presents
-     * them on a request — but ONLY if the user has granted marketing consent.
-     *
-     * Without consent we actively expire the cookies (GDPR/ePrivacy: tracking
-     * cookies set before consent must be removed, not renewed). The same
-     * applies to the statistics cookies _ga / _ga_*: they are never renewed
-     * here (gtag owns them; the keepalive endpoint renews them under
-     * statistics consent), but they ARE expired when analytics consent is
-     * missing or withdrawn.
-     *
-     * No values are altered for renewed cookies — we only refresh the expiry.
-     *
-     * @param array $consent Consent payload, expects keys: analytics, marketing.
-     */
-    private function restore_third_party_cookies( $consent ) {
-        // Map each third-party cookie to the consent category that gates it.
-        // _ga is intentionally excluded from renewal: gtag.js manages the _ga
-        // cookie itself; re-issuing it host-only creates a duplicate cookie
-        // next to gtag's domain-wide cookie and corrupts GA sessions.
-        $cookie_map = array(
-            '_fbp'    => 'marketing',
-            '_gcl_au' => 'marketing',
-            '_gcl_aw' => 'marketing',
-            '_fbc'    => 'marketing',
-        );
-
-        // Vendor-documented lifetime — matches the consent banner declaration (90 days).
-        $mk_expires     = time() + 90 * DAY_IN_SECONDS;
-        $expires_delete = time() - 3600;
-
-        // Registrable domain — gtag/fbevents set these cookies domain-wide, so a
-        // host-only ('') re-issue/expiry on www./subdomain hosts never hits the
-        // real cookie (renewal duplicates it, deletion misses it).
-        $host       = wp_parse_url( home_url(), PHP_URL_HOST );
-        $reg_domain = self::get_registrable_domain( $host );
-
-        foreach ( $cookie_map as $name => $category ) {
-            if ( empty( $_COOKIE[ $name ] ) ) {
-                continue;
-            }
-            $value = sanitize_text_field( wp_unslash( $_COOKIE[ $name ] ) );
-            if ( '' === $value ) {
-                continue;
-            }
-
-            $granted = ! empty( $consent[ $category ] );
-
-            if ( $granted ) {
-                // Renew with the declared 90-day lifetime.
-                setcookie( $name, $value, array(
-                    'expires'  => $mk_expires,
-                    'path'     => '/',
-                    'domain'   => $reg_domain,
-                    'secure'   => is_ssl(),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ) );
-            } else {
-                // Consent missing/withdrawn — expire the cookie immediately.
-                setcookie( $name, '', array(
-                    'expires'  => $expires_delete,
-                    'path'     => '/',
-                    'domain'   => $reg_domain,
-                    'secure'   => is_ssl(),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ) );
-                // Also expire the host-only variant so duplicates set by
-                // earlier plugin versions (domain => '') are cleaned up too.
-                if ( '' !== $reg_domain ) {
-                    setcookie( $name, '', array(
-                        'expires'  => $expires_delete,
-                        'path'     => '/',
-                        'domain'   => '',
-                        'secure'   => is_ssl(),
-                        'httponly' => false,
-                        'samesite' => 'Lax',
-                    ) );
-                }
-            }
-        }
-
-        // Statistics cookies (_ga and _ga_*): NEVER renewed here — not even
-        // with consent. gtag.js owns these cookies, and the keepalive endpoint
-        // already renews them correctly under statistics consent. We only
-        // expire them when analytics consent is missing or withdrawn.
-        if ( empty( $consent['analytics'] ) ) {
-            foreach ( $_COOKIE as $ck_name => $ck_val ) {
-                if ( ! is_string( $ck_name ) ) {
-                    continue;
-                }
-                if ( $ck_name !== '_ga' && strpos( $ck_name, '_ga_' ) !== 0 ) {
-                    continue;
-                }
-                setcookie( $ck_name, '', array(
-                    'expires'  => $expires_delete,
-                    'path'     => '/',
-                    'domain'   => $reg_domain,
-                    'secure'   => is_ssl(),
-                    'httponly' => false,
-                    'samesite' => 'Lax',
-                ) );
-                // Also expire the host-only variant so duplicates set by
-                // earlier plugin versions (domain => '') are cleaned up too.
-                if ( '' !== $reg_domain ) {
-                    setcookie( $ck_name, '', array(
-                        'expires'  => $expires_delete,
-                        'path'     => '/',
-                        'domain'   => '',
-                        'secure'   => is_ssl(),
-                        'httponly' => false,
-                        'samesite' => 'Lax',
-                    ) );
-                }
-            }
-        }
-    }
-
-    /**
-     * Handle first-party cookie — set/renew server-side.
-     */
-    private function handle_first_party_cookie($event_data) {
-        $advanced = get_option('trackwp_advanced', array());
-        if (empty($advanced['first_party_cookie_enabled'])) return;
-
-        $cookie_name = !empty($advanced['cookie_name']) ? $advanced['cookie_name'] : '_twp_cid';
-        $domain = wp_parse_url(home_url(), PHP_URL_HOST);
-
-        // Consent-gate: do not set/renew first-party tracking cookie without
-        // analytics (statistics) consent. If a cookie already exists, expire it.
-        $consent = TrackWP_Consent::get_current_consent();
-        if ( empty( $consent['statistics'] ) ) {
-            if ( isset( $_COOKIE[ $cookie_name ] ) ) {
-                setcookie(
-                    $cookie_name,
-                    '',
-                    array(
-                        'expires'  => time() - 3600,
-                        'path'     => '/',
-                        'domain'   => $domain,
-                        'secure'   => is_ssl(),
-                        'httponly' => false,
-                        'samesite' => 'Lax',
-                    )
-                );
-            }
-            return;
-        }
-
-        $consent_cfg = get_option('trackwp_consent', array());
-        $lifetime_months = !empty($consent_cfg['cookie_lifetime_months']) ? absint($consent_cfg['cookie_lifetime_months']) : 12;
-        $expires = time() + min(400 * DAY_IN_SECONDS, $lifetime_months * 30 * DAY_IN_SECONDS);
-
-        // Set or renew cookie. Accept GA4-style numeric IDs (<random>.<timestamp>)
-        // and legacy 'twp_'-prefixed IDs; regenerate anything else.
-        $client_id = isset($event_data['client_id']) ? $event_data['client_id'] : '';
-        $valid = is_string($client_id) && '' !== $client_id
-            && (preg_match('/^\d+\.\d+$/', $client_id) || strpos($client_id, 'twp_') === 0);
-        if (!$valid) {
-            $client_id = TrackWP_Hash::generate_client_id();
-        }
-
-        setcookie(
-            $cookie_name,
-            $client_id,
-            array(
-                'expires'  => $expires,
-                'path'     => '/',
-                'domain'   => $domain,
-                'secure'   => is_ssl(),
-                'httponly'  => false,
-                'samesite' => 'Lax',
-            )
-        );
-    }
-
-    /**
-     * Debug logging (no PII).
-     */
-    private function maybe_log($event_data, $analytics_consent, $marketing_consent) {
+    private function maybe_log( $event_name, $effective, $results, $is_bot ) {
         $advanced = get_option('trackwp_advanced', array());
         if (empty($advanced['debug_log'])) return;
 
         $log_dir = WP_CONTENT_DIR . '/trackwp';
         TrackWP_Settings::ensure_log_dir( $log_dir );
 
-        $is_bot = self::is_bot( $event_data['user_agent'] ?? '' );
+        $statuses = array();
+        foreach ( $results as $dest => $result ) {
+            $statuses[] = $dest . '=' . $result['status'] . ( '' !== $result['reason'] ? '/' . $result['reason'] : '' );
+        }
+
         $log_entry = sprintf(
-            "[%s] Event: %s | Analytics: %s | Marketing: %s | Platforms: %s%s\n",
+            "[%s] Event: %s | Analytics: %s | Marketing: %s | Consent: %s%s | Results: %s%s\n",
             current_time('Y-m-d H:i:s'),
-            sanitize_text_field($event_data['event']),
-            $analytics_consent ? 'granted' : 'denied',
-            $marketing_consent ? 'granted' : 'denied',
-            implode(', ', $this->get_dispatched_platforms($analytics_consent, $marketing_consent)),
+            sanitize_key( (string) $event_name ),
+            ! empty( $effective['analytics'] ) ? 'granted' : 'denied',
+            ! empty( $effective['marketing'] ) ? 'granted' : 'denied',
+            isset( $effective['source'] ) ? sanitize_key( $effective['source'] ) : 'none',
+            ! empty( $effective['stale'] ) ? ' (stale)' : '',
+            empty( $statuses ) ? '-' : implode( ', ', $statuses ),
             $is_bot ? ' | BOT-SKIPPED' : ''
         );
 
-        // Never log PII — only event metadata
         error_log($log_entry, 3, $log_dir . '/debug.log');
-    }
-
-    /**
-     * Get list of platforms that would receive this event.
-     */
-    private function get_dispatched_platforms($analytics, $marketing) {
-        $platforms = array();
-        $ga4 = new TrackWP_GA4();
-        $meta = new TrackWP_Meta();
-        $ads = new TrackWP_Google_Ads();
-
-        if ($ga4->is_enabled() && $analytics) $platforms[] = 'GA4';
-        if ($marketing && $meta->is_enabled()) $platforms[] = 'Meta';
-        if ($ads->is_enabled()) $platforms[] = 'GoogleAds(client)';
-
-        return $platforms;
     }
 }

@@ -5,12 +5,25 @@
  * are built in PHP (see class-trackwp-woocommerce.php) and handed over in
  * window.trackwpWoo; this file only decides WHEN to send them.
  *
+ * Consent: this file waits for the visitor's choice itself, through
+ * window.trackwpConsentReader.read() and the trackwp:consent_updated event,
+ * instead of relying on the generic pre-consent queue in trackwp.js. That
+ * queue must not hold ecommerce items (PLAN-1.10.1-v4 K6), and the purchase
+ * needs its signed order_ref and deterministic event_id intact. A rejection
+ * sends nothing; a missing reader counts as "no choice yet".
+ *
+ * Page conditions: window.trackwp.passesPageConditions(name, 'woocommerce')
+ * is asked before every event, so an admin's page conditions on a shop event
+ * are honoured.
+ *
  * The one thing PHP cannot pre-build is an AJAX add-to-cart, because no page
  * render happens. WooCommerce has two AJAX paths and they are handled
  * separately:
  *
- *   classic  jQuery 'added_to_cart' on document.body, resolved against the
- *            product map PHP emitted for the products on this page.
+ *   classic  jQuery 'added_to_cart' on document.body, triggered with
+ *            (event, fragments, cart_hash, $button). PHP puts every line added
+ *            in that request into fragments.trackwp_added; the old product-map
+ *            lookup remains as the fallback.
  *   blocks   the Cart/Checkout blocks mutate the cart through the Store API,
  *            so responses from /wc/store/v1/cart/* are watched for quantity
  *            increases -- each one carries the full cart. The
@@ -30,7 +43,18 @@
     'use strict';
 
     var config = window.trackwpWoo || {};
-    var debug = !!config.debug;
+    // Same rule as trackwp.js: debugAllowed from PHP (strict boolean) AND
+    // ?trackwp_debug=1 in the URL.
+    var debug = config.debugAllowed === true && debugParamSet();
+
+    function debugParamSet() {
+        try {
+            var match = /[?&]trackwp_debug=([^&#]*)/.exec(window.location.search || '');
+            return !!match && match[1] === '1';
+        } catch (e) {
+            return false;
+        }
+    }
 
     // How long the store watcher stays quiet after the classic path emitted.
     var SUPPRESS_MS = 3000;
@@ -43,26 +67,99 @@
         console.log.apply(console, args);
     }
 
-    function send(eventName, value, currency, items, extra) {
-        if (!window.trackwp || typeof window.trackwp.sendEvent !== 'function') return;
+    // === Consent gate ===
+
+    // The reader is the ONLY consent implementation (K3). Missing reader, an
+    // invalid, stale or outdated cookie all read as null: no choice yet.
+    function readChoice() {
+        var reader = window.trackwpConsentReader;
+        if (!reader || typeof reader.read !== 'function') return null;
+        try {
+            var choice = reader.read();
+            return choice && typeof choice === 'object' ? choice : null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function allowsAny(choice) {
+        return !!(choice && (choice.statistics === true || choice.marketing === true));
+    }
+
+    // Callbacks waiting for a choice. Bounded: a visitor who never answers the
+    // banner must not grow this without limit.
+    var waiting = [];
+    var MAX_WAITING = 20;
+
+    function whenConsented(fn) {
+        var choice = readChoice();
+        if (choice) {
+            if (allowsAny(choice)) {
+                fn(choice);
+            } else {
+                log('consent rejected, nothing sent');
+            }
+            return;
+        }
+        if (waiting.length < MAX_WAITING) {
+            waiting.push(fn);
+        }
+    }
+
+    function onConsentUpdated() {
+        var choice = readChoice();
+        if (!choice) return; // still no valid choice (e.g. stale): keep waiting
+        var queued = waiting;
+        waiting = [];
+        if (!allowsAny(choice)) {
+            log('consent rejected, dropped', queued.length, 'waiting event(s)');
+            return;
+        }
+        for (var i = 0; i < queued.length; i++) {
+            try {
+                queued[i](choice);
+            } catch (e) { /* one bad entry must not stop the rest */ }
+        }
+    }
+
+    // === Page conditions ===
+
+    function passesConditions(eventName) {
+        var api = window.trackwp;
+        if (!api || typeof api.passesPageConditions !== 'function') return true;
+        try {
+            return api.passesPageConditions(eventName, 'woocommerce') !== false;
+        } catch (e) {
+            return true;
+        }
+    }
+
+    // === Sending ===
+
+    function send(eventName, value, currency, items, extra, params, options) {
+        if (!window.trackwp || typeof window.trackwp.sendEvent !== 'function') return false;
+        if (!passesConditions(eventName)) {
+            log('page conditions not met, skipped', eventName);
+            return false;
+        }
 
         var ecommerce = extra || {};
         if (items && items.length) {
             ecommerce.items = items;
         }
 
-        var params = {
-            value: value || 0,
-            currency: currency || config.currency || 'DKK'
-        };
+        params = params || {};
+        params.value = value || 0;
+        params.currency = currency || config.currency || 'DKK';
         // Only attach ecommerce when there is something in it: an empty object
         // would otherwise travel to the server on every event.
         if (hasAnyKey(ecommerce)) {
             params.ecommerce = ecommerce;
         }
 
-        log('send', eventName, params);
-        window.trackwp.sendEvent(eventName, params);
+        log('send', eventName, redactForLog(params), options || {});
+        window.trackwp.sendEvent(eventName, params, options || {});
+        return true;
     }
 
     // === Events PHP already resolved (view_item, begin_checkout, purchase,
@@ -73,36 +170,56 @@
         if (!immediate || !immediate.length) return;
 
         for (var i = 0; i < immediate.length; i++) {
-            var entry = immediate[i];
-            if (!entry || !entry.event) continue;
-            var ecommerce = entry.ecommerce || {};
+            (function (entry) {
+                if (!entry || !entry.event) return;
+                whenConsented(function (choice) {
+                    if (entry.event === 'purchase') {
+                        firePurchase(entry, choice);
+                        return;
+                    }
+                    var ecommerce = entry.ecommerce || {};
+                    send(entry.event, entry.value, entry.currency, ecommerce.items, stripItems(ecommerce));
+                });
+            })(immediate[i]);
+        }
+    }
 
-            // The server-side order flag cannot stop a purchase that the
-            // BROWSER replays from its own HTTP cache: WooCommerce serves the
-            // order-received page with a short max-age, so a reload or a
-            // back/forward navigation can re-render the same payload without
-            // the server ever being asked. GA4 and Google Ads deduplicate on
-            // transaction_id, but Meta deduplicates on event_id, which is
-            // regenerated per send — so the sale would be counted twice there.
-            if (entry.event === 'purchase') {
-                var transactionId = ecommerce.transaction_id;
-                if (transactionId && alreadySentPurchase(transactionId)) {
-                    log('purchase skipped, already sent for order', transactionId);
-                    continue;
-                }
-                if (transactionId) {
-                    rememberPurchase(transactionId);
-                }
+    // purchase: the server rebuilds the payload from the order and claims it
+    // atomically, so it only needs the signed order_ref and the deterministic
+    // event_id (shared with the Pixel, so Meta deduplicates Pixel and CAPI).
+    //
+    // A reload or back/forward navigation must not repeat the BROWSER tags
+    // (gtag conversion, Pixel Purchase): the server claim cannot stop those.
+    // The local store is checked BEFORE they fire and written only after the
+    // send (R14), and only here, i.e. after consent.
+    function firePurchase(entry, choice) {
+        var ecommerce = entry.ecommerce || {};
+        var transactionId = ecommerce.transaction_id;
+        var alreadySent = !!(transactionId && alreadySentPurchase(transactionId));
+
+        var params = {};
+        if (entry.event_id) params.event_id = entry.event_id;
+        if (entry.order_ref) params.order_ref = entry.order_ref;
+        // Google Enhanced Conversions user_data, already hashed in PHP and
+        // only present when customer data sharing is on. Marketing only.
+        if (entry.ec && choice && choice.marketing === true) params.ec = entry.ec;
+
+        var options = {};
+        if (alreadySent) {
+            // Let the server answer "duplicate" without re-firing the browser
+            // tags, when trackwp.js supports it; otherwise send nothing.
+            var features = window.trackwp && window.trackwp.features;
+            if (!features || features.serverOnly !== true) {
+                log('purchase skipped, already sent for order', transactionId);
+                return;
             }
+            options.serverOnly = true;
+            log('purchase already sent for order', transactionId, '- server only');
+        }
 
-            send(
-                entry.event,
-                entry.value,
-                entry.currency,
-                ecommerce.items,
-                // transaction_id / coupon travel alongside items.
-                stripItems(ecommerce)
-            );
+        var sent = send('purchase', entry.value, entry.currency, ecommerce.items, stripItems(ecommerce), params, options);
+        if (sent && transactionId && !alreadySent) {
+            rememberPurchase(transactionId);
         }
     }
 
@@ -140,8 +257,8 @@
             }
             window.localStorage.setItem(PURCHASE_STORE_KEY, JSON.stringify(store));
         } catch (e) {
-            // No storage available: the server-side order flag is still the
-            // primary guard, this is only the cache-replay backstop.
+            // No storage available: the server-side claim still guarantees one
+            // server-side purchase; only the browser tags can repeat.
         }
     }
 
@@ -160,31 +277,50 @@
     // === Classic AJAX add-to-cart ===
 
     function initClassicAddToCart() {
-        if (!config.addToCart) return;
+        if (config.addToCart !== true) return;
         if (typeof window.jQuery !== 'function') return;
 
+        // WooCommerce triggers added_to_cart with [fragments, cart_hash,
+        // $button]; jQuery puts the event object first.
         window.jQuery(document.body).on('added_to_cart', function (event, fragments, cartHash, $button) {
-            var item = resolveFromButton($button);
-            if (!item) {
-                // Unresolved: let the store watcher handle it if the blocks
-                // data store is present, since it has the real cart contents.
-                log('classic add_to_cart could not be resolved from the button');
+            var added = fragments && isArray(fragments.trackwp_added) ? fragments.trackwp_added : null;
+            if (added && added.length) {
+                suppressUntil = Date.now() + SUPPRESS_MS;
+                for (var i = 0; i < added.length; i++) {
+                    queueAdded(added[i]);
+                }
                 return;
             }
 
+            // Fallback: no fragment (a theme or plugin that triggers the event
+            // itself). Resolve the clicked button against the product map.
+            var item = resolveFromButton($button);
+            if (!item) {
+                log('classic add_to_cart could not be resolved');
+                return;
+            }
             suppressUntil = Date.now() + SUPPRESS_MS;
-
             var value = round2((parseFloat(item.price) || 0) * item.quantity);
-            send('add_to_cart', value, config.currency, [item]);
+            whenConsented(function () {
+                send('add_to_cart', value, config.currency, [item]);
+            });
         });
 
         log('classic add-to-cart listener bound');
     }
 
+    function queueAdded(entry) {
+        if (!entry || !isArray(entry.items) || !entry.items.length) return;
+        var value = parseFloat(entry.value);
+        var currency = entry.currency || config.currency;
+        whenConsented(function () {
+            send('add_to_cart', isNaN(value) ? 0 : round2(value), currency, entry.items);
+        });
+    }
+
     // Resolve the clicked add-to-cart button against the product map PHP
     // emitted for this page. Variations are not resolvable this way: the loop
-    // button carries the parent id only, which is why the single-product form
-    // POST path is handled server-side instead.
+    // button carries the parent id only, which is why the fragment is primary.
     function resolveFromButton($button) {
         var products = config.products;
         if (!products || !$button || !$button.length) return null;
@@ -215,9 +351,8 @@
     // one of those responses is the FULL cart. Watching the responses is a far
     // more durable contract than reading a JS global: WooCommerce has moved the
     // Cart and Checkout blocks onto the Interactivity API, and on a current
-    // install window.wp.data / wc.wcBlocksData are simply not defined -- an
-    // earlier version of this file depended on them and would have fired
-    // nothing at all. Verified against WooCommerce 11 / WordPress 7.1.
+    // install window.wp.data / wc.wcBlocksData are simply not defined.
+    // Verified against WooCommerce 11 / WordPress 7.1.
     //
     // The baseline comes from PHP (config.cart), so the very first add is a real
     // delta instead of being swallowed as "the initial state".
@@ -225,7 +360,7 @@
     var cartBaseline = null;
 
     function initStoreApiWatcher() {
-        if (!config.addToCart) return;
+        if (config.addToCart !== true) return;
         if (typeof window.fetch !== 'function') return;
 
         cartBaseline = normaliseBaseline(config.cart);
@@ -324,7 +459,10 @@
             return;
         }
 
-        send('add_to_cart', round2(value), currency, items);
+        var total = round2(value);
+        whenConsented(function () {
+            send('add_to_cart', total, currency, items);
+        });
     }
 
     // Store API money values are integer strings in the currency's MINOR unit,
@@ -337,6 +475,9 @@
         return minorUnit;
     }
 
+    // Mirrors TrackWP_WooCommerce::add_price_and_discount() exactly: price is
+    // the DISCOUNTED unit price (line total / quantity, tax per value basis),
+    // discount the per-unit reduction from the line subtotal.
     function itemFromCartLine(line, minorUnit) {
         if (!line) return null;
 
@@ -345,8 +486,7 @@
 
         // Prefer the line totals: they carry per-line tax, which lets this path
         // apply the SAME value basis as the PHP-built payloads. prices.price
-        // follows the shop's cart display setting instead, so using it made
-        // add_to_cart disagree with begin_checkout for the same product.
+        // follows the shop's cart display setting instead.
         var totals = line.totals || {};
         var subtotal = money(totals.line_subtotal, minorUnit);
         var subtotalTax = money(totals.line_subtotal_tax, minorUnit);
@@ -357,12 +497,15 @@
         var discount = 0;
 
         if (subtotal !== null) {
-            var includeTax = !!config.includeTax;
+            var includeTax = config.includeTax === true;
             var grossSubtotal = includeTax ? subtotal + (subtotalTax || 0) : subtotal;
-            var grossTotal = includeTax
-                ? (lineTotal === null ? grossSubtotal : lineTotal + (lineTotalTax || 0))
-                : (lineTotal === null ? grossSubtotal : lineTotal);
-            price = round2(grossSubtotal / quantity);
+            var grossTotal;
+            if (lineTotal === null) {
+                grossTotal = grossSubtotal;
+            } else {
+                grossTotal = includeTax ? lineTotal + (lineTotalTax || 0) : lineTotal;
+            }
+            price = round2(Math.max(0, grossTotal) / quantity);
             var reduction = grossSubtotal - grossTotal;
             if (reduction > 0) {
                 discount = round2(reduction / quantity);
@@ -407,6 +550,31 @@
 
     // === Utilities ===
 
+    // Debug output never contains the Enhanced Conversions hashes or the
+    // signed order reference.
+    function redactForLog(params) {
+        var out = {};
+        for (var key in params) {
+            if (!Object.prototype.hasOwnProperty.call(params, key)) continue;
+            if (key === 'ec' || key === 'order_ref') continue;
+            out[key] = params[key];
+        }
+        if (out.ecommerce && typeof out.ecommerce === 'object' && out.ecommerce.order_ref !== undefined) {
+            out.ecommerce = stripKey(out.ecommerce, 'order_ref');
+        }
+        return out;
+    }
+
+    function stripKey(object, skip) {
+        var out = {};
+        for (var key in object) {
+            if (Object.prototype.hasOwnProperty.call(object, key) && key !== skip) {
+                out[key] = object[key];
+            }
+        }
+        return out;
+    }
+
     function isArray(value) {
         return Object.prototype.toString.call(value) === '[object Array]';
     }
@@ -432,12 +600,19 @@
         if (initialized) return;
         initialized = true;
 
+        document.addEventListener('trackwp:consent_updated', onConsentUpdated);
         fireImmediate();
         initClassicAddToCart();
         initStoreApiWatcher();
     }
 
-    // trackwp.js loads async, so window.trackwp may not exist yet. Same
+    // Exposed for the node test sandbox only; not a public API.
+    window.trackwpWooInternals = {
+        itemFromCartLine: itemFromCartLine,
+        readChoice: readChoice
+    };
+
+    // trackwp.js loads deferred, so window.trackwp may not exist yet. Same
     // handshake as class-trackwp-forms.php uses.
     if (window.trackwp && typeof window.trackwp.sendEvent === 'function') {
         init();

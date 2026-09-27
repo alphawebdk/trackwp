@@ -108,16 +108,18 @@
  * toward Accept by visual hierarchy.
  */
 .trackwp-consent__btn--reject {
-    background: rgba(255, 255, 255, 0.18);
-    color: var(--twp-text, #fff);
-    border-color: rgba(255, 255, 255, 0.18);
+    background: var(--twp-accent, #30D3C0);
+    color: var(--twp-btn-text, #274A45);
+    border-color: var(--twp-accent, #30D3C0);
     flex: 1 1 auto;
 }
 
-.trackwp-consent__btn--reject:hover {
-    background: rgba(255, 255, 255, 0.28);
-    border-color: rgba(255, 255, 255, 0.28);
-    opacity: 1;
+/* Withdraw: clearly visible, outline (not a first-layer choice). */
+.trackwp-consent__btn--withdraw {
+    background: transparent;
+    color: inherit;
+    border-color: currentColor;
+    margin-top: 8px;
 }
 
 /* Save: outline */
@@ -427,16 +429,70 @@
     flex: 1 1 auto;
 }
 
-/* Reject + Save in cookiebot — outline on white bg */
+/* Reject in cookiebot: identical to Accept (equal prominence, Datatilsynet). */
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--reject {
-    background: transparent;
-    color: var(--twp-text, #1d2327);
-    border-color: rgba(128, 128, 128, 0.5);
+    background: var(--twp-accent, #30D3C0);
+    color: var(--twp-btn-text, #274A45);
+    border-color: var(--twp-accent, #30D3C0);
 }
 
-.trackwp-consent--style-cookiebot .trackwp-consent__btn--reject:hover {
-    background: rgba(128, 128, 128, 0.12);
-    border-color: rgba(128, 128, 128, 0.8);
+/* First-layer text: one paragraph per block. */
+.trackwp-consent__description p {
+    margin: 0 0 8px;
+}
+
+.trackwp-consent__description p:last-child {
+    margin-bottom: 0;
+}
+
+/* Bottom bar carries the full first layer; keep it scrollable on small screens. */
+.trackwp-consent__bar-text {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+/* Status block and withdrawal. */
+.trackwp-consent__status {
+    margin-top: 16px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(128, 128, 128, 0.3);
+}
+
+.trackwp-consent__status[hidden] {
+    display: none;
+}
+
+/*
+ * [hidden] must always hide inside the banner, whatever display a class sets
+ * (e.g. .trackwp-consent__btn { display: inline-flex } showed the withdraw
+ * button). Roots: #trackwp-consent-banner and #trackwp-consent-drawer both
+ * carry .trackwp-consent; the overlay (#trackwp-consent-overlay) only has the
+ * id in dialog/cookiebot/info and also .trackwp-consent-overlay in bottombar.
+ * consent.js removes the attribute when it shows an element.
+ */
+.trackwp-consent[hidden],
+.trackwp-consent [hidden],
+#trackwp-consent-overlay[hidden],
+.trackwp-consent-overlay[hidden] {
+    display: none !important;
+}
+
+.trackwp-consent__status-list {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 4px 12px;
+    margin: 8px 0;
+    font-size: 13px;
+}
+
+.trackwp-consent__status-list dd {
+    margin: 0;
+    word-break: break-all;
+}
+
+/* GTM without declared vendors: visible placeholder. */
+.trackwp-consent-vendors__placeholder {
+    font-style: italic;
 }
 
 .trackwp-consent--style-cookiebot .trackwp-consent__btn--save {

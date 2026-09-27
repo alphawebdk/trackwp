@@ -8,8 +8,16 @@
     convertWarningsToExceptions="true">
     <testsuites>
         <testsuite name="TrackWP Unit Tests">
-            <directory suffix=".php">./tests/</directory>
+            <!-- Only tests/test-*.php. Generators (tests/fixtures), Docker
+                 files, e2e/JS specs and legacy snapshots are not test cases
+                 and must never be included by PHPUnit. -->
+            <directory prefix="test-" suffix=".php">./tests/</directory>
             <exclude>./tests/bootstrap.php</exclude>
+            <exclude>./tests/fixtures</exclude>
+            <exclude>./tests/docker</exclude>
+            <exclude>./tests/e2e</exclude>
+            <exclude>./tests/js</exclude>
+            <exclude>./tests/legacy</exclude>
         </testsuite>
     </testsuites>
     <php>

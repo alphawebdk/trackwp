@@ -3,6 +3,14 @@ defined('ABSPATH') || exit;
 
 class TrackWP_Events {
 
+    /**
+     * Event names GA4 reserves for its own automatically collected events.
+     * They are rejected when an event is saved and when one arrives at the
+     * public /event endpoint: forwarding them through the Measurement
+     * Protocol would double-count gtag's own page_view/session data.
+     */
+    const RESERVED_PUBLIC_NAMES = array( 'page_view', 'session_start', 'first_visit', 'user_engagement' );
+
     private $events = array();
 
     public function __construct() {
@@ -66,6 +74,38 @@ class TrackWP_Events {
     }
 
     /**
+     * Get config for a specific event by name, whether it is enabled or not.
+     *
+     * The proxy needs to tell "configured but switched off" (skip, send
+     * nothing) apart from "not configured at all" (legacy pass-through), which
+     * get_event_config() cannot do.
+     *
+     * @param string $event_name
+     * @return array|null
+     */
+    public function find_event($event_name) {
+        if (!is_array($this->events)) {
+            return null;
+        }
+        foreach ($this->events as $event) {
+            if (is_array($event) && isset($event['name']) && $event['name'] === $event_name) {
+                return $event;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Is the name one of GA4's reserved automatically collected events?
+     *
+     * @param string $event_name
+     * @return bool
+     */
+    public static function is_reserved_name($event_name) {
+        return in_array((string) $event_name, self::RESERVED_PUBLIC_NAMES, true);
+    }
+
+    /**
      * Get only enabled events (for frontend).
      */
     public function get_active_events() {
@@ -114,6 +154,12 @@ class TrackWP_Events {
                 'currency'     => isset($event['currency']) ? (string) $event['currency'] : 'DKK',
                 'ads_label'    => isset($event['ads_label']) ? (string) $event['ads_label'] : '',
                 'meta_event'   => isset($event['meta_event']) ? (string) $event['meta_event'] : '',
+                // K8: the Meta event name the Pixel must use, resolved by the
+                // same rule as CAPI so browser and server events deduplicate.
+                'meta_resolved' => TrackWP_Meta::resolve_event_name(
+                    isset($event['name']) ? (string) $event['name'] : '',
+                    isset($event['meta_event']) ? (string) $event['meta_event'] : ''
+                ),
                 // null => legacy config without routing: client keeps the old
                 // "send everywhere" behaviour (mirrors the server-side rule).
                 'send_to'      => $send_to === null ? null : array(
@@ -134,6 +180,13 @@ class TrackWP_Events {
         // Name: required, lowercase alphanumeric + underscores, starts with letter, max 40 chars (GA4 limit)
         if (empty($event['name']) || !preg_match('/^[a-z][a-z0-9_]{0,39}$/', $event['name'])) {
             return new WP_Error('invalid_event_name', __('Begivenhedsnavnet skal starte med et bogstav og kun indeholde små bogstaver, tal og underscores (maks. 40 tegn).', 'trackwp'));
+        }
+        if (self::is_reserved_name($event['name'])) {
+            return new WP_Error('reserved_event_name', sprintf(
+                /* translators: %s: comma-separated list of reserved event names */
+                __('Begivenhedsnavnet er reserveret af Google Analytics og kan ikke bruges: %s.', 'trackwp'),
+                implode(', ', self::RESERVED_PUBLIC_NAMES)
+            ));
         }
 
         // Trigger type: must be in allowed list

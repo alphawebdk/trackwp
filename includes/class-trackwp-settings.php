@@ -12,6 +12,60 @@ defined('ABSPATH') || exit;
 class TrackWP_Settings {
 
     /**
+     * Set by import_settings() for the duration of a sanitize_platforms()
+     * call. The exported JSON already stores secrets in their stored
+     * (base64) form (see export_settings()), so re-running them through
+     * TrackWP_Hash::encode() would double-encode them. This flag tells
+     * sanitize_platforms() to keep the incoming secret values as-is instead
+     * of re-encoding — the single source of truth for the "double encoding
+     * on import" fix, replacing the old post-hoc raw-value restore.
+     *
+     * @var bool
+     */
+    private static $presanitized = false;
+
+    /**
+     * Cloudflare's published IP ranges, used to expand advanced.trusted_proxies
+     * when advanced.trusted_proxies_cloudflare is enabled. TrackWP_Request_Guard
+     * (W1) reads these via get_trusted_proxies() to recognise CF-Connecting-IP
+     * as trustworthy.
+     *
+     * Fetched directly via `curl -s https://www.cloudflare.com/ips-v4` and
+     * `curl -s https://www.cloudflare.com/ips-v6` on 2026-09-27 — this is the
+     * exact, current content of both lists, not a memorised/guessed value.
+     *
+     * @return string[] CIDR blocks.
+     */
+    public static function cloudflare_ip_ranges() {
+        return array(
+            // IPv4 — https://www.cloudflare.com/ips-v4 (fetched 2026-09-27)
+            '173.245.48.0/20',
+            '103.21.244.0/22',
+            '103.22.200.0/22',
+            '103.31.4.0/22',
+            '141.101.64.0/18',
+            '108.162.192.0/18',
+            '190.93.240.0/20',
+            '188.114.96.0/20',
+            '197.234.240.0/22',
+            '198.41.128.0/17',
+            '162.158.0.0/15',
+            '104.16.0.0/13',
+            '104.24.0.0/14',
+            '172.64.0.0/13',
+            '131.0.72.0/22',
+            // IPv6 — https://www.cloudflare.com/ips-v6 (fetched 2026-09-27)
+            '2400:cb00::/32',
+            '2606:4700::/32',
+            '2803:f800::/32',
+            '2405:b500::/32',
+            '2405:8100::/32',
+            '2a06:98c0::/29',
+            '2c0f:f248::/32',
+        );
+    }
+
+    /**
      * Add top-level admin menu.
      */
     public function add_menu_page() {
@@ -58,6 +112,11 @@ class TrackWP_Settings {
         register_setting('trackwp_woocommerce_group', 'trackwp_woocommerce', array(
             'sanitize_callback' => array($this, 'sanitize_woocommerce'),
         ));
+
+        // admin-post.php runs admin_init before dispatching admin_post_{action},
+        // so registering here (rather than at plugin bootstrap) is in time.
+        add_action( 'admin_post_trackwp_consent_export', array( __CLASS__, 'handle_consent_export' ) );
+        add_action( 'admin_notices', array( $this, 'render_admin_notices' ) );
     }
 
     /**
@@ -137,11 +196,10 @@ class TrackWP_Settings {
         $output['ga4_measurement_id'] = $ga4_id;
 
         // GA4 API Secret — only update if user entered a new value (not the placeholder)
-        if (!empty($input['ga4_api_secret']) && $input['ga4_api_secret'] !== '••••••••') {
-            $output['ga4_api_secret'] = TrackWP_Hash::encode($input['ga4_api_secret']);
-        } else {
-            $output['ga4_api_secret'] = isset($current['ga4_api_secret']) ? $current['ga4_api_secret'] : '';
-        }
+        $output['ga4_api_secret'] = $this->encode_secret_input(
+            isset($input['ga4_api_secret']) ? $input['ga4_api_secret'] : '',
+            isset($current['ga4_api_secret']) ? $current['ga4_api_secret'] : ''
+        );
 
         $output['ga4_gtag_enabled'] = ! empty($input['ga4_gtag_enabled']);
 
@@ -154,11 +212,10 @@ class TrackWP_Settings {
         $output['meta_pixel_id'] = sanitize_text_field(isset($input['meta_pixel_id']) ? $input['meta_pixel_id'] : '');
 
         // Meta Access Token — same pattern as GA4 secret
-        if (!empty($input['meta_access_token']) && $input['meta_access_token'] !== '••••••••') {
-            $output['meta_access_token'] = TrackWP_Hash::encode($input['meta_access_token']);
-        } else {
-            $output['meta_access_token'] = isset($current['meta_access_token']) ? $current['meta_access_token'] : '';
-        }
+        $output['meta_access_token'] = $this->encode_secret_input(
+            isset($input['meta_access_token']) ? $input['meta_access_token'] : '',
+            isset($current['meta_access_token']) ? $current['meta_access_token'] : ''
+        );
 
         $output['meta_pixel_client_enabled'] = ! empty($input['meta_pixel_client_enabled']);
 
@@ -172,9 +229,11 @@ class TrackWP_Settings {
         }
 
         // Meta API version — whitelist
-        $allowed_meta_versions = array('v18.0', 'v19.0', 'v20.0', 'v21.0', 'v22.0');
+        // Single source of truth: TrackWP_Meta (W3) owns the version and the
+        // supported list.
+        $allowed_meta_versions = TrackWP_Meta::SUPPORTED_API_VERSIONS;
         $meta_version = isset($input['meta_api_version']) ? sanitize_text_field($input['meta_api_version']) : '';
-        $output['meta_api_version'] = in_array($meta_version, $allowed_meta_versions, true) ? $meta_version : 'v21.0';
+        $output['meta_api_version'] = in_array($meta_version, $allowed_meta_versions, true) ? $meta_version : TrackWP_Meta::DEFAULT_API_VERSION;
 
         // Google Ads Customer ID — accept digits + hyphens, validate format
         $raw_cust = isset($input['google_ads_customer_id']) ? sanitize_text_field($input['google_ads_customer_id']) : '';
@@ -190,28 +249,31 @@ class TrackWP_Settings {
         $output['google_ads_conversion_action_id'] = preg_replace('/[^0-9]/', '', $raw_action);
 
         // Google Ads Developer Token — same secret pattern as GA4/Meta tokens
-        if (!empty($input['google_ads_developer_token']) && $input['google_ads_developer_token'] !== '••••••••') {
-            $output['google_ads_developer_token'] = TrackWP_Hash::encode($input['google_ads_developer_token']);
-        } else {
-            $output['google_ads_developer_token'] = isset($current['google_ads_developer_token']) ? $current['google_ads_developer_token'] : '';
-        }
+        $output['google_ads_developer_token'] = $this->encode_secret_input(
+            isset($input['google_ads_developer_token']) ? $input['google_ads_developer_token'] : '',
+            isset($current['google_ads_developer_token']) ? $current['google_ads_developer_token'] : ''
+        );
 
         // Google Ads OAuth Client ID — plain text (not a secret)
         $output['google_ads_oauth_client_id'] = sanitize_text_field( isset($input['google_ads_oauth_client_id']) ? $input['google_ads_oauth_client_id'] : '' );
 
         // Google Ads OAuth Client Secret — same secret pattern as developer token
-        if (!empty($input['google_ads_oauth_client_secret']) && $input['google_ads_oauth_client_secret'] !== '••••••••') {
-            $output['google_ads_oauth_client_secret'] = TrackWP_Hash::encode($input['google_ads_oauth_client_secret']);
-        } else {
-            $output['google_ads_oauth_client_secret'] = isset($current['google_ads_oauth_client_secret']) ? $current['google_ads_oauth_client_secret'] : '';
-        }
+        $output['google_ads_oauth_client_secret'] = $this->encode_secret_input(
+            isset($input['google_ads_oauth_client_secret']) ? $input['google_ads_oauth_client_secret'] : '',
+            isset($current['google_ads_oauth_client_secret']) ? $current['google_ads_oauth_client_secret'] : ''
+        );
 
         // Google Ads OAuth Refresh Token — same secret pattern
-        if (!empty($input['google_ads_oauth_refresh_token']) && $input['google_ads_oauth_refresh_token'] !== '••••••••') {
-            $output['google_ads_oauth_refresh_token'] = TrackWP_Hash::encode($input['google_ads_oauth_refresh_token']);
-        } else {
-            $output['google_ads_oauth_refresh_token'] = isset($current['google_ads_oauth_refresh_token']) ? $current['google_ads_oauth_refresh_token'] : '';
-        }
+        $output['google_ads_oauth_refresh_token'] = $this->encode_secret_input(
+            isset($input['google_ads_oauth_refresh_token']) ? $input['google_ads_oauth_refresh_token'] : '',
+            isset($current['google_ads_oauth_refresh_token']) ? $current['google_ads_oauth_refresh_token'] : ''
+        );
+
+        // GA4-conversions imported into Google Ads as a conversion goal. When
+        // this AND a direct Google Ads conversion action both count the same
+        // goal, the campaign gets double-counted — the admin notice
+        // (render_admin_notices()) warns about this combination.
+        $output['ga4_imported_to_ads'] = ! empty( $input['ga4_imported_to_ads'] );
 
         // GTM
         $output['gtm_enabled'] = ! empty($input['gtm_enabled']);
@@ -231,6 +293,25 @@ class TrackWP_Settings {
         }
 
         return $output;
+    }
+
+    /**
+     * Shared secret-input handling for sanitize_platforms(): keeps the
+     * stored value when the field is empty or still shows the masked
+     * placeholder, otherwise encodes a freshly entered value — except during
+     * import_settings() (self::$presanitized), where the incoming value is
+     * already stored (base64) form and must be kept as-is to avoid double
+     * encoding.
+     *
+     * @param string $input_value   Raw POSTed (or imported) value.
+     * @param string $current_value Existing stored (encoded) value.
+     * @return string
+     */
+    private function encode_secret_input($input_value, $current_value) {
+        if (!empty($input_value) && $input_value !== '••••••••') {
+            return self::$presanitized ? $input_value : TrackWP_Hash::encode($input_value);
+        }
+        return $current_value ? $current_value : '';
     }
 
     /**
@@ -377,11 +458,86 @@ class TrackWP_Settings {
         } else {
             $output['language'] = isset($current['language']) ? sanitize_text_field($current['language']) : 'da';
         }
-        $output['show_reject_button']       = !empty($input['show_reject_button']);
+        // "Vis afvis-knap" udgår (1.10.1): "Afvis valgfrie" er nu altid synlig
+        // på første lag med samme prominens som accept (BESLUTNINGER §4), så
+        // valget findes ikke længere.
         $output['require_active_consent']   = !empty($input['require_active_consent']);
         $output['log_consent']              = !empty($input['log_consent']);
         $output['reconsent_on_policy_change'] = !empty($input['reconsent_on_policy_change']);
-        $output['cookie_lifetime_months']   = isset($input['cookie_lifetime_months']) ? absint($input['cookie_lifetime_months']) : 12;
+
+        // K7: consent.cookie_lifetime_months er clamped 1-12 (både her og i UI'ets
+        // min/max — se templates/settings-page.php).
+        $cookie_months = isset($input['cookie_lifetime_months']) ? absint($input['cookie_lifetime_months']) : 12;
+        $output['cookie_lifetime_months'] = min(12, max(1, $cookie_months));
+
+        // Dynamisk vs. brugerredigeret banner-tekst (TrackWP_Consent_Profile::default_texts(), W6).
+        $description_mode = isset($input['description_mode']) ? sanitize_key($input['description_mode']) : 'auto';
+        $output['description_mode'] = in_array($description_mode, array('auto', 'custom'), true) ? $description_mode : 'auto';
+
+        // Samtykkelog-opbevaring (måneder). Clamp 6-60, standard 24 (TrackWP_Consent_Log::prune(), W1).
+        $retention = isset($input['consent_log_retention_months']) ? absint($input['consent_log_retention_months']) : 24;
+        $output['consent_log_retention_months'] = min(60, max(6, $retention));
+
+        // Dataansvarlig — indsat i bannerets standardtekst (TrackWP_Consent_Profile::default_texts(), W6).
+        $output['controller_name'] = sanitize_text_field( isset($input['controller_name']) ? $input['controller_name'] : '' );
+
+        // GTM-vendorliste: kan ikke udledes automatisk, så admin vælger selv,
+        // når GTM er aktiv (BESLUTNINGER §4). Strukturen {known, custom} er
+        // ejet af W7, men TrackWP_Consent_Profile::vendor_catalog() (W6) er det
+        // ENESTE katalog for "known" — se TrackWP_Consent_Profile::gtm_vendors()
+        // for hvordan "custom" bruges (skal have category i OPTIONAL_CATEGORIES).
+        $known_catalog = ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'vendor_catalog' ) )
+            ? array_keys( TrackWP_Consent_Profile::vendor_catalog() )
+            : array();
+        $known_input = isset($input['gtm_vendors']['known']) && is_array($input['gtm_vendors']['known'])
+            ? $input['gtm_vendors']['known']
+            : array();
+        $known_out = array();
+        foreach ( $known_input as $vendor_key ) {
+            $vendor_key = sanitize_key( $vendor_key );
+            if ( in_array( $vendor_key, $known_catalog, true ) && ! in_array( $vendor_key, $known_out, true ) ) {
+                $known_out[] = $vendor_key;
+            }
+        }
+
+        // Custom rows: {name, provider, category, cookies, purpose, lifetime,
+        // transfer}. Accepts a JSON string from the admin editor (same pattern
+        // as sanitize_cookie_declarations()) or a plain array from import.
+        $optional_categories = class_exists( 'TrackWP_Consent_Profile' )
+            ? TrackWP_Consent_Profile::OPTIONAL_CATEGORIES
+            : array( 'statistics', 'marketing', 'personalisation' );
+        $custom_raw = isset($input['gtm_vendors']['custom']) ? $input['gtm_vendors']['custom'] : array();
+        if ( is_string( $custom_raw ) ) {
+            $decoded    = json_decode( $custom_raw, true );
+            $custom_raw = is_array( $decoded ) ? $decoded : array();
+        }
+        $custom_out = array();
+        foreach ( (array) $custom_raw as $row ) {
+            if ( ! is_array( $row ) ) {
+                continue;
+            }
+            $name = sanitize_text_field( isset($row['name']) ? $row['name'] : '' );
+            if ( $name === '' ) {
+                continue;
+            }
+            $category = isset($row['category']) ? sanitize_key( $row['category'] ) : 'marketing';
+            if ( ! in_array( $category, $optional_categories, true ) ) {
+                $category = 'marketing';
+            }
+            $custom_out[] = array(
+                'name'     => $name,
+                'provider' => sanitize_text_field( isset($row['provider']) ? $row['provider'] : '' ),
+                'category' => $category,
+                'cookies'  => sanitize_text_field( isset($row['cookies']) ? $row['cookies'] : '' ),
+                'purpose'  => sanitize_text_field( isset($row['purpose']) ? $row['purpose'] : '' ),
+                'lifetime' => sanitize_text_field( isset($row['lifetime']) ? $row['lifetime'] : '' ),
+                'transfer' => sanitize_text_field( isset($row['transfer']) ? $row['transfer'] : '' ),
+            );
+        }
+        $output['gtm_vendors'] = array(
+            'known'  => $known_out,
+            'custom' => $custom_out,
+        );
 
         // Auto-increment consent version if policy changed
         if (!empty($input['reconsent_on_policy_change']) && isset($current['consent_version'])) {
@@ -478,6 +634,32 @@ class TrackWP_Settings {
         $output['first_party_loader_enabled']   = ! empty($input['first_party_loader_enabled']);
         $output['capi_debug_logging_enabled']   = ! empty($input['capi_debug_logging_enabled']);
 
+        // Deling af kundedata (EC/AM). Standard: slået til. Slås den fra,
+        // droppes enhanced/user_data/AM helt (K2, K8) — bl.a. relevant for
+        // sites i følsomme brancher, se admin-noten i render_admin_notices().
+        $output['customer_data_sharing'] = array_key_exists( 'customer_data_sharing', $input )
+            ? ! empty( $input['customer_data_sharing'] )
+            : true;
+
+        // Betroede proxyer (CIDR-liste), brugt af TrackWP_Request_Guard::client_ip() (W1)
+        // til at afgøre hvornår CF-Connecting-IP/X-Forwarded-For skal foretrækkes
+        // frem for REMOTE_ADDR.
+        $output['trusted_proxies']            = self::sanitize_cidr_list( isset($input['trusted_proxies']) ? $input['trusted_proxies'] : '' );
+        $output['trusted_proxies_cloudflare'] = ! empty( $input['trusted_proxies_cloudflare'] );
+
+        // Eksplicit cookie-domæne (K7 registrable_domain() prioritet 1). Kun en
+        // sanitized streng her — selve valideringen mod home_url-hosten sker i
+        // TrackWP_Cookies::registrable_domain() (W1).
+        $raw_domain = isset($input['cookie_domain']) ? strtolower( trim( (string) $input['cookie_domain'] ) ) : '';
+        $raw_domain = preg_replace( '#^https?://#', '', $raw_domain );
+        $raw_domain = rtrim( $raw_domain, '/' );
+        $output['cookie_domain'] = preg_match( '/^[a-z0-9.\-]*$/', $raw_domain ) ? $raw_domain : '';
+
+        // Standard-landekode (ISO-2) for telefonnumre uden internationalt
+        // præfiks (R19). Falder tilbage til WC-basislandet eller 'DK' i getteren.
+        $phone_country = isset($input['default_phone_country']) ? strtoupper( sanitize_text_field( $input['default_phone_country'] ) ) : '';
+        $output['default_phone_country'] = preg_match( '/^[A-Z]{2}$/', $phone_country ) ? $phone_country : '';
+
         // Create the table on first enable and keep the pruning cron in step
         // with the toggle. sanitize_advanced() runs before the option is
         // written, so read the new value from $output, not from the DB.
@@ -491,6 +673,67 @@ class TrackWP_Settings {
         }
 
         return $output;
+    }
+
+    /**
+     * Validate a newline-separated list of CIDR blocks (IPv4 or IPv6). A
+     * plain IP without a "/" prefix is accepted and normalised to a
+     * single-host block (/32 for IPv4, /128 for IPv6) — trusted_proxies is
+     * most often a handful of single reverse-proxy IPs, not ranges, and
+     * requiring a prefix there was rejecting valid, common input.
+     * Invalid lines are dropped silently (best-effort — a malformed line here
+     * must never fail the whole save).
+     *
+     * @param string $raw Raw textarea input.
+     * @return string[] Valid CIDR strings.
+     */
+    private static function sanitize_cidr_list( $raw ) {
+        $lines = preg_split( '/[\r\n]+/', (string) $raw );
+        $out   = array();
+        foreach ( $lines as $line ) {
+            $line = trim( $line );
+            if ( $line === '' ) {
+                continue;
+            }
+            if ( strpos( $line, '/' ) === false ) {
+                // Plain IP, no prefix — normalise to a single-host block.
+                if ( filter_var( $line, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) ) {
+                    $out[] = $line . '/32';
+                } elseif ( filter_var( $line, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) ) {
+                    $out[] = $line . '/128';
+                }
+                continue;
+            }
+            list( $addr, $prefix ) = array_pad( explode( '/', $line, 2 ), 2, '' );
+            if ( ! ctype_digit( $prefix ) ) {
+                continue;
+            }
+            $prefix = (int) $prefix;
+            if ( filter_var( $addr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4 ) && $prefix >= 0 && $prefix <= 32 ) {
+                $out[] = $addr . '/' . $prefix;
+            } elseif ( filter_var( $addr, FILTER_VALIDATE_IP, FILTER_FLAG_IPV6 ) && $prefix >= 0 && $prefix <= 128 ) {
+                $out[] = $addr . '/' . $prefix;
+            }
+        }
+        return array_values( array_unique( $out ) );
+    }
+
+    /**
+     * The effective trusted-proxies list: advanced.trusted_proxies plus
+     * Cloudflare's published ranges when advanced.trusted_proxies_cloudflare
+     * is enabled. TrackWP_Request_Guard::client_ip() (W1) is the consumer.
+     *
+     * @return string[] CIDR blocks.
+     */
+    public static function get_trusted_proxies() {
+        $advanced = get_option( 'trackwp_advanced', array() );
+        $list     = isset( $advanced['trusted_proxies'] ) && is_array( $advanced['trusted_proxies'] )
+            ? $advanced['trusted_proxies']
+            : array();
+        if ( ! empty( $advanced['trusted_proxies_cloudflare'] ) ) {
+            $list = array_merge( $list, self::cloudflare_ip_ranges() );
+        }
+        return array_values( array_unique( $list ) );
     }
 
     /**
@@ -660,13 +903,32 @@ class TrackWP_Settings {
     const STATS_RETENTION_DAYS = 30;
 
     /**
+     * Names the by_event breakdown is allowed to bucket individually:
+     * the site's configured events plus the reserved public names (K2).
+     * Anything else — third-party sendEvent() calls with arbitrary names,
+     * events for a since-deleted config row, etc. — is folded into '_other'
+     * so the breakdown cannot grow without bound.
+     *
+     * @return string[]
+     */
+    private static function known_event_names() {
+        $names = TrackWP_Events::RESERVED_PUBLIC_NAMES;
+        foreach ( self::get_events_config() as $event ) {
+            if ( is_array( $event ) && isset( $event['name'] ) ) {
+                $names[] = (string) $event['name'];
+            }
+        }
+        return $names;
+    }
+
+    /**
      * Increment a top-level stat metric for today.
      *
      * @param string $metric One of: events, bot_skipped, consent_accept, consent_reject.
      * @param int    $by     Increment amount (default 1).
      */
     public static function record_stat( $metric, $by = 1 ) {
-        $allowed = array( 'events', 'bot_skipped', 'consent_accept', 'consent_reject' );
+        $allowed = array( 'events', 'bot_skipped', 'consent_accept', 'consent_reject', 'forwarded' );
         if ( ! in_array( $metric, $allowed, true ) ) {
             return;
         }
@@ -691,6 +953,9 @@ class TrackWP_Settings {
         if ( $event_name === '' ) {
             return;
         }
+        if ( ! in_array( $event_name, self::known_event_names(), true ) ) {
+            $event_name = '_other';
+        }
         $stats = get_option( 'trackwp_stats', array() );
         $today = gmdate( 'Y-m-d' );
         if ( ! isset( $stats[ $today ] ) ) {
@@ -713,11 +978,17 @@ class TrackWP_Settings {
      * @param string $event_name Event identifier.
      */
     public static function record_event_hit( $metric, $event_name ) {
-        $allowed = array( 'events', 'bot_skipped' );
+        // R20: 'forwarded' is counted when at least one destination result is
+        // ok or queued (K1) — a proxy-owned concept, added here so W2 has a
+        // single stats entrypoint.
+        $allowed = array( 'events', 'bot_skipped', 'forwarded' );
         if ( ! in_array( $metric, $allowed, true ) ) {
             return;
         }
         $event_name = sanitize_key( (string) $event_name );
+        if ( $event_name !== '' && ! in_array( $event_name, self::known_event_names(), true ) ) {
+            $event_name = '_other';
+        }
 
         $stats = get_option( 'trackwp_stats', array() );
         $today = gmdate( 'Y-m-d' );
@@ -766,6 +1037,7 @@ class TrackWP_Settings {
             'bot_skipped'    => 0,
             'consent_accept' => 0,
             'consent_reject' => 0,
+            'forwarded'      => 0,
         );
         $by_event = array();
         $per_day  = array();
@@ -825,6 +1097,7 @@ class TrackWP_Settings {
             'bot_skipped'    => 0,
             'consent_accept' => 0,
             'consent_reject' => 0,
+            'forwarded'      => 0,
         );
         for ( $i = $days * 2 - 1; $i >= $days; $i-- ) {
             $date = gmdate( 'Y-m-d', strtotime( "-{$i} days" ) );
@@ -865,11 +1138,12 @@ class TrackWP_Settings {
      * @return array
      */
     public static function export_settings( $include_secrets = false ) {
-        $platforms = get_option( 'trackwp_platforms', array() );
-        $advanced  = get_option( 'trackwp_advanced',  array() );
-        $events    = get_option( 'trackwp_events',    array() );
-        $consent   = get_option( 'trackwp_consent',   array() );
-        $cookies   = get_option( 'trackwp_cookie_declarations', array() );
+        $platforms   = get_option( 'trackwp_platforms', array() );
+        $advanced    = get_option( 'trackwp_advanced',  array() );
+        $events      = get_option( 'trackwp_events',    array() );
+        $consent     = get_option( 'trackwp_consent',   array() );
+        $cookies     = get_option( 'trackwp_cookie_declarations', array() );
+        $woocommerce = get_option( 'trackwp_woocommerce', array() );
 
         if ( ! $include_secrets ) {
             unset( $platforms['ga4_api_secret'], $platforms['meta_access_token'], $platforms['google_ads_developer_token'], $platforms['google_ads_oauth_client_secret'], $platforms['google_ads_oauth_refresh_token'] );
@@ -884,6 +1158,7 @@ class TrackWP_Settings {
             'events'              => $events,
             'consent'             => $consent,
             'cookie_declarations' => is_array( $cookies ) ? $cookies : array(),
+            'woocommerce'         => is_array( $woocommerce ) ? $woocommerce : array(),
         );
     }
 
@@ -901,18 +1176,15 @@ class TrackWP_Settings {
 
         $instance = new self();
 
-        $platforms = $instance->sanitize_platforms( (array) $data['platforms'] );
-
-        // Eksporten gemmer secrets i deres stored (base64) form, og
-        // sanitize_platforms() ville base64-encode dem igen (dobbelt-encode).
-        // Gendan derfor de rå importerede værdier direkte — de er allerede
-        // i stored form. Mangler nøglen (eller er den tom), beholdes
-        // sanitizerens resultat, som bevarer den eksisterende DB-værdi.
-        $secret_keys = array( 'ga4_api_secret', 'meta_access_token', 'google_ads_developer_token', 'google_ads_oauth_client_secret', 'google_ads_oauth_refresh_token' );
-        foreach ( $secret_keys as $secret_key ) {
-            if ( isset( $data['platforms'][ $secret_key ] ) && is_string( $data['platforms'][ $secret_key ] ) && $data['platforms'][ $secret_key ] !== '' ) {
-                $platforms[ $secret_key ] = $data['platforms'][ $secret_key ];
-            }
+        // Eksporten gemmer secrets i deres stored (base64) form. Uden
+        // self::$presanitized ville sanitize_platforms() base64-encode dem
+        // IGEN (dobbelt-encode) — den bug denne flag retter. Flaget nulstilles
+        // altid, også hvis sanitize_platforms() kaster.
+        self::$presanitized = true;
+        try {
+            $platforms = $instance->sanitize_platforms( (array) $data['platforms'] );
+        } finally {
+            self::$presanitized = false;
         }
 
         $advanced  = $instance->sanitize_advanced( (array) $data['advanced'] );
@@ -932,7 +1204,341 @@ class TrackWP_Settings {
             );
         }
 
+        // Optional — absent in files exported before 1.10.1.
+        if ( isset( $data['woocommerce'] ) && is_array( $data['woocommerce'] ) ) {
+            update_option(
+                'trackwp_woocommerce',
+                $instance->sanitize_woocommerce( $data['woocommerce'] )
+            );
+        }
+
         return true;
+    }
+
+    // =========================================================================
+    // Admin notices (1.10.1)
+    // =========================================================================
+
+    /**
+     * Render all 1.10.1 compliance/config admin notices. Hooked to
+     * admin_notices from register_settings() (see there for why the timing
+     * is safe). Restricted to the TrackWP settings screen so the plugin does
+     * not clutter unrelated admin pages.
+     */
+    public function render_admin_notices() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return;
+        }
+        $screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
+        if ( ! $screen || strpos( (string) $screen->id, 'trackwp' ) === false ) {
+            return;
+        }
+
+        $platforms = get_option( 'trackwp_platforms', array() );
+        $advanced  = get_option( 'trackwp_advanced', array() );
+        $consent   = get_option( 'trackwp_consent', array() );
+
+        // Ack link for the "platforms changed" notice below.
+        if ( isset( $_GET['trackwp_ack_platform_change'] ) && check_admin_referer( 'trackwp_ack_platform_change' ) ) {
+            if ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'material_hash' ) ) {
+                update_option( 'trackwp_consent_material_hash', TrackWP_Consent_Profile::material_hash(), false );
+            }
+        }
+
+        self::notice_platforms_changed();
+        self::notice_missing_controller_name( $consent );
+        self::notice_gtm_missing_vendors( $platforms, $consent );
+        self::notice_multi_label_tld( $advanced );
+        self::notice_missing_trigger( $consent );
+        self::notice_missing_ads_label( $platforms );
+        self::notice_ga4_double_counting( $platforms );
+        self::notice_missing_tables( $consent );
+    }
+
+    /**
+     * Shared notice renderer.
+     *
+     * @param string $type    error|warning|success|info
+     * @param string $message Already-escaped HTML (allows links).
+     */
+    private static function render_notice( $type, $message ) {
+        echo '<div class="notice notice-' . esc_attr( $type ) . ' trackwp-admin-notice"><p>' . $message . '</p></div>';
+    }
+
+    /**
+     * "Platforms changed" — K7's material_hash, admin-facing side (W6 owns
+     * TrackWP_Consent_Profile::material_hash() itself). No auto-bump (§7.10):
+     * this only reminds the admin to bump the consent version and purge
+     * cache/CDN manually.
+     *
+     * The baseline option (trackwp_consent_material_hash) is set by W8's
+     * 1.10.1 upgrade routine (material_hash-baseline uden bump — see
+     * PLAN-1.10.1-v4.md §2.4 W8). This method never writes it except via the
+     * explicit "Marker som håndteret" ack link in render_admin_notices().
+     * Missing baseline (upgrade routine not run yet / class not loaded) means
+     * "nothing to compare against" — the notice simply does not fire.
+     */
+    private static function notice_platforms_changed() {
+        if ( ! class_exists( 'TrackWP_Consent_Profile' ) || ! method_exists( 'TrackWP_Consent_Profile', 'material_hash' ) ) {
+            return;
+        }
+        $current_hash = (string) TrackWP_Consent_Profile::material_hash();
+        $stored_hash  = get_option( 'trackwp_consent_material_hash', '' );
+
+        if ( $stored_hash === '' || $stored_hash === $current_hash ) {
+            return;
+        }
+
+        $ack_url = wp_nonce_url(
+            add_query_arg( 'trackwp_ack_platform_change', '1', admin_url( 'admin.php?page=trackwp#consent' ) ),
+            'trackwp_ack_platform_change'
+        );
+        self::render_notice(
+            'warning',
+            sprintf(
+                /* translators: %s: link to acknowledge the change */
+                esc_html__( 'De platforme/vendors der er dækket af samtykke-banneret er ændret siden sidst. Overvej at forny samtykket (bump version under fanen Samtykke) og tøm cache/CDN, så besøgende ser den opdaterede erklæring. %s', 'trackwp' ),
+                '<a href="' . esc_url( $ack_url ) . '">' . esc_html__( 'Marker som håndteret', 'trackwp' ) . '</a>'
+            )
+        );
+    }
+
+    private static function notice_missing_controller_name( $consent ) {
+        if ( empty( $consent['controller_name'] ) ) {
+            self::render_notice( 'warning', esc_html__( 'Den dataansvarlige (controller_name) er ikke udfyldt under Samtykke. Samtykke-banneret skal navngive sitets ejer, aldrig TrackWP selv.', 'trackwp' ) );
+        }
+    }
+
+    private static function notice_gtm_missing_vendors( $platforms, $consent ) {
+        if ( empty( $platforms['gtm_enabled'] ) ) {
+            return;
+        }
+        $vendors = isset( $consent['gtm_vendors'] ) ? $consent['gtm_vendors'] : array();
+        $has_known  = ! empty( $vendors['known'] ) && is_array( $vendors['known'] );
+        $has_custom = ! empty( $vendors['custom'] ) && is_array( $vendors['custom'] );
+        if ( ! $has_known && ! $has_custom ) {
+            self::render_notice( 'warning', esc_html__( 'Google Tag Manager er aktiv, men ingen vendors er angivet under Samtykke. TrackWP kan ikke se hvad der ligger i din GTM-container, så deklarationen og samtykke-kravene bliver ufuldstændige, indtil du vælger eller tilføjer dem manuelt.', 'trackwp' ) );
+        }
+    }
+
+    private static function notice_multi_label_tld( $advanced ) {
+        // Single source of truth for the multi-label-suffix check and the
+        // cookie_domain-already-set short-circuit: TrackWP_Cookies (W1).
+        if ( ! class_exists( 'TrackWP_Cookies' ) || ! method_exists( 'TrackWP_Cookies', 'needs_explicit_domain' ) ) {
+            return;
+        }
+        if ( ! TrackWP_Cookies::needs_explicit_domain() ) {
+            return;
+        }
+        $host = wp_parse_url( home_url(), PHP_URL_HOST );
+        self::render_notice(
+            'warning',
+            sprintf(
+                /* translators: %s: detected host */
+                esc_html__( 'Dit domæne (%s) bruger en flerdelt endelse (fx co.uk). Uden et eksplicit cookie-domæne under Avanceret kan cookien blive sat forkert (fx til hele "co.uk"). Angiv domænet manuelt.', 'trackwp' ),
+                esc_html( (string) $host )
+            )
+        );
+    }
+
+    /**
+     * Cached (1 hour) check for a page/post containing the consent trigger
+     * shortcode, so this notice does not run a LIKE-scan of wp_posts on
+     * every admin page load.
+     */
+    private static function has_consent_trigger_shortcode() {
+        $cached = get_transient( 'trackwp_has_trigger_shortcode' );
+        if ( false !== $cached ) {
+            return (bool) $cached;
+        }
+        global $wpdb;
+        $found = (bool) $wpdb->get_var(
+            "SELECT 1 FROM {$wpdb->posts} WHERE post_status = 'publish' AND post_content LIKE '%[trackwp_consent_link%' LIMIT 1"
+        );
+        set_transient( 'trackwp_has_trigger_shortcode', $found ? 1 : 0, HOUR_IN_SECONDS );
+        return $found;
+    }
+
+    private static function notice_missing_trigger( $consent ) {
+        // Nothing to reconsider from if the site never shows a dialog at all.
+        if ( empty( $consent ) ) {
+            return;
+        }
+        $filter_allows_trigger = apply_filters( 'trackwp_show_consent_trigger', true );
+        if ( $filter_allows_trigger ) {
+            return;
+        }
+        if ( self::has_consent_trigger_shortcode() ) {
+            return;
+        }
+        self::render_notice(
+            'warning',
+            esc_html__( 'Filteret trackwp_show_consent_trigger returnerer false, og der findes ingen [trackwp_consent_link]-shortcode på nogen udgivet side. Besøgende kan derfor ikke genåbne samtykke-dialogen for at trække samtykket tilbage eller ændre det.', 'trackwp' )
+        );
+    }
+
+    private static function notice_missing_ads_label( $platforms ) {
+        if ( empty( $platforms['google_ads_enabled'] ) ) {
+            return;
+        }
+        $events = self::get_events_config();
+        foreach ( $events as $event ) {
+            if ( ! is_array( $event ) || empty( $event['enabled'] ) ) {
+                continue;
+            }
+            $routed_to_ads = ! empty( $event['send_to']['google_ads'] );
+            if ( $routed_to_ads && empty( $event['ads_label'] ) ) {
+                self::render_notice(
+                    'warning',
+                    sprintf(
+                        /* translators: %s: event name */
+                        esc_html__( 'Mangler Ads-label: begivenheden "%s" er sendt til Google Ads, men har ingen Google Ads Label. Konverteringen kan ikke matches til en konverteringshandling uden den.', 'trackwp' ),
+                        esc_html( $event['name'] )
+                    )
+                );
+                return; // One notice is enough — the Events tab lists all rows.
+            }
+        }
+    }
+
+    private static function notice_ga4_double_counting( $platforms ) {
+        if ( empty( $platforms['ga4_imported_to_ads'] ) ) {
+            return;
+        }
+        if ( empty( $platforms['google_ads_enabled'] ) || empty( $platforms['google_ads_conversion_action_id'] ) ) {
+            return;
+        }
+        self::render_notice(
+            'warning',
+            esc_html__( 'GA4-import til Google Ads er slået til, OG der er konfigureret en direkte Google Ads-konverteringshandling. Bruges begge til det samme mål, tælles konverteringen dobbelt. Brug kun én kilde pr. mål.', 'trackwp' )
+        );
+    }
+
+    private static function notice_missing_tables( $consent ) {
+        global $wpdb;
+        $checks = array();
+        if ( ! empty( $consent['log_consent'] ) ) {
+            $checks['trackwp_consent_log'] = __( 'Samtykkelog', 'trackwp' );
+        }
+        if ( class_exists( 'WooCommerce' ) ) {
+            $woo = get_option( 'trackwp_woocommerce', array() );
+            if ( ! empty( $woo['enabled'] ) ) {
+                $checks['trackwp_order_claims'] = __( 'Ordreclaims (køb)', 'trackwp' );
+            }
+        }
+        $advanced = get_option( 'trackwp_advanced', array() );
+        if ( ! empty( $advanced['delivery_log_enabled'] ) ) {
+            $checks['trackwp_delivery_log'] = __( 'Leveringslog', 'trackwp' );
+        }
+        foreach ( $checks as $table => $label ) {
+            $full_name = $wpdb->prefix . $table;
+            $exists    = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $full_name ) );
+            if ( ! $exists ) {
+                self::render_notice(
+                    'error',
+                    sprintf(
+                        /* translators: 1: feature label, 2: table name */
+                        esc_html__( 'Tabel kunne ikke oprettes: "%1$s" mangler sin tabel (%2$s). Deaktivér og genaktivér pluginet, eller kontakt din hosting-udbyder — funktionen virker ikke uden tabellen.', 'trackwp' ),
+                        esc_html( $label ),
+                        esc_html( $full_name )
+                    )
+                );
+            }
+        }
+    }
+
+    // =========================================================================
+    // Consent log (Consent tab) — reads via TrackWP_Consent_Log (W1)
+    // =========================================================================
+
+    /**
+     * CSV export of the consent log, streamed in chunks so large logs do not
+     * exhaust memory. admin_post handler: nonce + manage_options, registered
+     * in register_settings().
+     */
+    /**
+     * Neutralise CSV/formula injection (CWE-1236): a cell value opened in
+     * Excel/Sheets/LibreOffice that starts with =, +, -, @, a tab, or a CR
+     * can execute as a formula. Every logged value here ultimately comes
+     * from request input (e.g. user_agent), so it is untrusted. Prefixing
+     * with a single quote forces spreadsheet apps to treat it as text
+     * without changing the value for any other CSV consumer.
+     *
+     * @param mixed $value Raw cell value.
+     * @return string
+     */
+    private static function csv_safe_cell( $value ) {
+        $value = (string) $value;
+        if ( $value !== '' && strpbrk( $value[0], "=+-@\t\r" ) !== false ) {
+            return "'" . $value;
+        }
+        return $value;
+    }
+
+    public static function handle_consent_export() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( esc_html__( 'Adgang nægtet.', 'trackwp' ) );
+        }
+        check_admin_referer( 'trackwp_consent_export' );
+
+        if ( ! class_exists( 'TrackWP_Consent_Log' ) || ! method_exists( 'TrackWP_Consent_Log', 'get_rows' ) ) {
+            wp_die( esc_html__( 'Samtykkeloggen er ikke tilgængelig endnu.', 'trackwp' ) );
+        }
+
+        nocache_headers();
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'Content-Disposition: attachment; filename="trackwp-consent-log-' . gmdate( 'Y-m-d' ) . '.csv"' );
+
+        // Column order matches the trackwp_consent_log table exactly
+        // (includes/class-trackwp-consent-log.php create_tables()), minus the
+        // internal migration_key.
+        $columns = array(
+            'id', 'consent_id', 'created_at', 'event_type', 'statistics', 'marketing',
+            'personalisation', 'consent_version', 'server_consent_version', 'banner_hash',
+            'ip_hash', 'user_agent', 'page_url', 'source',
+        );
+
+        $out = fopen( 'php://output', 'w' );
+        fputcsv( $out, $columns );
+
+        $offset = 0;
+        $limit  = 500;
+        do {
+            $rows = (array) TrackWP_Consent_Log::get_rows( $offset, $limit );
+            foreach ( $rows as $row ) {
+                $row  = (array) $row;
+                $line = array();
+                foreach ( $columns as $col ) {
+                    $line[] = self::csv_safe_cell( isset( $row[ $col ] ) ? $row[ $col ] : '' );
+                }
+                fputcsv( $out, $line );
+            }
+            $count = count( $rows );
+            $offset += $limit;
+            // Flush each chunk so a large export streams instead of buffering fully in memory.
+            flush();
+        } while ( $count === $limit );
+
+        fclose( $out );
+        exit;
+    }
+
+    /**
+     * Look up the full history for one consent_id, for the Consent tab's
+     * lookup form. TrackWP_Consent_Log::find_by_consent_id() returns every
+     * logged action for that ID (set/update/withdraw), oldest first — not a
+     * single row.
+     *
+     * @param string $consent_id
+     * @return array[]|null Array of row-arrays, or null if not found/unavailable.
+     */
+    public static function lookup_consent_id( $consent_id ) {
+        $consent_id = sanitize_text_field( $consent_id );
+        if ( $consent_id === '' || ! class_exists( 'TrackWP_Consent_Log' ) || ! method_exists( 'TrackWP_Consent_Log', 'find_by_consent_id' ) ) {
+            return null;
+        }
+        $rows = TrackWP_Consent_Log::find_by_consent_id( $consent_id );
+        return $rows ? (array) $rows : null;
     }
 
     /**

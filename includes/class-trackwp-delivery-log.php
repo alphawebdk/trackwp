@@ -44,6 +44,9 @@ class TrackWP_Delivery_Log {
     /** Hard upper bound on retention — this is a diagnostic log, not an archive. */
     const MAX_RETENTION_DAYS = 30;
 
+    /** Statuses a row may carry (K1). */
+    const STATUSES = array('ok', 'failed', 'unknown', 'skipped', 'queued', 'duplicate');
+
     /** Cron hook that prunes expired rows. */
     const CRON_HOOK = 'trackwp_prune_delivery_log';
 
@@ -103,6 +106,7 @@ class TrackWP_Delivery_Log {
   event_name varchar(64) NOT NULL DEFAULT '',
   destination varchar(20) NOT NULL DEFAULT '',
   status varchar(20) NOT NULL DEFAULT '',
+  reason varchar(32) NOT NULL DEFAULT '',
   http_code smallint(5) NOT NULL DEFAULT 0,
   consent_analytics tinyint(1) NOT NULL DEFAULT 0,
   consent_marketing tinyint(1) NOT NULL DEFAULT 0,
@@ -162,12 +166,13 @@ class TrackWP_Delivery_Log {
      * @param string $event_id    Our per-event random id (evt_…).
      * @param string $event_name  Configured event name.
      * @param string $destination One of: received, ga4, meta, google_ads.
-     * @param string $status      One of: ok, failed, unknown, skipped.
+     * @param string $status      K1 status: ok, failed, unknown, skipped, queued, duplicate.
      * @param array  $consent     Keys: analytics, marketing (booleans).
      * @param int    $http_code   Optional upstream HTTP status.
+     * @param string $reason      Optional K1 reason (enum, never free text).
      * @return void
      */
-    public static function record($event_id, $event_name, $destination, $status, $consent = array(), $http_code = 0) {
+    public static function record($event_id, $event_name, $destination, $status, $consent = array(), $http_code = 0, $reason = '') {
         if ( ! self::is_enabled() || ! self::table_exists() ) {
             return;
         }
@@ -177,15 +182,16 @@ class TrackWP_Delivery_Log {
         // Without it the log looks empty on a site with no platform configured,
         // or in client_only mode, even while events are arriving normally.
         $allowed_destinations = array('received', 'ga4', 'meta', 'google_ads');
-        $allowed_statuses     = array('ok', 'failed', 'unknown', 'skipped');
+        $allowed_statuses     = self::STATUSES;
         if ( ! in_array($destination, $allowed_destinations, true) ) {
             return;
         }
         if ( ! in_array($status, $allowed_statuses, true) ) {
             $status = 'unknown';
         }
-
-        $consent_cfg = get_option('trackwp_consent', array());
+        // The reason is an enum from K1. Anything else is dropped rather than
+        // stored, so no free text (and thus no identifier) can reach the table.
+        $reason = is_string($reason) && preg_match('/^[a-z0-9_]{1,32}$/', $reason) ? $reason : '';
 
         global $wpdb;
         // Timestamp is rounded down to the minute: full precision is not needed
@@ -200,12 +206,13 @@ class TrackWP_Delivery_Log {
                 'event_name'        => substr(sanitize_key((string) $event_name), 0, 64),
                 'destination'       => $destination,
                 'status'            => $status,
+                'reason'            => $reason,
                 'http_code'         => (int) $http_code,
                 'consent_analytics' => ! empty($consent['analytics']) ? 1 : 0,
                 'consent_marketing' => ! empty($consent['marketing']) ? 1 : 0,
-                'consent_version'   => isset($consent_cfg['consent_version']) ? (int) $consent_cfg['consent_version'] : 0,
+                'consent_version'   => TrackWP_Consent::server_version(),
             ),
-            array('%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d')
+            array('%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d')
         );
     }
 
@@ -337,11 +344,13 @@ class TrackWP_Delivery_Log {
                 }
             } else {
                 if ( ! isset($out[ $name ]['destinations'][ $dest ]) ) {
-                    $out[ $name ]['destinations'][ $dest ] = array('ok' => 0, 'failed' => 0, 'skipped' => 0, 'unknown' => 0);
+                    $out[ $name ]['destinations'][ $dest ] = array_fill_keys(self::STATUSES, 0);
                 }
                 $bucket = isset($out[ $name ]['destinations'][ $dest ][ $status ]) ? $status : 'unknown';
                 $out[ $name ]['destinations'][ $dest ][ $bucket ] += $hits;
-                if ( $status === 'ok' ) {
+                // queued = accepted into the GA4 batch; counted as delivered
+                // like the forwarded stat (K1).
+                if ( $status === 'ok' || $status === 'queued' ) {
                     $out[ $name ]['delivered'] += $hits;
                 }
             }

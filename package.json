@@ -1,15 +1,19 @@
 {
   "name": "trackwp",
   "private": true,
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "TrackWP plugin build pipeline",
   "scripts": {
     "build": "node build.mjs",
-    "watch": "node build.mjs --watch"
+    "watch": "node build.mjs --watch",
+    "test:js": "node --test \"tests/js/*.test.mjs\"",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
-    "esbuild": "^0.20.0",
+    "@playwright/test": "1.48.0",
     "cssnano": "^7.0.0",
+    "esbuild": "^0.20.0",
+    "playwright-core": "1.48.0",
     "postcss": "^8.4.0"
   }
 }

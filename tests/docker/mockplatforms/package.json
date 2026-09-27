@@ -1,0 +1,8 @@
+{
+  "name": "trackwp-mockplatforms",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Zero-dependency mock GA4/Meta/Google Ads receiver for TrackWP Docker e2e tests.",
+  "main": "server.mjs"
+}

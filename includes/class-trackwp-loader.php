@@ -13,6 +13,12 @@ defined('ABSPATH') || exit;
  */
 class TrackWP_Loader {
 
+    /** Maximum accepted collect body size in bytes (64 kB). */
+    const MAX_BODY_BYTES = 65536;
+
+    /** Collect rate limit: requests per 2-second window per client IP. */
+    const COLLECT_RATE_LIMIT = 60;
+
     /**
      * Register the REST routes.
      * Does nothing unless the first-party loader is enabled in advanced settings.
@@ -21,6 +27,11 @@ class TrackWP_Loader {
         $advanced = get_option('trackwp_advanced', array());
         if (empty($advanced['first_party_loader_enabled'])) {
             return;
+        }
+
+        // /loader returns raw JavaScript; this filter prints it instead of JSON.
+        if (!has_filter('rest_pre_serve_request', array(__CLASS__, 'serve_raw_script'))) {
+            add_filter('rest_pre_serve_request', array(__CLASS__, 'serve_raw_script'), 10, 4);
         }
 
         // First-party gtag.js — public script, no origin check (script tags don't send Origin).
@@ -59,8 +70,12 @@ class TrackWP_Loader {
      * fallback that injects the script tag directly against Google
      * (graceful degradation).
      *
-     * Echo + exit is intentional: we must serve raw JavaScript, not the
-     * REST API's JSON envelope.
+     * The response carries the script as its data and is printed raw by
+     * serve_raw_script() (rest_pre_serve_request), so the REST API's JSON
+     * envelope is skipped while the headers stay testable. The response is
+     * public and cacheable for an hour; no-store must never be sent here.
+     *
+     * @return WP_REST_Response|WP_Error
      */
     public function serve_gtag_js() {
         $platforms = get_option('trackwp_platforms', array());
@@ -100,10 +115,37 @@ class TrackWP_Loader {
             }
         }
 
-        header('Content-Type: application/javascript; charset=utf-8');
-        header('Cache-Control: public, max-age=3600');
-        echo $body;
-        exit;
+        $response = new WP_REST_Response((string) $body, 200);
+        $response->header('Content-Type', 'application/javascript; charset=utf-8');
+        $response->header('Cache-Control', 'public, max-age=3600');
+        $response->header('X-TrackWP-Raw', '1');
+        return $response;
+    }
+
+    /**
+     * rest_pre_serve_request: print the /loader script raw. WP_REST_Server
+     * has already sent the response headers (Content-Type, Cache-Control)
+     * when this filter runs.
+     *
+     * @param bool             $served  Whether the request was already served.
+     * @param WP_HTTP_Response $result  Result.
+     * @param WP_REST_Request  $request Request.
+     * @param WP_REST_Server   $server  Server.
+     * @return bool
+     */
+    public static function serve_raw_script($served, $result, $request, $server) {
+        if ($served || !($result instanceof WP_HTTP_Response) || !($request instanceof WP_REST_Request)) {
+            return $served;
+        }
+        if ('/trackwp/v1/loader' !== $request->get_route()) {
+            return $served;
+        }
+        $headers = $result->get_headers();
+        if (empty($headers['X-TrackWP-Raw']) || !is_string($result->get_data())) {
+            return $served;
+        }
+        echo $result->get_data(); // phpcs:ignore WordPress.Security.EscapeOutput -- raw JavaScript from googletagmanager.com.
+        return true;
     }
 
     /**
@@ -133,73 +175,97 @@ class TrackWP_Loader {
     }
 
     /**
-     * Permission check for the collect proxy: origin + rate limit.
-     * Same origin/referer pattern as TrackWP_Proxy::check_permission, but with
-     * a higher rate limit (60 requests per fixed 2-second window per IP) since
-     * page_view + engagement pings fire far more often than conversion events.
+     * Permission check for the collect proxy: origin + rate limit, both via
+     * TrackWP_Request_Guard (client_ip() honours advanced.trusted_proxies).
+     * 60 requests per fixed 2-second window per IP, since page_view and
+     * engagement pings fire far more often than conversion events.
      * No nonce: cached pages serve stale nonces, and the endpoint is non-mutating.
+     *
+     * @param WP_REST_Request $request Request.
+     * @return true|WP_Error
      */
     public function check_collect_permission($request) {
-        // Origin check — only allow from own domain
-        $origin = isset($_SERVER['HTTP_ORIGIN']) ? $_SERVER['HTTP_ORIGIN'] : '';
-        $referer = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '';
-        $home = home_url();
-        $home_host = wp_parse_url($home, PHP_URL_HOST);
+        return TrackWP_Request_Guard::permission('collect', self::COLLECT_RATE_LIMIT);
+    }
 
-        $origin_ok = false;
-        if ($origin && wp_parse_url($origin, PHP_URL_HOST) === $home_host) {
-            $origin_ok = true;
-        }
-        if (!$origin_ok && $referer && wp_parse_url($referer, PHP_URL_HOST) === $home_host) {
-            $origin_ok = true;
-        }
-        if (!$origin_ok) {
-            return new WP_Error('rest_forbidden', __('Cross-origin-forespørgsel afvist.', 'trackwp'), array('status' => 403));
+    /**
+     * Relay guard for a collect hit.
+     *
+     * The hit must name this site's GA4 property: `tid` must be present in
+     * the query string or in the body (gtag batches hits as newline-separated
+     * query strings) and every tid found must equal the configured
+     * Measurement ID. A missing or foreign tid would let third parties pump
+     * hits through this site. Bodies over 64 kB are refused.
+     *
+     * @param string $query_string Raw query string.
+     * @param string $body         Raw body.
+     * @return true|WP_Error
+     */
+    public static function validate_collect($query_string, $body) {
+        if (strlen((string) $body) > self::MAX_BODY_BYTES) {
+            return new WP_Error('payload_too_large', __('Forespørgslen er for stor.', 'trackwp'), array('status' => 413));
         }
 
-        // Rate limiting: 60 requests per 2-second fixed window per IP.
-        // The window bucket is part of the key so the TTL is never extended
-        // by subsequent requests.
-        $ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
-        $bucket = (int) floor(time() / 2);
-        $ip_key = 'trackwp_clrate_' . md5($ip) . '_' . $bucket;
-        $count = (int) get_transient($ip_key);
-        if ($count >= 60) {
-            return new WP_Error('rate_limited', __('For mange forespørgsler.', 'trackwp'), array('status' => 429));
+        $platforms = get_option('trackwp_platforms', array());
+        $expected  = isset($platforms['ga4_measurement_id']) ? (string) $platforms['ga4_measurement_id'] : '';
+        if (!preg_match('/^G-[A-Z0-9]{4,12}$/', $expected)) {
+            return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
         }
-        set_transient($ip_key, $count + 1, 5);
 
+        $tids = array();
+        $q    = array();
+        wp_parse_str((string) $query_string, $q);
+        if (isset($q['tid'])) {
+            $tids[] = $q['tid'];
+        }
+        $body = (string) $body;
+        if ('' !== $body) {
+            foreach (preg_split('/\r\n|\r|\n/', $body) as $line) {
+                if ('' === trim($line)) {
+                    continue;
+                }
+                $params = array();
+                wp_parse_str($line, $params);
+                if (isset($params['tid'])) {
+                    $tids[] = $params['tid'];
+                }
+            }
+        }
+
+        if (empty($tids)) {
+            return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
+        }
+        foreach ($tids as $tid) {
+            if (!is_string($tid) || $tid !== $expected) {
+                return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
+            }
+        }
         return true;
     }
 
     /**
      * Proxy a GA4 collect hit to google-analytics.com.
      *
-     * Passes the original query string through untouched and appends _uip
-     * (best-effort geo/IP override from REMOTE_ADDR). The client's User-Agent
-     * is forwarded so GA's device/browser reporting stays correct.
+     * The query string is passed through untouched (gcs/gcd and every other
+     * Consent Mode parameter keep their exact values) and _uip is appended
+     * from TrackWP_Request_Guard::client_ip(). The client's User-Agent is
+     * forwarded so GA's device/browser reporting stays correct.
      *
-     * ALWAYS returns 2xx — tracking must never produce console errors.
+     * Requests failing validate_collect() get 403/413. Once validated, the
+     * answer is always 204: upstream errors never surface in the browser.
+     * No Cache-Control: no-store is added (it must not hit /c).
      *
-     * Note: path-based adblock rules (e.g. EasyPrivacy's /g/collect patterns)
-     * can still match this endpoint; the proxy bypasses domain-based blocking,
-     * which is by far the most common kind.
+     * @param WP_REST_Request $request       Request.
+     * @param string          $upstream_path Upstream path.
+     * @return WP_REST_Response|WP_Error
      */
     public function proxy_collect($request, $upstream_path = '/g/collect') {
-        $query_string = isset($_SERVER['QUERY_STRING']) ? $_SERVER['QUERY_STRING'] : '';
-        $client_ip = isset($_SERVER['REMOTE_ADDR']) ? $_SERVER['REMOTE_ADDR'] : '';
+        $query_string = isset($_SERVER['QUERY_STRING']) ? (string) wp_unslash($_SERVER['QUERY_STRING']) : '';
+        $body         = (string) $request->get_body();
 
-        // Relay guard: only forward hits addressed to this site's own GA4
-        // property. A foreign tid would let third parties pump hits through
-        // this site. Missing tid is forwarded as-is (gtag always sends tid).
-        // We still answer 2xx without relaying — never a console error.
-        wp_parse_str($query_string, $q);
-        if (isset($q['tid'])) {
-            $platforms = get_option('trackwp_platforms', array());
-            $expected  = isset($platforms['ga4_measurement_id']) ? $platforms['ga4_measurement_id'] : '';
-            if ($q['tid'] !== $expected) {
-                return new WP_REST_Response(null, 204);
-            }
+        $valid = self::validate_collect($query_string, $body);
+        if (is_wp_error($valid)) {
+            return $valid;
         }
 
         $url = 'https://www.google-analytics.com' . $upstream_path;
@@ -208,26 +274,28 @@ class TrackWP_Loader {
         } else {
             $url .= '?';
         }
-        $url .= '&_uip=' . rawurlencode($client_ip);
+        $client_ip = TrackWP_Request_Guard::client_ip();
+        if ('' !== $client_ip) {
+            $url .= '&_uip=' . rawurlencode($client_ip);
+        }
 
-        $user_agent = isset($_SERVER['HTTP_USER_AGENT']) ? $_SERVER['HTTP_USER_AGENT'] : '';
+        $user_agent   = isset($_SERVER['HTTP_USER_AGENT']) ? (string) wp_unslash($_SERVER['HTTP_USER_AGENT']) : '';
         $content_type = isset($_SERVER['CONTENT_TYPE']) && '' !== $_SERVER['CONTENT_TYPE']
-            ? $_SERVER['CONTENT_TYPE']
+            ? (string) $_SERVER['CONTENT_TYPE']
             : 'text/plain';
 
-        $response = wp_remote_request($url, array(
+        wp_remote_request($url, array(
             'method'   => $request->get_method(),
             'timeout'  => 2,
             'blocking' => true,
-            'body'     => $request->get_body(),
+            'body'     => $body,
             'headers'  => array(
                 'User-Agent'   => $user_agent,
                 'Content-Type' => $content_type,
             ),
         ));
 
-        // Contract (see docblock): ALWAYS return 2xx. Upstream errors and
-        // 4xx/5xx codes must never surface as console errors in the browser.
+        // Contract (see docblock): a validated hit ALWAYS returns 2xx.
         return new WP_REST_Response(null, 204);
     }
 }

@@ -130,7 +130,7 @@ class TrackWP_GA4 {
      *     fall back to first entry if no match.
      *  2. payload.ga_session_cookie (legacy single-cookie string).
      *  3. payload.session_id (final fallback) -- only if purely numeric;
-     *     GA4 requires a numeric ga_session_id, so non-numeric values
+     *     the MP `session_id` param must be numeric, so non-numeric values
      *     (e.g. legacy "ses_<hex>" client format) are rejected.
      *
      * @param array $event_data
@@ -208,116 +208,245 @@ class TrackWP_GA4 {
     }
 
     /**
-     * Dispatch a request to GA4 MP.
-     *
-     * The request is always blocking with a short (2s) timeout. Non-blocking
-     * fire-and-forget is intentionally not used: with WP's cURL transport the
-     * request is aborted before the TLS handshake completes, so it never
-     * reaches Google. The REST endpoint is called via async fetch from the
-     * browser, so a short blocking request does not affect the user experience.
-     *
-     * Retries: ONLY on HTTP 5xx — a 5xx proves Google received the request and
-     * refused it, so resending is safe. A transport error (WP_Error, in
-     * practice almost always the 2s timeout) is NOT retried: the hit may well
-     * have been delivered already, and GA4 Measurement Protocol performs no
-     * server-side deduplication (unlike Meta CAPI, which dedups on event_id).
-     * Retrying there double-counts the event in GA4.
-     *
-     * Retry count: 3 attempts (backoff 200ms / 600ms) when $blocking is true
-     * (cron/flush context) or capi_debug_logging_enabled is set; otherwise a
-     * single attempt so the REST response is not delayed unnecessarily.
-     *
-     * @param string    $url
-     * @param array     $body
-     * @param string    $context
-     * @param bool|null $blocking True enables 5xx retries (cron/flush context); null = retry only in debug mode.
-     * @return bool|null True on 2xx; false on a definitive rejection (safe to
-     *                   re-queue); null when the outcome is unknown (transport
-     *                   error — must NOT be re-queued, see above).
+     * Max attempts per request (K1).
      */
-    private function dispatch_with_retry($url, $body, $context = 'ga4', $blocking = null) {
-        $retry      = ($blocking === true) || !empty($this->advanced['capi_debug_logging_enabled']);
-        $attempts   = $retry ? 3 : 1;
-        $delays     = array(200000, 600000); // microseconds between attempts.
-        $last_error = '';
-        $last_code  = '';
+    const MAX_ATTEMPTS = 2;
 
-        for ($i = 0; $i < $attempts; $i++) {
+    /**
+     * Default budgets in seconds: public request (K1) and cron flush per batch.
+     */
+    const DEFAULT_BUDGET = 4.0;
+    const CRON_BUDGET    = 10.0;
+
+    /**
+     * GA4 MP limits: 25 events per request, body below 130 kB.
+     * https://developers.google.com/analytics/devguides/collection/protocol/ga4/sending-events#limitations
+     */
+    const BATCH_MAX_EVENTS = 25;
+    const BATCH_MAX_BYTES  = 130000;
+
+    /**
+     * Failed batches are re-queued up to this age. GA4 accepts
+     * timestamp_micros up to 72 hours in the past.
+     */
+    const REQUEUE_MAX_AGE = 259200;
+
+    /**
+     * Queue transient TTL (must outlive REQUEUE_MAX_AGE).
+     */
+    const QUEUE_TTL = 262800;
+
+    /**
+     * Build a K1 result array.
+     */
+    private static function result($status, $reason, $http_code = 0, $attempts = 0, $detail = '') {
+        return array(
+            'destination' => 'ga4',
+            'status'      => $status,
+            'reason'      => $reason,
+            'http_code'   => (int) $http_code,
+            'attempts'    => (int) $attempts,
+            'detail'      => substr((string) $detail, 0, 500),
+        );
+    }
+
+    /**
+     * MP collect URL, or '' when the configuration is unusable.
+     *
+     * @return string
+     */
+    private function collect_url() {
+        $measurement_id = isset($this->config['ga4_measurement_id']) ? $this->config['ga4_measurement_id'] : '';
+        if (!$this->is_valid_mp_id($measurement_id)) {
+            $this->log_capi_error('mp_skipped: measurement_id must be G- format', '');
+            return '';
+        }
+        return add_query_arg(array(
+            'measurement_id' => $measurement_id,
+            'api_secret'     => TrackWP_Hash::decode($this->config['ga4_api_secret']),
+        ), 'https://www.google-analytics.com/mp/collect');
+    }
+
+    /**
+     * Dispatch one MP request inside the deadline.
+     *
+     * Blocking request (non-blocking cURL aborts before TLS completes).
+     * GA4 MP has no server-side dedup, so a retry is only made when the
+     * request provably did not count:
+     * - HTTP 5xx and 429: retried (Retry-After honoured when it fits in the
+     *   remaining budget, otherwise no retry).
+     * - Connection errors (cURL 6/7, nothing was sent): one retry.
+     * - Timeout (cURL 28) and other transport errors: `unknown`, no retry.
+     * Max MAX_ATTEMPTS attempts.
+     *
+     * @param string $url
+     * @param array  $body
+     * @param float  $deadline microtime(true) deadline.
+     * @return array K1 result.
+     */
+    private function dispatch($url, $body, $deadline) {
+        $attempts = 0;
+        $result   = self::result('failed', 'transport', 0, 0, 'budget_exhausted');
+        $json     = wp_json_encode($body);
+
+        while ($attempts < self::MAX_ATTEMPTS) {
+            $remaining = $deadline - microtime(true);
+            if ($remaining < 0.2) {
+                break;
+            }
+            $attempts++;
             $response = wp_remote_post($url, array(
-                'timeout'  => 2,
+                'timeout'  => $remaining,
                 'blocking' => true,
                 'headers'  => array('Content-Type' => 'application/json'),
-                'body'     => wp_json_encode($body),
+                'body'     => $json,
             ));
 
             if (is_wp_error($response)) {
-                // Outcome unknown — do not resend (see docblock).
-                $this->log_capi_error('transport error, not retried: ' . $response->get_error_message(), '');
-                return null;
+                $message = $response->get_error_message();
+                $errno   = preg_match('/cURL error (\d+)/i', $message, $m) ? (int) $m[1] : (stripos($message, 'timed out') !== false ? 28 : 0);
+                if ($errno === 6 || $errno === 7) {
+                    $result = self::result('failed', 'transport', 0, $attempts, 'curl ' . $errno);
+                    continue;
+                }
+                $result = ($errno === 28)
+                    ? self::result('unknown', 'timeout', 0, $attempts, 'curl 28')
+                    : self::result('unknown', 'transport', 0, $attempts, $errno ? 'curl ' . $errno : 'transport error');
+                break;
             }
 
             $code = (int) wp_remote_retrieve_response_code($response);
-            if ($code < 500) {
-                if ($code >= 200 && $code < 300) {
-                    return true;
+            if ($code >= 200 && $code < 300) {
+                return self::result('ok', 'sent', $code, $attempts);
+            }
+            if ($code === 429 || $code >= 500) {
+                $result = self::result('failed', $code === 429 ? 'http_429' : 'http_5xx', $code, $attempts, 'HTTP ' . $code);
+                if ($attempts >= self::MAX_ATTEMPTS) {
+                    break;
                 }
-                $this->log_capi_error('HTTP ' . $code, $code);
-                return false;
+                $retry_after = wp_remote_retrieve_header($response, 'retry-after');
+                $wait        = (is_string($retry_after) && ctype_digit(trim($retry_after))) ? (float) trim($retry_after) : 0.2;
+                if (microtime(true) + $wait + 0.2 >= $deadline) {
+                    $result['detail'] = 'HTTP ' . $code . ' retry-after exceeds budget';
+                    break;
+                }
+                usleep((int) ($wait * 1000000));
+                continue;
             }
-
-            $last_error = 'HTTP ' . $code;
-            $last_code  = $code;
-
-            if ($i < $attempts - 1 && isset($delays[$i])) {
-                usleep($delays[$i]);
-            }
+            $result = self::result('failed', 'http_4xx', $code, $attempts, 'HTTP ' . $code);
+            break;
         }
 
-        $this->log_capi_error($last_error, $last_code);
+        if ($result['status'] !== 'ok') {
+            $this->log_capi_error($result['status'] . '/' . $result['reason'] . ' attempts=' . $result['attempts'] . ' ' . $result['detail'], $result['http_code']);
+        }
+        return $result;
+    }
+
+    /**
+     * Read a consent flag from the effective consent in event_data. The
+     * proxy always sets $event_data['consent'] to the K3 result, so this is
+     * the only source: a missing or non-true value means false. Queued
+     * events carry their own snapshot (_consent_*), so the cron flush does
+     * not need a cookie.
+     *
+     * @param array  $event_data
+     * @param string $key
+     * @return bool
+     */
+    private static function consent_flag($event_data, $key) {
+        if (isset($event_data['consent']) && is_array($event_data['consent']) && array_key_exists($key, $event_data['consent'])) {
+            return $event_data['consent'][$key] === true;
+        }
         return false;
     }
 
     /**
-     * Send event via GA4 Measurement Protocol.
+     * Snapshot request-time context onto the event, so a queued event is
+     * built exactly like a direct one (the cron flush has no cookies, no
+     * user and no client IP). Idempotent.
      *
-     * @param array $event_data Keys: event, value, currency, page_url, page_title, client_id, session_id, ga_session_cookie, enhanced, ecommerce, event_id
-     * @return bool True if dispatched (or queued).
+     * Keys: _consent_marketing, _consent_analytics, _user_id,
+     * _user_properties, _user_data, _ip_override, _user_agent.
+     * `enhanced` is replaced by the mapped _user_data (or dropped), so no
+     * more customer data than needed is stored in the queue.
+     *
+     * @param array $event_data
+     * @return array
      */
-    public function send_event($event_data) {
-        if (!$this->is_enabled()) return false;
+    private function snapshot($event_data) {
+        if (!empty($event_data['_snapshot'])) {
+            return $event_data;
+        }
+        $marketing = self::consent_flag($event_data, 'marketing');
+        $analytics = self::consent_flag($event_data, 'analytics');
 
-        if (!empty($this->advanced['batching_enabled'])) {
-            $this->queue_event($event_data);
-            return true;
+        $event_data['_consent_marketing'] = $marketing;
+        $event_data['_consent_analytics'] = $analytics;
+
+        $event_data['_user_data'] = array();
+        if ($marketing && TrackWP_Hash::customer_data_sharing_enabled()
+            && !empty($event_data['enhanced']) && is_array($event_data['enhanced'])) {
+            $event_data['_user_data'] = $this->build_mp_user_data($event_data['enhanced']);
+        }
+        unset($event_data['enhanced']);
+
+        $event_data['_user_id'] = '';
+        if (!empty($this->advanced['ga4_user_id_enabled']) && class_exists('TrackWP_Request_Guard')) {
+            $uid = (int) TrackWP_Request_Guard::current_user_id();
+            if ($uid > 0) {
+                $event_data['_user_id']         = hash('sha256', $uid . ':' . get_site_url());
+                $event_data['_user_properties'] = array('logged_in' => array('value' => 'true'));
+            }
         }
 
-        $client_id = $this->resolve_client_id($event_data);
-
-        $measurement_id = $this->config['ga4_measurement_id'];
-
-        // Pre-check: GA4 MP only accepts G- format measurement IDs.
-        if (!$this->is_valid_mp_id($measurement_id)) {
-            $this->log_capi_error('mp_skipped: measurement_id must be G- format, got: ' . (is_string($measurement_id) ? $measurement_id : gettype($measurement_id)), '');
-            return false;
+        $event_data['_ip_override'] = '';
+        $event_data['_user_agent']  = '';
+        if ($analytics) {
+            $ip = class_exists('TrackWP_Request_Guard') ? (string) TrackWP_Request_Guard::client_ip() : '';
+            if (filter_var($ip, FILTER_VALIDATE_IP)) {
+                $event_data['_ip_override'] = $ip;
+            }
+            if (!empty($event_data['user_agent']) && is_string($event_data['user_agent'])) {
+                $event_data['_user_agent'] = substr($event_data['user_agent'], 0, 500);
+            }
         }
 
-        $api_secret     = TrackWP_Hash::decode($this->config['ga4_api_secret']);
-
-        $url = add_query_arg(array(
-            'measurement_id' => $measurement_id,
-            'api_secret'     => $api_secret,
-        ), 'https://www.google-analytics.com/mp/collect');
-
-        $body = $this->build_body($event_data, $client_id);
-
-        // dispatch_with_retry() may return null (outcome unknown) — only a
-        // confirmed 2xx counts as a successful dispatch.
-        return $this->dispatch_with_retry($url, $body, 'ga4') === true;
+        $event_data['_snapshot'] = 1;
+        return $event_data;
     }
 
     /**
-     * Event names GA4 treats as monetary transactions, where currency and
-     * value are required parameters rather than optional ones.
+     * Send an event via GA4 Measurement Protocol.
+     *
+     * @param array      $event_data Proxy event data (K2) incl. effective `consent`.
+     * @param float|null $budget     Remaining request budget in seconds (K1).
+     * @return array K1 result.
+     */
+    public function send_event($event_data, $budget = null) {
+        if (!$this->is_enabled()) {
+            return self::result('skipped', 'not_configured');
+        }
+        $url = $this->collect_url();
+        if ($url === '') {
+            return self::result('skipped', 'not_configured', 0, 0, 'invalid measurement_id');
+        }
+
+        if (!empty($this->advanced['batching_enabled'])) {
+            $this->queue_event($event_data);
+            return self::result('queued', 'batched');
+        }
+
+        $event_data = $this->snapshot($event_data);
+        $client_id  = $this->resolve_client_id($event_data);
+        $body       = $this->build_body($event_data, $client_id, false);
+
+        $deadline = microtime(true) + (($budget === null) ? self::DEFAULT_BUDGET : max(0.0, (float) $budget));
+        return $this->dispatch($url, $body, $deadline);
+    }
+
+    /**
+     * Event names GA4 treats as monetary transactions.
      *
      * @return array
      */
@@ -340,53 +469,71 @@ class TrackWP_GA4 {
     }
 
     /**
-     * Build a single-event GA4 MP body from event data.
+     * Build a single-event GA4 MP body from snapshotted event data.
      *
-     * @param array  $event_data
+     * Request level: client_id, consent, user_data, user_id,
+     * user_properties, ip_override and user_agent (analytics only). No
+     * `device`: a partial device object makes GA4 ignore user_agent
+     * (BESLUTNINGER §7.5).
+     *
+     * @param array  $event_data Output of snapshot().
      * @param string $client_id
+     * @param bool   $with_timestamp Add timestamp_micros from _queued_at_us.
      * @return array
      */
-    private function build_body($event_data, $client_id) {
+    public function build_body($event_data, $client_id, $with_timestamp = false) {
+        $event_data = $this->snapshot($event_data);
         $event_name = isset($event_data['event']) ? $event_data['event'] : '';
 
         $params = array(
-            'page_location'        => isset($event_data['page_url']) ? $event_data['page_url'] : '',
-            'page_title'           => isset($event_data['page_title']) ? $event_data['page_title'] : '',
-            'engagement_time_msec' => 100,
+            'page_location' => isset($event_data['page_url']) ? (string) $event_data['page_url'] : '',
+            'page_title'    => isset($event_data['page_title']) ? (string) $event_data['page_title'] : '',
         );
-
-        // GA4 requires BOTH currency and value on transaction events, and it
-        // requires them even when the amount is 0 — a fully discounted order
-        // (100% coupon, gift card) is still a purchase. The old `!empty($value)`
-        // test dropped both fields in that case, which left the event without
-        // the parameters the purchase spec demands.
-        $is_transaction = in_array($event_name, self::transaction_events(), true);
-        if (!empty($event_data['value']) || $is_transaction) {
-            $params['value']    = floatval(isset($event_data['value']) ? $event_data['value'] : 0);
-            $params['currency'] = self::normalize_currency(isset($event_data['currency']) ? $event_data['currency'] : '');
+        if (!empty($event_data['page_referrer']) && is_string($event_data['page_referrer'])) {
+            $params['page_referrer'] = $event_data['page_referrer'];
         }
 
-        $session_id = $this->derive_session_id($event_data);
-        if ($session_id !== '') {
-            $params['ga_session_id'] = $session_id;
+        // Measured engagement only (K8): omitted when 0 or missing.
+        if (isset($event_data['engaged_ms']) && (int) $event_data['engaged_ms'] > 0) {
+            $params['engagement_time_msec'] = min(3600000, (int) $event_data['engaged_ms']);
         }
 
-        // Event ID for server↔client dedup.
-        if (!empty($event_data['event_id'])) {
-            $params['event_id'] = $event_data['event_id'];
-        }
-
-        // Ecommerce. Already sanitised by TrackWP_Proxy::sanitize_ecommerce(),
-        // which is the single gate for this data (same contract as `enhanced`).
-        //
-        // transaction_id is set independently of items: GA4 needs it on
-        // purchase/refund for its own deduplication, so an order whose line
-        // items could not be resolved must still carry it — otherwise a repeat
-        // delivery of the same order counts twice.
         $ecommerce = (isset($event_data['ecommerce']) && is_array($event_data['ecommerce']))
             ? $event_data['ecommerce']
             : array();
 
+        // R15: GA4 value = value_ga4 (net item value) when present, with tax
+        // and shipping as separate params. GA4 requires value AND currency on
+        // transaction events, also when the amount is 0.
+        $is_transaction = in_array($event_name, self::transaction_events(), true);
+        $has_ga4_value  = isset($ecommerce['value_ga4']) && is_numeric($ecommerce['value_ga4']);
+        if ($has_ga4_value || !empty($event_data['value']) || $is_transaction) {
+            $params['value']    = $has_ga4_value
+                ? floatval($ecommerce['value_ga4'])
+                : floatval(isset($event_data['value']) ? $event_data['value'] : 0);
+            $params['currency'] = self::normalize_currency(isset($event_data['currency']) ? $event_data['currency'] : '');
+        }
+        foreach (array('tax', 'shipping') as $money_key) {
+            if (isset($ecommerce[$money_key]) && is_numeric($ecommerce[$money_key])) {
+                $params[$money_key] = floatval($ecommerce[$money_key]);
+            }
+        }
+
+        $session_id = $this->derive_session_id($event_data);
+        if ($session_id !== '') {
+            $params['session_id'] = $session_id;
+        }
+
+        if (!empty($event_data['event_id'])) {
+            $params['event_id'] = $event_data['event_id'];
+        }
+        foreach (array('form_id', 'form_name') as $form_key) {
+            if (!empty($event_data[$form_key]) && is_string($event_data[$form_key])) {
+                $params[$form_key] = $event_data[$form_key];
+            }
+        }
+
+        // transaction_id is independent of items (GA4 purchase dedup).
         if (!empty($ecommerce['items'])) {
             $params['items'] = $ecommerce['items'];
         }
@@ -397,70 +544,47 @@ class TrackWP_GA4 {
             $params['coupon'] = $ecommerce['coupon'];
         }
 
+        $event = array(
+            'name'   => $event_name,
+            'params' => $params,
+        );
+        if ($with_timestamp && !empty($event_data['_queued_at_us'])) {
+            $event['timestamp_micros'] = (int) $event_data['_queued_at_us'];
+        }
+
         $body = array(
             'client_id' => $client_id,
-            'events'    => array(
-                array(
-                    'name'   => $event_name,
-                    'params' => $params,
-                ),
-            ),
+            'events'    => array($event),
         );
 
-        // Consent Mode v2 signals.
-        // Prefer the queue-time snapshot, then the POSTed payload consent,
-        // and only fall back to the live cookie lookup (cron has no cookies).
-        // Computed before user_data so hashed PII can be gated on it below.
-        $marketing = null;
-        if (array_key_exists('_consent_marketing', $event_data)) {
-            $marketing = !empty($event_data['_consent_marketing']);
-        } elseif (isset($event_data['consent']) && is_array($event_data['consent']) && array_key_exists('marketing', $event_data['consent'])) {
-            $marketing = !empty($event_data['consent']['marketing']);
-        } elseif (class_exists('TrackWP_Consent')) {
-            $consent   = TrackWP_Consent::get_current_consent();
-            $marketing = is_array($consent) && !empty($consent['marketing']);
-        }
-        if ($marketing !== null) {
-            $body['consent'] = array(
-                'ad_user_data'      => $marketing ? 'GRANTED' : 'DENIED',
-                'ad_personalization' => $marketing ? 'GRANTED' : 'DENIED',
-            );
-        }
+        $marketing       = !empty($event_data['_consent_marketing']);
+        $body['consent'] = array(
+            'ad_user_data'       => $marketing ? 'GRANTED' : 'DENIED',
+            'ad_personalization' => $marketing ? 'GRANTED' : 'DENIED',
+        );
 
-        // Enhanced conversions user data (GA4 MP field names).
-        // user_data (hashed PII) requires ad_user_data consent — omit entirely when marketing is denied.
-        if ($marketing === true && !empty($event_data['enhanced']) && is_array($event_data['enhanced'])) {
-            $user_data = $this->build_mp_user_data($event_data['enhanced']);
-            if (!empty($user_data)) {
-                $body['user_data'] = $user_data;
-            }
+        if ($marketing && !empty($event_data['_user_data'])) {
+            $body['user_data'] = $event_data['_user_data'];
         }
-
-        // user_id + user_properties for logged-in users.
-        // Prefer the queue-time snapshot (cron has no logged-in user).
         if (!empty($event_data['_user_id'])) {
             $body['user_id']         = $event_data['_user_id'];
             $body['user_properties'] = !empty($event_data['_user_properties'])
                 ? $event_data['_user_properties']
                 : array('logged_in' => array('value' => 'true'));
-        } elseif (!empty($this->advanced['ga4_user_id_enabled']) && function_exists('is_user_logged_in') && is_user_logged_in()) {
-            $user_id_hash         = hash('sha256', get_current_user_id() . ':' . get_site_url());
-            $body['user_id']      = $user_id_hash;
-            $body['user_properties'] = array(
-                'logged_in' => array('value' => 'true'),
-            );
+        }
+        if (!empty($event_data['_ip_override'])) {
+            $body['ip_override'] = $event_data['_ip_override'];
+        }
+        if (!empty($event_data['_user_agent'])) {
+            $body['user_agent'] = $event_data['_user_agent'];
         }
 
         return $body;
     }
 
     /**
-     * Map normalized enhanced-conversion hashes to GA4 MP user_data keys.
-     *
-     * GA4 MP requires: sha256_email_address, sha256_phone_number (E.164-hash)
-     * and address[] with sha256_first_name / sha256_last_name. City, zip and
-     * country hashes from normalize_enhanced() are omitted: GA4 expects those
-     * address fields in plaintext, and only hashed values are available.
+     * Map normalized enhanced-conversion hashes to GA4 MP user_data keys
+     * (Google normalization only).
      *
      * @param array $enhanced Output of TrackWP_Hash::normalize_enhanced().
      * @return array Empty array when no mappable field exists.
@@ -471,8 +595,6 @@ class TrackWP_GA4 {
         if (!empty($enhanced['email_sha256'])) {
             $user_data['sha256_email_address'] = $enhanced['email_sha256'];
         }
-
-        // Google requires the E.164 hash; omit phone entirely if it is missing.
         if (!empty($enhanced['phone_e164_sha256'])) {
             $user_data['sha256_phone_number'] = $enhanced['phone_e164_sha256'];
         }
@@ -492,177 +614,163 @@ class TrackWP_GA4 {
     }
 
     /**
-     * Queue an event for batched dispatch.
-     *
-     * Snapshots request-time context (consent + logged-in user) onto the
-     * event: the queue is flushed from WP-Cron where no cookies/user exist,
-     * so evaluating those at flush time would always yield DENIED / no user.
+     * Queue an event for batched dispatch (transient, flushed by cron).
+     * The queue stays a transient without a DELETE claim in 1.10.1
+     * (BESLUTNINGER §7.5); the outbox replaces it in 1.11.0.
      *
      * @param array $event_data
      * @return void
      */
     public function queue_event($event_data) {
-        // Consent snapshot: prefer the POSTed payload consent, fall back to
-        // the live cookie lookup (still available at queue time).
-        if (!array_key_exists('_consent_marketing', $event_data)) {
-            if (isset($event_data['consent']) && is_array($event_data['consent']) && array_key_exists('marketing', $event_data['consent'])) {
-                $event_data['_consent_marketing'] = !empty($event_data['consent']['marketing']);
-            } elseif (class_exists('TrackWP_Consent')) {
-                $consent = TrackWP_Consent::get_current_consent();
-                $event_data['_consent_marketing'] = is_array($consent) && !empty($consent['marketing']);
-            }
-        }
-
-        // user_id snapshot for logged-in users.
-        if (empty($event_data['_user_id'])
-            && !empty($this->advanced['ga4_user_id_enabled'])
-            && function_exists('is_user_logged_in') && is_user_logged_in()) {
-            $event_data['_user_id']         = hash('sha256', get_current_user_id() . ':' . get_site_url());
-            $event_data['_user_properties'] = array('logged_in' => array('value' => 'true'));
-        }
-
-        $event_data['_queued_at'] = time();
+        $event_data                  = $this->snapshot($event_data);
+        $event_data['_queued_at']    = time();
+        $event_data['_queued_at_us'] = (int) floor(microtime(true) * 1000000);
 
         $queue = get_transient('trackwp_ga4_queue');
         if (!is_array($queue)) {
             $queue = array();
         }
         $queue[] = $event_data;
+        set_transient('trackwp_ga4_queue', $queue, self::QUEUE_TTL);
 
-        if (count($queue) >= 25) {
-            set_transient('trackwp_ga4_queue', $queue, HOUR_IN_SECONDS);
-            $this->flush_queue();
-            return;
-        }
-
-        set_transient('trackwp_ga4_queue', $queue, HOUR_IN_SECONDS);
-
-        if (!wp_next_scheduled('trackwp_flush_ga4')) {
-            wp_schedule_single_event(time() + 30, 'trackwp_flush_ga4');
+        // Flushing inline would exceed the public request budget (K1), so a
+        // full queue is flushed by an immediate cron run instead.
+        $delay = count($queue) >= self::BATCH_MAX_EVENTS ? 0 : 30;
+        $next  = wp_next_scheduled('trackwp_flush_ga4');
+        if (!$next || ($delay === 0 && $next > time())) {
+            if ($next) {
+                wp_unschedule_event($next, 'trackwp_flush_ga4');
+            }
+            wp_schedule_single_event(time() + $delay, 'trackwp_flush_ga4');
         }
     }
 
     /**
-     * Flush the queued events. Groups by client_id + consent/user snapshot
-     * and dispatches up to 25 events per request. Hooked to the
-     * 'trackwp_flush_ga4' cron event at bootstrap (see TrackWP::flush_ga4_queue).
+     * Request-level identity key for batching (R18): client_id, session_id,
+     * user_id, user_properties, consent, user_data, ip_override and a hash
+     * of user_agent. Events are only batched when all of these match.
      *
-     * Config checks run BEFORE the queue transient is deleted so a
-     * misconfiguration does not discard queued events. Failed batches are
-     * re-queued (events older than 1 hour are dropped) and a new flush is
-     * scheduled.
+     * @param array $single Output of build_body() for one event.
+     * @return string
+     */
+    public static function batch_key($single) {
+        $params = isset($single['events'][0]['params']) ? $single['events'][0]['params'] : array();
+        return md5(wp_json_encode(array(
+            isset($single['client_id']) ? $single['client_id'] : '',
+            isset($params['session_id']) ? $params['session_id'] : '',
+            isset($single['user_id']) ? $single['user_id'] : '',
+            isset($single['user_properties']) ? $single['user_properties'] : null,
+            isset($single['consent']) ? $single['consent'] : null,
+            isset($single['user_data']) ? $single['user_data'] : null,
+            isset($single['ip_override']) ? $single['ip_override'] : '',
+            isset($single['user_agent']) ? hash('sha256', $single['user_agent']) : '',
+        )));
+    }
+
+    /**
+     * Split queued events into MP request bodies (R18 key, max 25 events,
+     * max 130 kB). Each returned item: array('body' => array, 'events' => array).
      *
-     * @return void
+     * @param array $queue
+     * @return array
+     */
+    public function build_batches($queue) {
+        $groups = array();
+        foreach ($queue as $event_data) {
+            if (!is_array($event_data)) {
+                continue;
+            }
+            $cid    = $this->resolve_client_id($event_data);
+            $single = $this->build_body($event_data, $cid, true);
+            $key    = self::batch_key($single);
+            if (!isset($groups[$key])) {
+                $groups[$key] = array();
+            }
+            $groups[$key][] = array('single' => $single, 'event' => $event_data);
+        }
+
+        $batches = array();
+        foreach ($groups as $items) {
+            $current = null;
+            foreach ($items as $item) {
+                $candidate = $current;
+                if ($candidate === null) {
+                    $candidate = array('body' => $item['single'], 'events' => array($item['event']));
+                } else {
+                    $candidate['body']['events'][] = $item['single']['events'][0];
+                    $candidate['events'][]         = $item['event'];
+                }
+                $too_many = count($candidate['body']['events']) > self::BATCH_MAX_EVENTS;
+                $too_big  = strlen((string) wp_json_encode($candidate['body'])) > self::BATCH_MAX_BYTES;
+                if ($current !== null && ($too_many || $too_big)) {
+                    $batches[] = $current;
+                    $current   = array('body' => $item['single'], 'events' => array($item['event']));
+                } else {
+                    $current = $candidate;
+                }
+            }
+            if ($current !== null) {
+                $batches[] = $current;
+            }
+        }
+        return $batches;
+    }
+
+    /**
+     * Flush the queued events (cron hook trackwp_flush_ga4).
+     *
+     * Config checks run BEFORE the transient is deleted, so a
+     * misconfiguration does not discard events. Batches that failed with a
+     * retryable outcome (5xx, 429, connection error) are re-queued up to
+     * REQUEUE_MAX_AGE; `unknown` (timeout) is dropped to avoid double
+     * counting; 4xx is dropped and logged.
+     *
+     * @return array List of K1 results, one per batch.
      */
     public function flush_queue() {
         $queue = get_transient('trackwp_ga4_queue');
-
         if (empty($queue) || !is_array($queue)) {
             delete_transient('trackwp_ga4_queue');
-            return;
+            return array();
         }
-
         if (!$this->is_enabled()) {
-            return;
+            return array();
         }
-
-        $measurement_id = $this->config['ga4_measurement_id'];
-
-        // Pre-check: GA4 MP only accepts G- format measurement IDs.
-        if (!$this->is_valid_mp_id($measurement_id)) {
-            $this->log_capi_error('mp_skipped: measurement_id must be G- format, got: ' . (is_string($measurement_id) ? $measurement_id : gettype($measurement_id)), '');
-            return;
+        $url = $this->collect_url();
+        if ($url === '') {
+            return array();
         }
 
         delete_transient('trackwp_ga4_queue');
 
-        $api_secret     = TrackWP_Hash::decode($this->config['ga4_api_secret']);
-
-        $url = add_query_arg(array(
-            'measurement_id' => $measurement_id,
-            'api_secret'     => $api_secret,
-        ), 'https://www.google-analytics.com/mp/collect');
-
-        // Group events by resolved client_id (GA4 MP requires one client_id
-        // per request) AND by consent snapshot + user_id: consent/user_data/
-        // user_id are request-level fields, so mixing events with different
-        // snapshots in one batch would apply the first event's values to all.
-        $groups = array();
-        foreach ($queue as $event_data) {
-            $cid  = $this->resolve_client_id($event_data);
-            $gkey = $cid . '|' . (isset($event_data['_consent_marketing']) ? (int) !empty($event_data['_consent_marketing']) : 'n') . '|' . (isset($event_data['_user_id']) ? $event_data['_user_id'] : '');
-            if (!isset($groups[$gkey])) {
-                $groups[$gkey] = array('cid' => $cid, 'events' => array());
-            }
-            $groups[$gkey]['events'][] = $event_data;
-        }
-
-        $failed = array();
-
-        foreach ($groups as $group) {
-            $cid    = $group['cid'];
-            $events = $group['events'];
-            // Chunk into batches of 25 events per request.
-            $chunks = array_chunk($events, 25);
-            foreach ($chunks as $chunk) {
-                $body_events = array();
-                $body_extras = array();
-                foreach ($chunk as $event_data) {
-                    $single = $this->build_body($event_data, $cid);
-                    if (!empty($single['events'][0])) {
-                        $body_events[] = $single['events'][0];
-                    }
-                    // Carry over per-request properties from the first event that defines them.
-                    foreach (array('user_id', 'user_properties', 'consent', 'user_data') as $key) {
-                        if (!isset($body_extras[$key]) && isset($single[$key])) {
-                            $body_extras[$key] = $single[$key];
-                        }
-                    }
-                }
-
-                if (empty($body_events)) {
-                    continue;
-                }
-
-                $body = array(
-                    'client_id' => $cid,
-                    'events'    => $body_events,
-                );
-                $body = array_merge($body, $body_extras);
-
-                // Cron context: 5xx retries are safe -- they do not block the
-                // end-user response. Only a definitive rejection (false) is
-                // re-queued; an unknown outcome (null, transport error) is
-                // dropped, because the batch may already have been delivered
-                // and GA4 MP would count it twice on a resend.
-                $result = $this->dispatch_with_retry($url, $body, 'ga4', true);
-                if ($result === false) {
-                    $failed = array_merge($failed, $chunk);
-                } elseif ($result === null) {
-                    $this->log_capi_error(
-                        'batch outcome unknown (' . count($chunk) . ' events) -- dropped instead of re-queued to avoid double counting',
-                        ''
-                    );
-                }
+        $results = array();
+        $failed  = array();
+        foreach ($this->build_batches($queue) as $batch) {
+            $result    = $this->dispatch($url, $batch['body'], microtime(true) + self::CRON_BUDGET);
+            $results[] = $result;
+            $retryable = $result['status'] === 'failed'
+                && in_array($result['reason'], array('http_5xx', 'http_429', 'transport'), true);
+            if ($retryable) {
+                $failed = array_merge($failed, $batch['events']);
+            } elseif ($result['status'] === 'unknown') {
+                $this->log_capi_error('batch outcome unknown (' . count($batch['events']) . ' events) -- dropped to avoid double counting', '');
             }
         }
 
         if (!empty($failed)) {
             $this->requeue_failed($failed);
         }
+        return $results;
     }
 
     /**
-     * Re-queue events from failed batches and re-schedule a flush.
-     *
-     * Events older than 1 hour (per their _queued_at snapshot) are dropped so
-     * the queue cannot grow unbounded on persistent failure.
+     * Re-queue events from failed batches (max age 72 h) and re-schedule.
      *
      * @param array $events
      * @return void
      */
     private function requeue_failed($events) {
-        $cutoff = time() - HOUR_IN_SECONDS;
+        $cutoff = time() - self::REQUEUE_MAX_AGE;
         $keep   = array();
         foreach ($events as $event_data) {
             $queued_at = isset($event_data['_queued_at']) ? (int) $event_data['_queued_at'] : 0;
@@ -670,17 +778,15 @@ class TrackWP_GA4 {
                 $keep[] = $event_data;
             }
         }
-
         if (empty($keep)) {
             return;
         }
 
-        // Merge with any events queued while this flush was running.
         $queue = get_transient('trackwp_ga4_queue');
         if (!is_array($queue)) {
             $queue = array();
         }
-        set_transient('trackwp_ga4_queue', array_merge($keep, $queue), HOUR_IN_SECONDS);
+        set_transient('trackwp_ga4_queue', array_merge($keep, $queue), self::QUEUE_TTL);
 
         if (!wp_next_scheduled('trackwp_flush_ga4')) {
             wp_schedule_single_event(time() + 60, 'trackwp_flush_ga4');

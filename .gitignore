@@ -3,3 +3,20 @@ node_modules/
 .DS_Store
 trackwp-*.zip
 .phpunit.result.cache
+
+# Test tooling (W0, PLAN-1.10.1-v4.md 2.2/2.4). config.vendor-dir in
+# composer.json keeps this separate from vendor/ (Plugin Update Checker,
+# shipped in the release zip and NOT ignored).
+/vendor-dev/
+/test-results/
+/playwright-report/
+/blob-report/
+
+# NOTE: tests/fixtures/consent-cookie.json and purchase-config.json are
+# generator OUTPUT but are committed on purpose (acceptance criterion 4.3.3
+# names them as producer fixtures consumed by test-consent.php and
+# test-woocommerce-purchase.php) -- do not gitignore them.
+
+# Worker test logs and scratch output (never part of the release).
+/tasks/
+tmp-*

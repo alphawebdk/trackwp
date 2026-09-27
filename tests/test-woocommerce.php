@@ -46,6 +46,23 @@ class TrackWP_WooCommerce_Test extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'onclick', $item );
     }
 
+    public function test_sanitize_ecommerce_allows_r15_value_split_and_order_ref() {
+        // R15: value_ga4, tax and shipping (numeric) and order_ref pass the
+        // allowlist; non-numeric amounts are dropped.
+        $out = TrackWP_Proxy::sanitize_ecommerce( array(
+            'transaction_id' => '1001',
+            'value_ga4'      => '80.00',
+            'tax'            => 20,
+            'shipping'       => 'gratis',
+            'order_ref'      => '1001.' . str_repeat( 'a', 24 ),
+        ) );
+
+        $this->assertSame( 80.0, (float) $out['value_ga4'] );
+        $this->assertSame( 20.0, (float) $out['tax'] );
+        $this->assertArrayNotHasKey( 'shipping', $out );
+        $this->assertSame( '1001.' . str_repeat( 'a', 24 ), $out['order_ref'] );
+    }
+
     public function test_sanitize_ecommerce_drops_items_without_an_identifier() {
         // GA4 requires item_id or item_name; an item with neither is dropped
         // rather than sent and silently rejected upstream.
@@ -220,5 +237,96 @@ class TrackWP_WooCommerce_Test extends WP_UnitTestCase {
         $this->assertFalse( $bases['ex_tax'] );
         $this->assertTrue( $bases['ex_shipping'] );
         $this->assertFalse( $bases['ex_tax_shipping'] );
+    }
+
+    // ------------------------------------------------------------------
+    // 1.10.1: shop events always carry a woocommerce trigger
+    // ------------------------------------------------------------------
+
+    private function stored_triggers( $name ) {
+        foreach ( get_option( 'trackwp_events', array() ) as $event ) {
+            if ( is_array( $event ) && isset( $event['name'] ) && $name === $event['name'] ) {
+                // Same resolution as the client config: firing_triggers, else
+                // the legacy single trigger (update_option() in tests does not
+                // run the admin-registered sanitizer).
+                return ! empty( $event['firing_triggers'] )
+                    ? $event['firing_triggers']
+                    : TrackWP_Conditions::triggers_from_legacy_event( $event );
+            }
+        }
+        return null;
+    }
+
+    private function trigger_types( $triggers ) {
+        return array_map( function ( $t ) {
+            return $t['type'];
+        }, (array) $triggers );
+    }
+
+    public function test_seeded_shop_events_have_a_woocommerce_trigger() {
+        if ( ! class_exists( 'WooCommerce' ) ) {
+            $this->markTestSkipped( 'WooCommerce is not installed.' );
+        }
+        update_option( 'trackwp_events', array() );
+        update_option( 'trackwp_woocommerce', array_merge( TrackWP_WooCommerce::get_defaults(), array( 'enabled' => true ) ) );
+
+        ( new TrackWP_WooCommerce( false ) )->seed_events();
+
+        foreach ( array( 'view_item', 'add_to_cart', 'begin_checkout', 'purchase' ) as $name ) {
+            $this->assertContains( 'woocommerce', $this->trigger_types( $this->stored_triggers( $name ) ), $name );
+        }
+    }
+
+    public function test_existing_shop_event_without_woocommerce_trigger_is_migrated_once() {
+        if ( ! class_exists( 'WooCommerce' ) ) {
+            $this->markTestSkipped( 'WooCommerce is not installed.' );
+        }
+        delete_option( TrackWP_WooCommerce::TRIGGER_MIGRATION_OPTION );
+        // A 1.10.0 purchase event whose admin switched the trigger type; the
+        // producer is the events sanitizer itself (validate_event).
+        $templates                  = TrackWP_Events::get_woocommerce_event_templates();
+        $purchase                   = $templates['purchase'];
+        $purchase['trigger_type']   = 'url_match';
+        $purchase['url_match']      = '/tak';
+        update_option( 'trackwp_events', array( $purchase ) );
+        $this->assertNotContains( 'woocommerce', $this->trigger_types( $this->stored_triggers( 'purchase' ) ) );
+
+        update_option( 'trackwp_woocommerce', array_merge( TrackWP_WooCommerce::get_defaults(), array( 'enabled' => true ) ) );
+        ( new TrackWP_WooCommerce( false ) )->seed_events();
+
+        $types = $this->trigger_types( $this->stored_triggers( 'purchase' ) );
+        $this->assertContains( 'woocommerce', $types );
+        $this->assertContains( 'url_match', $types );
+
+        // Removed again by the admin: the one-time migration does not re-add it.
+        update_option( 'trackwp_events', array( $purchase ) );
+        ( new TrackWP_WooCommerce( false ) )->seed_events();
+        $this->assertNotContains( 'woocommerce', $this->trigger_types( $this->stored_triggers( 'purchase' ) ) );
+    }
+
+    // ------------------------------------------------------------------
+    // Review class A: window.trackwpWoo keeps its JSON types
+    // ------------------------------------------------------------------
+
+    public function test_print_config_is_json_with_real_booleans() {
+        if ( ! class_exists( 'WooCommerce' ) ) {
+            $this->markTestSkipped( 'WooCommerce is not installed.' );
+        }
+        update_option( 'trackwp_woocommerce', array_merge( TrackWP_WooCommerce::get_defaults(), array( 'enabled' => true ) ) );
+        update_option( 'trackwp_advanced', array( 'debug_console' => '1' ) );
+
+        ob_start();
+        ( new TrackWP_WooCommerce( false ) )->print_config();
+        $html = ob_get_clean();
+        delete_option( 'trackwp_advanced' );
+
+        $this->assertSame( 1, preg_match( '/window\.trackwpWoo=(.*);<\/script>/s', $html, $m ) );
+        $config = json_decode( $m[1], true );
+        $this->assertIsArray( $config );
+        $this->assertTrue( $config['addToCart'] );
+        $this->assertTrue( $config['includeTax'] );
+        $this->assertTrue( $config['debugAllowed'] );
+        $this->assertArrayNotHasKey( 'debug', $config );
+        $this->assertIsArray( $config['immediate'] );
     }
 }

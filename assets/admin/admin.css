@@ -1134,3 +1134,21 @@
         width: 100%;
     }
 }
+
+/* =====================================================================
+   1.10.1: Consent log panel, admin notices, GTM vendor picker
+   ===================================================================== */
+
+.trackwp-consent-log {
+    margin: 24px 0;
+    padding-top: 16px;
+    border-top: 1px solid #dcdcde;
+}
+
+.trackwp-consent-log table.widefat th {
+    font-weight: 600;
+}
+
+.trackwp-admin-notice a {
+    font-weight: 600;
+}

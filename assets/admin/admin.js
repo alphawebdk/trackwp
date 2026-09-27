@@ -729,7 +729,6 @@
         ];
 
         $(textFields.join(',')).on('input', debounce(updateConsentPreview, 200));
-        $('[name="trackwp_consent[show_reject_button]"]').on('change', updateConsentPreview);
         $('#trackwp_banner_style').on('change', function () {
             updateConsentPreview();
         });
@@ -761,7 +760,8 @@
         var acceptText      = $('#consent_accept_text').val() || 'Accept all';
         var rejectText      = $('#consent_reject_text').val() || 'Reject all';
         var customizeText   = $('#consent_customize_text').val() || 'Customize';
-        var showReject      = $('[name="trackwp_consent[show_reject_button]"]').is(':checked');
+        // "Afvis valgfrie" er altid synlig fra og med 1.10.1 (BESLUTNINGER §4) —
+        // der er ikke længere et show_reject_button-felt at slå fra med.
 
         var $banner = $preview.find('.trackwp-preview-banner');
         $banner.css({
@@ -787,7 +787,7 @@
             border: '1px solid ' + textColor,
             borderRadius: Math.max(borderRadius - 4, 2) + 'px'
         });
-        $reject.toggle(showReject);
+        $reject.show();
 
         var $customize = $preview.find('.trackwp-preview-customize');
         $customize.text(customizeText).css({ color: accentColor });

@@ -224,6 +224,16 @@ $has_woocommerce = class_exists('WooCommerce');
                 <div class="trackwp-stat-sub"><?php echo wp_kses_post( $render_trend( $trend['bot_skipped'] ) ); ?></div>
             </div>
 
+            <!-- Videresendt (R20 — mindst ét destinationsresultat var ok/queued) -->
+            <div class="trackwp-stat-card">
+                <div class="trackwp-stat-icon" aria-hidden="true">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M13 6l6 6-6 6"></path></svg>
+                </div>
+                <div class="trackwp-stat-value"><?php echo esc_html( number_format_i18n( isset( $agg['totals']['forwarded'] ) ? $agg['totals']['forwarded'] : 0 ) ); ?></div>
+                <div class="trackwp-stat-label"><?php echo esc_html__( 'Videresendt', 'trackwp' ); ?></div>
+                <div class="trackwp-stat-sub"><?php echo wp_kses_post( $render_trend( isset( $trend['forwarded'] ) ? $trend['forwarded'] : null ) ); ?></div>
+            </div>
+
             <!-- Platforme -->
             <div class="trackwp-stat-card">
                 <div class="trackwp-stat-icon" aria-hidden="true">
@@ -336,6 +346,7 @@ $has_woocommerce = class_exists('WooCommerce');
             <div class="trackwp-platform-section">
                 <h2 class="trackwp-section-title">
                     <label>
+                        <input type="hidden" name="trackwp_platforms[ga4_enabled]" value="0" />
                         <input type="checkbox"
                                name="trackwp_platforms[ga4_enabled]"
                                value="1"
@@ -394,6 +405,7 @@ $has_woocommerce = class_exists('WooCommerce');
                         </th>
                         <td>
                             <label>
+                                <input type="hidden" name="trackwp_platforms[ga4_gtag_enabled]" value="0" />
                                 <input type="checkbox"
                                        name="trackwp_platforms[ga4_gtag_enabled]"
                                        value="1"
@@ -412,6 +424,7 @@ $has_woocommerce = class_exists('WooCommerce');
             <div class="trackwp-platform-section">
                 <h2 class="trackwp-section-title">
                     <label>
+                        <input type="hidden" name="trackwp_platforms[google_ads_enabled]" value="0" />
                         <input type="checkbox"
                                name="trackwp_platforms[google_ads_enabled]"
                                value="1"
@@ -467,6 +480,30 @@ $has_woocommerce = class_exists('WooCommerce');
                                    pattern="[0-9]+" />
                             <p class="description">
                                 <?php echo esc_html__('Numerisk ID for konverteringshandlingen (kun cifre). Bruges til Google Ads API uploads.', 'trackwp'); ?>
+                            </p>
+                            <p class="description">
+                                <strong><?php echo esc_html__('Forbedrede konverteringer:', 'trackwp'); ?></strong>
+                                <?php echo esc_html__('Slå "Enhanced conversions" til på selve konverteringshandlingen i Google Ads (Tools > Conversions > din konverteringshandling). Uden det bruger Google ikke de hashede kundedata TrackWP sender.', 'trackwp'); ?>
+                            </p>
+                            <p class="description">
+                                <strong><?php echo esc_html__('Optællingsindstilling:', 'trackwp'); ?></strong>
+                                <?php echo esc_html__('Sæt konverteringshandlingens "Count" til "Every" ("Hver"), ikke "One" ("Én pr. klik"). gbraid/wbraid (iOS-app-klik) afvises af Google med fejlen ONE_PER_CLICK_CONVERSION_ACTION_NOT_PERMITTED_WITH_BRAID, hvis handlingen tæller "Én pr. klik" — det gælder typisk for køb.', 'trackwp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row"><?php echo esc_html__('GA4-import til Google Ads', 'trackwp'); ?></th>
+                        <td>
+                            <label>
+                                <input type="hidden" name="trackwp_platforms[ga4_imported_to_ads]" value="0" />
+                                <input type="checkbox"
+                                       name="trackwp_platforms[ga4_imported_to_ads]"
+                                       value="1"
+                                       <?php checked( ! empty($platforms['ga4_imported_to_ads']) ); ?> />
+                                <?php echo esc_html__('Jeg har importeret GA4-konverteringer til Google Ads som konverteringsmål.', 'trackwp'); ?>
+                            </label>
+                            <p class="description">
+                                <?php echo esc_html__('Bruges GA4-importen OG en direkte Google Ads-konverteringshandling til samme mål, tælles konverteringen dobbelt. Brug kun én kilde pr. mål.', 'trackwp'); ?>
                             </p>
                         </td>
                     </tr>
@@ -564,6 +601,7 @@ $has_woocommerce = class_exists('WooCommerce');
             <div class="trackwp-platform-section">
                 <h2 class="trackwp-section-title">
                     <label>
+                        <input type="hidden" name="trackwp_platforms[meta_enabled]" value="0" />
                         <input type="checkbox"
                                name="trackwp_platforms[meta_enabled]"
                                value="1"
@@ -595,6 +633,7 @@ $has_woocommerce = class_exists('WooCommerce');
                         </th>
                         <td>
                             <label>
+                                <input type="hidden" name="trackwp_platforms[meta_pixel_client_enabled]" value="0" />
                                 <input type="checkbox"
                                        name="trackwp_platforms[meta_pixel_client_enabled]"
                                        value="1"
@@ -651,16 +690,28 @@ $has_woocommerce = class_exists('WooCommerce');
                             <label for="meta_api_version"><?php echo esc_html__('Graph API version', 'trackwp'); ?></label>
                         </th>
                         <td>
-                            <?php $meta_version_current = isset($platforms['meta_api_version']) ? $platforms['meta_api_version'] : 'v21.0'; ?>
+                            <?php
+                            // TrackWP_Meta (W3) is the single source of truth for the version
+                            // and the supported list — see the sanitizer for the same rule.
+                            $meta_default_version     = TrackWP_Meta::DEFAULT_API_VERSION;
+                            $meta_supported_versions  = TrackWP_Meta::SUPPORTED_API_VERSIONS;
+                            $meta_version_current     = isset($platforms['meta_api_version']) ? $platforms['meta_api_version'] : $meta_default_version;
+                            ?>
                             <select id="meta_api_version" name="trackwp_platforms[meta_api_version]">
-                                <?php foreach ( array('v18.0', 'v19.0', 'v20.0', 'v21.0', 'v22.0') as $mv ) : ?>
+                                <?php foreach ( $meta_supported_versions as $mv ) : ?>
                                     <option value="<?php echo esc_attr($mv); ?>" <?php selected($meta_version_current, $mv); ?>>
                                         <?php echo esc_html($mv); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                             <p class="description">
-                                <?php echo esc_html__('Meta Graph API-version til Conversions API-kald. Standard: v21.0.', 'trackwp'); ?>
+                                <?php
+                                echo esc_html( sprintf(
+                                    /* translators: %s: default Meta Graph API version */
+                                    __('Meta Graph API-version til Conversions API-kald. Standard: %s.', 'trackwp'),
+                                    $meta_default_version
+                                ) );
+                                ?>
                             </p>
                         </td>
                     </tr>
@@ -671,6 +722,7 @@ $has_woocommerce = class_exists('WooCommerce');
             <div class="trackwp-platform-section">
                 <h2 class="trackwp-section-title">
                     <label>
+                        <input type="hidden" name="trackwp_platforms[gtm_enabled]" value="0" />
                         <input type="checkbox"
                                name="trackwp_platforms[gtm_enabled]"
                                value="1"
@@ -763,6 +815,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Aktivér', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_woocommerce[enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_woocommerce[enabled]"
                                    value="1"
@@ -804,6 +857,7 @@ $has_woocommerce = class_exists('WooCommerce');
                         <th scope="row"><code><?php echo esc_html($woo_event); ?></code></th>
                         <td>
                             <label>
+                                <input type="hidden" name="trackwp_woocommerce[<?php echo esc_attr($woo_key); ?>]" value="0" />
                                 <input type="checkbox"
                                        name="trackwp_woocommerce[<?php echo esc_attr($woo_key); ?>]"
                                        value="1"
@@ -854,6 +908,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Kategorier', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_woocommerce[include_categories]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_woocommerce[include_categories]"
                                    value="1"
@@ -1051,23 +1106,15 @@ $has_woocommerce = class_exists('WooCommerce');
             </table>
 
             <h2 class="trackwp-section-title"><?php echo esc_html__('Adfærd', 'trackwp'); ?></h2>
+            <div class="notice notice-info inline">
+                <p><?php echo esc_html__('"Afvis valgfrie" vises altid på banneret med samme fremtrædenhed som accept-knappen — det kan ikke slås fra (BESLUTNINGER §4). Teksten redigeres under "Tekst" ovenfor.', 'trackwp'); ?></p>
+            </div>
             <table class="form-table">
-                <tr>
-                    <th scope="row"><?php echo esc_html__('Vis afvis-knap', 'trackwp'); ?></th>
-                    <td>
-                        <label>
-                            <input type="checkbox"
-                                   name="trackwp_consent[show_reject_button]"
-                                   value="1"
-                                   <?php checked( ! empty($consent['show_reject_button']) ); ?> />
-                            <?php echo esc_html__('Vis en "Afvis alle"-knap på samtykke-banneret.', 'trackwp'); ?>
-                        </label>
-                    </td>
-                </tr>
                 <tr>
                     <th scope="row"><?php echo esc_html__('Kræv aktivt samtykke', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_consent[require_active_consent]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_consent[require_active_consent]"
                                    value="1"
@@ -1080,6 +1127,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Log samtykke', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_consent[log_consent]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_consent[log_consent]"
                                    value="1"
@@ -1092,6 +1140,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Genindhent samtykke ved policy-ændring', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_consent[reconsent_on_policy_change]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_consent[reconsent_on_policy_change]"
                                    value="1"
@@ -1111,7 +1160,139 @@ $has_woocommerce = class_exists('WooCommerce');
                                value="<?php echo esc_attr( isset($consent['cookie_lifetime_months']) ? (int) $consent['cookie_lifetime_months'] : 12 ); ?>"
                                class="small-text"
                                min="1"
-                               max="24" />
+                               max="12" />
+                        <p class="description"><?php echo esc_html__('Maks. 12 måneder (K7).', 'trackwp'); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="consent_description_mode"><?php echo esc_html__('Beskrivelsestekst', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <?php $description_mode = isset($consent['description_mode']) ? $consent['description_mode'] : 'auto'; ?>
+                        <select name="trackwp_consent[description_mode]" id="consent_description_mode">
+                            <option value="auto" <?php selected($description_mode, 'auto'); ?>><?php esc_html_e('Dynamisk (genereres ud fra aktive platforme og dataansvarlig)', 'trackwp'); ?></option>
+                            <option value="custom" <?php selected($description_mode, 'custom'); ?>><?php esc_html_e('Fast tekst (brug feltet "Beskrivelse" ovenfor)', 'trackwp'); ?></option>
+                        </select>
+                        <p class="description"><?php echo esc_html__('Dynamisk tekst opdaterer sig selv når platforme ændres og indeholder ACM-sætningen, formål, deling og tilbagetrækning.', 'trackwp'); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="consent_controller_name"><?php echo esc_html__('Dataansvarlig', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <input type="text"
+                               id="consent_controller_name"
+                               name="trackwp_consent[controller_name]"
+                               value="<?php echo esc_attr( isset($consent['controller_name']) ? $consent['controller_name'] : '' ); ?>"
+                               class="regular-text"
+                               placeholder="<?php echo esc_attr( get_bloginfo('name') ); ?>" />
+                        <p class="description"><?php echo esc_html__('Sitets ejer — vises i banneret som den dataansvarlige. Aldrig TrackWP.', 'trackwp'); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php echo esc_html__('GTM-vendors', 'trackwp'); ?></th>
+                    <td>
+                        <?php
+                        $gtm_vendors  = isset($consent['gtm_vendors']) ? $consent['gtm_vendors'] : array();
+                        $gtm_known    = isset($gtm_vendors['known']) && is_array($gtm_vendors['known']) ? $gtm_vendors['known'] : array();
+                        $gtm_custom   = isset($gtm_vendors['custom']) && is_array($gtm_vendors['custom']) ? $gtm_vendors['custom'] : array();
+                        $vendor_catalog = ( class_exists('TrackWP_Consent_Profile') && method_exists('TrackWP_Consent_Profile', 'vendor_catalog') )
+                            ? TrackWP_Consent_Profile::vendor_catalog()
+                            : array();
+                        ?>
+                        <fieldset>
+                            <?php foreach ( $vendor_catalog as $vendor_key => $vendor ) : ?>
+                                <label style="display:inline-block; margin: 0 16px 6px 0;">
+                                    <input type="checkbox"
+                                           name="trackwp_consent[gtm_vendors][known][]"
+                                           value="<?php echo esc_attr($vendor_key); ?>"
+                                           <?php checked( in_array($vendor_key, $gtm_known, true) ); ?> />
+                                    <?php echo esc_html( isset($vendor['name']) ? $vendor['name'] : $vendor_key ); ?>
+                                </label>
+                            <?php endforeach; ?>
+                            <?php if ( empty( $vendor_catalog ) ) : ?>
+                                <p class="description"><?php echo esc_html__('Vendor-kataloget er ikke tilgængeligt endnu (kommer i denne opgradering).', 'trackwp'); ?></p>
+                            <?php endif; ?>
+                        </fieldset>
+
+                        <h4 style="margin-bottom:4px;"><?php echo esc_html__('Øvrige vendors', 'trackwp'); ?></h4>
+                        <table class="widefat trackwp-gtm-vendor-rows">
+                            <thead><tr>
+                                <th><?php esc_html_e('Navn', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Udbyder', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Kategori', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Cookies', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Formål', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Levetid', 'trackwp'); ?></th>
+                                <th><?php esc_html_e('Dataoverførsel', 'trackwp'); ?></th>
+                                <th></th>
+                            </tr></thead>
+                            <tbody id="trackwp-gtm-vendor-rows"></tbody>
+                        </table>
+                        <p><button type="button" class="button" id="trackwp-add-gtm-vendor-row"><?php esc_html_e('Tilføj vendor', 'trackwp'); ?></button></p>
+                        <textarea name="trackwp_consent[gtm_vendors][custom]" id="trackwp-gtm-vendors-custom-json" style="display:none;"></textarea>
+                        <script type="application/json" id="trackwp-gtm-vendors-custom-initial"><?php echo wp_json_encode( $gtm_custom ); ?></script>
+                        <script>
+                        (function(){
+                            var tbody = document.getElementById('trackwp-gtm-vendor-rows');
+                            var json = document.getElementById('trackwp-gtm-vendors-custom-json');
+                            var addBtn = document.getElementById('trackwp-add-gtm-vendor-row');
+                            if (!tbody || !json || !addBtn) return;
+                            var cats = [['statistics','<?php echo esc_js(__('Statistik','trackwp')); ?>'],['marketing','<?php echo esc_js(__('Marketing','trackwp')); ?>'],['personalisation','<?php echo esc_js(__('Funktionalitet','trackwp')); ?>']];
+                            function esc(s){ return (s==null?'':String(s)).replace(/"/g,'&quot;'); }
+                            function rowHtml(r){
+                                r = r || {};
+                                var opts = cats.map(function(c){ return '<option value="'+c[0]+'"'+(r.category===c[0]?' selected':'')+'>'+c[1]+'</option>'; }).join('');
+                                return '<td><input type="text" data-f="name" value="'+esc(r.name)+'"></td>'+
+                                    '<td><input type="text" data-f="provider" value="'+esc(r.provider)+'"></td>'+
+                                    '<td><select data-f="category">'+opts+'</select></td>'+
+                                    '<td><input type="text" data-f="cookies" value="'+esc(r.cookies)+'"></td>'+
+                                    '<td><input type="text" data-f="purpose" value="'+esc(r.purpose)+'"></td>'+
+                                    '<td><input type="text" data-f="lifetime" value="'+esc(r.lifetime)+'"></td>'+
+                                    '<td><input type="text" data-f="transfer" value="'+esc(r.transfer)+'"></td>'+
+                                    '<td><button type="button" class="button-link trackwp-remove-gtm-vendor-row" aria-label="Fjern">&#10005;</button></td>';
+                            }
+                            function addRow(r){ var tr=document.createElement('tr'); tr.innerHTML=rowHtml(r); tbody.appendChild(tr); }
+                            function serialize(){
+                                var rows=[];
+                                tbody.querySelectorAll('tr').forEach(function(tr){
+                                    var o={};
+                                    tr.querySelectorAll('[data-f]').forEach(function(el){ o[el.getAttribute('data-f')]=el.value; });
+                                    if (o.name){ rows.push(o); }
+                                });
+                                json.value=JSON.stringify(rows);
+                            }
+                            tbody.addEventListener('input', serialize);
+                            tbody.addEventListener('change', serialize);
+                            tbody.addEventListener('click', function(e){
+                                var btn=e.target.closest('.trackwp-remove-gtm-vendor-row');
+                                if(btn){ var tr=btn.closest('tr'); if(tr){ tr.parentNode.removeChild(tr); serialize(); } }
+                            });
+                            addBtn.addEventListener('click', function(){ addRow({category:'marketing'}); serialize(); });
+                            var initial=[];
+                            try{ initial=JSON.parse(document.getElementById('trackwp-gtm-vendors-custom-initial').textContent||'[]'); }catch(e){}
+                            initial.forEach(addRow);
+                            serialize();
+                        })();
+                        </script>
+                        <p class="description"><?php echo esc_html__('GTM-indholdet kan ikke ses udefra — hvis GTM er aktiv, skal vendors angives manuelt, ellers vises en advarsel og deklarationen bliver ufuldstændig.', 'trackwp'); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="consent_log_retention"><?php echo esc_html__('Samtykkelog: opbevaring (måneder)', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <input type="number"
+                               id="consent_log_retention"
+                               name="trackwp_consent[consent_log_retention_months]"
+                               value="<?php echo esc_attr( isset($consent['consent_log_retention_months']) ? (int) $consent['consent_log_retention_months'] : 24 ); ?>"
+                               class="small-text"
+                               min="6"
+                               max="60" />
+                        <p class="description"><?php echo esc_html__('6-60 måneder, standard 24. Ældre logposter slettes automatisk.', 'trackwp'); ?></p>
                     </td>
                 </tr>
             </table>
@@ -1144,6 +1325,72 @@ $has_woocommerce = class_exists('WooCommerce');
 
             <?php submit_button( __('Gem samtykke-indstillinger', 'trackwp') ); ?>
         </form>
+
+        <!-- Consent log: retention (above), count, CSV export, ID lookup -->
+        <div class="trackwp-consent-log">
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Samtykkelog', 'trackwp'); ?></h2>
+            <?php if ( ! class_exists( 'TrackWP_Consent_Log' ) ) : ?>
+                <p class="description"><?php echo esc_html__('Samtykkeloggen er ikke tilgængelig endnu (kommer i denne opgradering).', 'trackwp'); ?></p>
+            <?php else :
+                $consent_log_count = method_exists( 'TrackWP_Consent_Log', 'count_rows' ) ? (int) TrackWP_Consent_Log::count_rows() : 0;
+            ?>
+                <p>
+                    <?php
+                    echo esc_html( sprintf(
+                        /* translators: %s: number of logged rows */
+                        __( '%s logposter gemt.', 'trackwp' ),
+                        number_format_i18n( $consent_log_count )
+                    ) );
+                    ?>
+                </p>
+                <p>
+                    <a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=trackwp_consent_export' ), 'trackwp_consent_export' ) ); ?>">
+                        <?php echo esc_html__( 'Eksportér som CSV', 'trackwp' ); ?>
+                    </a>
+                </p>
+
+                <h3><?php echo esc_html__( 'Slå et samtykke-ID op', 'trackwp' ); ?></h3>
+                <form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>">
+                    <input type="hidden" name="page" value="trackwp" />
+                    <input type="text" name="trackwp_consent_lookup" class="regular-text" placeholder="<?php echo esc_attr__( 'consent_id (uuid4)', 'trackwp' ); ?>" value="<?php echo esc_attr( isset($_GET['trackwp_consent_lookup']) ? sanitize_text_field( wp_unslash($_GET['trackwp_consent_lookup']) ) : '' ); ?>" />
+                    <button type="submit" class="button"><?php echo esc_html__( 'Slå op', 'trackwp' ); ?></button>
+                </form>
+                <?php if ( ! empty( $_GET['trackwp_consent_lookup'] ) ) :
+                    $lookup_id   = sanitize_text_field( wp_unslash( $_GET['trackwp_consent_lookup'] ) );
+                    // find_by_consent_id() returns the full history (set/update/withdraw), oldest first.
+                    $lookup_rows = TrackWP_Settings::lookup_consent_id( $lookup_id );
+                    ?>
+                    <?php if ( $lookup_rows ) : ?>
+                        <table class="widefat striped" style="margin-top:12px;">
+                            <thead><tr>
+                                <th><?php esc_html_e( 'Tidspunkt', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Handling', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Statistik', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Marketing', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Præferencer', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Version', 'trackwp' ); ?></th>
+                                <th><?php esc_html_e( 'Kilde', 'trackwp' ); ?></th>
+                            </tr></thead>
+                            <tbody>
+                            <?php foreach ( $lookup_rows as $row ) : $row = (array) $row; ?>
+                                <tr>
+                                    <td><?php echo esc_html( isset( $row['created_at'] ) ? $row['created_at'] : '' ); ?></td>
+                                    <td><?php echo esc_html( isset( $row['event_type'] ) ? $row['event_type'] : '' ); ?></td>
+                                    <td><?php echo esc_html( ! empty( $row['statistics'] ) ? __( 'Ja', 'trackwp' ) : __( 'Nej', 'trackwp' ) ); ?></td>
+                                    <td><?php echo esc_html( ! empty( $row['marketing'] ) ? __( 'Ja', 'trackwp' ) : __( 'Nej', 'trackwp' ) ); ?></td>
+                                    <td><?php echo esc_html( ! empty( $row['personalisation'] ) ? __( 'Ja', 'trackwp' ) : __( 'Nej', 'trackwp' ) ); ?></td>
+                                    <td><?php echo esc_html( isset( $row['consent_version'] ) ? $row['consent_version'] : '' ); ?></td>
+                                    <td><?php echo esc_html( isset( $row['source'] ) ? $row['source'] : '' ); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    <?php else : ?>
+                        <p class="description"><?php echo esc_html__( 'Intet fundet for dette samtykke-ID.', 'trackwp' ); ?></p>
+                    <?php endif; ?>
+                <?php endif; ?>
+            <?php endif; ?>
+        </div>
 
         <!-- Cookie declaration: auto-scan reference + custom editor -->
         <div class="trackwp-cookie-declaration">
@@ -1306,6 +1553,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Aktivér', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[first_party_cookie_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[first_party_cookie_enabled]"
                                    value="1"
@@ -1340,6 +1588,22 @@ $has_woocommerce = class_exists('WooCommerce');
                                max="24" />
                     </td>
                 </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="advanced_cookie_domain"><?php echo esc_html__('Cookie-domæne', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <input type="text"
+                               id="advanced_cookie_domain"
+                               name="trackwp_advanced[cookie_domain]"
+                               value="<?php echo esc_attr( isset($advanced['cookie_domain']) ? $advanced['cookie_domain'] : '' ); ?>"
+                               class="regular-text"
+                               placeholder="eksempel.co.uk" />
+                        <p class="description">
+                            <?php echo esc_html__('Kun nødvendigt hvis dit domæne har en flerdelt endelse (fx co.uk, com.au). Bruges til at afgøre det registrerbare domæne for cookies (K7). Lad stå tomt ellers.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
             </table>
 
             <h2 class="trackwp-section-title"><?php echo esc_html__('Consent Mode v2', 'trackwp'); ?></h2>
@@ -1348,6 +1612,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Cookieløse pings', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[consent_mode_cookieless_pings]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[consent_mode_cookieless_pings]"
                                    value="1"
@@ -1360,6 +1625,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Annoncesignaler', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[consent_mode_ad_signals]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[consent_mode_ad_signals]"
                                    value="1"
@@ -1399,6 +1665,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Jeg bruger GTM på dette site', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[uses_gtm]" value="0" />
                             <input type="checkbox" id="trackwp_i_use_gtm" name="trackwp_advanced[uses_gtm]" value="1" <?php checked( ! empty($advanced['uses_gtm']) ); ?> />
                             <?php echo esc_html__('Vælg automatisk "Kun server"-tilstand ovenfor.', 'trackwp'); ?>
                         </label>
@@ -1434,6 +1701,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Log til fil', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[debug_log]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[debug_log]"
                                    value="1"
@@ -1446,6 +1714,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Konsoloutput', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[debug_console]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[debug_console]"
                                    value="1"
@@ -1462,6 +1731,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Batching', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[batching_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[batching_enabled]"
                                    value="1"
@@ -1474,6 +1744,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Førsteparts-loader', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[first_party_loader_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[first_party_loader_enabled]"
                                    value="1"
@@ -1490,12 +1761,87 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('GA4 User ID', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[ga4_user_id_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[ga4_user_id_enabled]"
                                    value="1"
                                    <?php checked( ! empty($advanced['ga4_user_id_enabled']) ); ?> />
                             <?php echo esc_html__('Send User ID til GA4 når en bruger er logget ind (forbedrer cross-device tracking).', 'trackwp'); ?>
                         </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="advanced_default_phone_country"><?php echo esc_html__('Standard-landekode for telefon', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <input type="text"
+                               id="advanced_default_phone_country"
+                               name="trackwp_advanced[default_phone_country]"
+                               value="<?php echo esc_attr( isset($advanced['default_phone_country']) ? $advanced['default_phone_country'] : '' ); ?>"
+                               class="small-text"
+                               maxlength="2"
+                               style="text-transform:uppercase;"
+                               placeholder="DK" />
+                        <p class="description">
+                            <?php echo esc_html__('ISO-2 landekode (fx DK, SE, DE). Bruges til at normalisere telefonnumre uden internationalt præfiks til Googles forbedrede konverteringer. Tom betyder: brug WooCommerce-basislandet, ellers DK.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Kundedata (EC/AM)', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php echo esc_html__('Del kundedata', 'trackwp'); ?></th>
+                    <td>
+                        <label>
+                            <input type="hidden" name="trackwp_advanced[customer_data_sharing]" value="0" />
+                            <input type="checkbox"
+                                   name="trackwp_advanced[customer_data_sharing]"
+                                   value="1"
+                                   <?php checked( TrackWP_Hash::customer_data_sharing_enabled() ); ?> />
+                            <?php echo esc_html__('Send hashede kundedata (e-mail, telefon, navn, adresse) til Googles forbedrede konverteringer og Metas Advanced Matching.', 'trackwp'); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo esc_html__('Slået til som standard. Slå fra hvis sitet opererer i en følsom branche (sundhed, økonomi/kredit, seksualitet, religion, politik m.fl.) — Googles kundedatapolitik forbyder forbedrede konverteringer på følsomme områder.', 'trackwp'); ?>
+                            <a href="https://support.google.com/adspolicy/answer/7475709" target="_blank" rel="noopener noreferrer"><?php echo esc_html__('Læs Googles kundedatapolitik', 'trackwp'); ?></a>.
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <h2 class="trackwp-section-title"><?php echo esc_html__('Betroede proxyer', 'trackwp'); ?></h2>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="advanced_trusted_proxies"><?php echo esc_html__('CIDR-liste', 'trackwp'); ?></label>
+                    </th>
+                    <td>
+                        <textarea id="advanced_trusted_proxies"
+                                  name="trackwp_advanced[trusted_proxies]"
+                                  class="large-text code"
+                                  rows="4"
+                                  placeholder="10.0.0.0/8"><?php echo esc_textarea( isset($advanced['trusted_proxies']) && is_array($advanced['trusted_proxies']) ? implode("\n", $advanced['trusted_proxies']) : '' ); ?></textarea>
+                        <p class="description">
+                            <?php echo esc_html__('Én CIDR-blok pr. linje (IPv4 eller IPv6). Kun IP-adresser i denne liste (eller Cloudflares, se nedenfor) har lov til at sætte CF-Connecting-IP/X-Forwarded-For — ellers bruges REMOTE_ADDR direkte.', 'trackwp'); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php echo esc_html__('Cloudflare', 'trackwp'); ?></th>
+                    <td>
+                        <label>
+                            <input type="hidden" name="trackwp_advanced[trusted_proxies_cloudflare]" value="0" />
+                            <input type="checkbox"
+                                   name="trackwp_advanced[trusted_proxies_cloudflare]"
+                                   value="1"
+                                   <?php checked( ! empty($advanced['trusted_proxies_cloudflare']) ); ?> />
+                            <?php echo esc_html__('Stol på Cloudflares publicerede IP-ranges (bruges kun hvis sitet reelt ligger bag Cloudflare).', 'trackwp'); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo esc_html__('Kilde: https://www.cloudflare.com/ips/', 'trackwp'); ?>
+                        </p>
                     </td>
                 </tr>
             </table>
@@ -1506,6 +1852,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('Gem leveringsstatus', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[delivery_log_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[delivery_log_enabled]"
                                    value="1"
@@ -1551,6 +1898,7 @@ $has_woocommerce = class_exists('WooCommerce');
                     <th scope="row"><?php echo esc_html__('CAPI debug-logging', 'trackwp'); ?></th>
                     <td>
                         <label>
+                            <input type="hidden" name="trackwp_advanced[capi_debug_logging_enabled]" value="0" />
                             <input type="checkbox"
                                    name="trackwp_advanced[capi_debug_logging_enabled]"
                                    value="1"
@@ -1726,6 +2074,7 @@ $has_woocommerce = class_exists('WooCommerce');
                             <input type="hidden" name="action" value="trackwp_export" />
                             <?php wp_nonce_field( 'trackwp_export' ); ?>
                             <label style="display:block; margin-bottom: 8px;">
+                                <input type="hidden" name="include_secrets" value="0" />
                                 <input type="checkbox" name="include_secrets" value="1" />
                                 <?php echo esc_html__( 'Inkludér API secrets (base64) — fjern hvis du deler filen', 'trackwp' ); ?>
                             </label>

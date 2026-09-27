@@ -1,33 +1,51 @@
 (function(window, document) {
     'use strict';
 
-    // Config from wp_localize_script
+    // Config from wp_localize_script (K8).
     var config = window.trackwpConfig || {};
     if (!config.restUrl) return;
 
     var events = config.events || [];
     var googleAds = config.googleAds || {};
-    var debug = !!config.debug;
     var cookieName = config.cookieName || '_twp_cid';
     var endpointSlug = config.endpointSlug || 'event';
     var dedupMode = config.dedupMode || 'client_and_server';
+    // Flags are strict (review class A): only a real boolean true enables,
+    // anything else (missing, "", "1", 1) is off.
+    var customerDataSharing = config.customerDataSharing === true;
+    var fpCookieEnabled = config.fpCookieEnabled === true;
+    var requireActiveConsent = config.requireActiveConsent === true;
+    var defaultPhoneCountry = String(config.defaultPhoneCountry || 'DK').toUpperCase();
+    var metaEventMap = config.metaEventMap || {};
 
-    // Per-pageload client id used when we may not persist a cookie (see getClientId).
-    var ephemeralClientId = null;
+    var CLICK_ID_RE = /^[A-Za-z0-9_\-]{1,200}$/;
+    var EVENT_ID_RE = /^evt_[a-f0-9]{16,64}$/;
+    var CLICK_TTL_MS = 90 * 86400000;
 
     // === HELPERS ===
 
+    function safeDecode(value) {
+        if (value === null || value === undefined) return '';
+        var str = String(value);
+        try {
+            return decodeURIComponent(str.replace(/\+/g, ' '));
+        } catch (e) {
+            return str;
+        }
+    }
+
     function getCookie(name) {
-        var match = document.cookie.match(new RegExp('(^| )' + name + '=([^;]+)'));
-        return match ? decodeURIComponent(match[2]) : null;
+        var parts = (document.cookie || '').split(';');
+        for (var i = 0; i < parts.length; i++) {
+            var p = parts[i].replace(/^\s+/, '');
+            if (p.indexOf(name + '=') === 0) {
+                return safeDecode(p.substring(name.length + 1));
+            }
+        }
+        return '';
     }
 
-    function trackwpGetCookie(name) {
-        var m = document.cookie.match('(^|;)\\s*' + name + '\\s*=\\s*([^;]+)');
-        return m ? decodeURIComponent(m.pop()) : '';
-    }
-
-    function trackwpGetUrlParam(name) {
+    function getUrlParam(name) {
         try {
             return new URLSearchParams(window.location.search).get(name) || '';
         } catch (e) {
@@ -35,245 +53,398 @@
         }
     }
 
-    function normalizePhone(value) {
-        if (!value) return '';
-        return String(value).replace(/\D/g, '');
+    // Debug only when the site allows it AND the visitor asks for it.
+    var debug = config.debugAllowed === true && getUrlParam('trackwp_debug') === '1';
+
+    function log() {
+        if (!debug || !window.console) return;
+        try {
+            var args = Array.prototype.slice.call(arguments);
+            args.unshift('[TrackWP]');
+            window.console.log.apply(window.console, args);
+        } catch (e) {}
     }
 
-    // Country-code-qualified digits for hashing (mirrored server-side in PHP —
-    // TrackWP_Hash::normalize_enhanced() MUST produce the exact same output):
-    // raw starts with '+' → digits as-is; digits start with '00' → strip the 00;
-    // exactly 8 digits → assume DK and prefix '45'; otherwise digits as-is.
-    function phoneCcDigits(value) {
-        if (!value) return '';
-        var raw = String(value).trim();
-        var digits = raw.replace(/\D/g, '');
-        if (!digits) return '';
-        if (raw.charAt(0) === '+') return digits;
-        if (digits.indexOf('00') === 0) return digits.slice(2);
-        if (digits.length === 8) return '45' + digits;
-        return digits;
-    }
-
-    function normalizeEmail(value) {
-        if (!value) return '';
-        value = String(value).toLowerCase().trim();
-        var parts = value.split('@');
-        if (parts.length !== 2) return value;
-        var local = parts[0];
-        var domain = parts[1];
-        if (domain === 'gmail.com' || domain === 'googlemail.com') {
-            local = local.split('+')[0].split('.').join('');
+    function fireEvent(name, detail) {
+        var evt;
+        try {
+            evt = new window.CustomEvent(name, { detail: detail });
+        } catch (e) {
+            try {
+                evt = document.createEvent('CustomEvent');
+                evt.initCustomEvent(name, true, true, detail);
+            } catch (e2) {
+                evt = { type: name, detail: detail };
+            }
         }
-        return local + '@' + domain;
+        document.dispatchEvent(evt);
     }
 
-    // Meta-style email normalization: trim + lowercase ONLY (no gmail dot/plus strip).
-    function normalizeEmailMeta(value) {
-        if (!value) return '';
-        return String(value).trim().toLowerCase();
-    }
-
-    function setCookie(name, value, days) {
+    // Host-only unless a domain is given (K7/R17: never Domain=<host>).
+    function setCookie(name, value, days, domain) {
         var d = new Date();
         d.setTime(d.getTime() + days * 86400000);
         document.cookie = name + '=' + encodeURIComponent(value) +
-            ';expires=' + d.toUTCString() + ';path=/;SameSite=Lax' +
+            ';expires=' + d.toUTCString() + ';path=/' +
+            (domain ? ';domain=' + domain : '') + ';SameSite=Lax' +
             (window.location.protocol === 'https:' ? ';Secure' : '');
     }
 
-    // === CLIENT ID ===
+    function expireCookie(name, domain) {
+        document.cookie = name + '=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/' +
+            (domain ? ';domain=' + domain : '') + ';SameSite=Lax';
+    }
+
+    // === CONSENT (K3: the reader is the ONLY source) ===
+
+    function readConsent() {
+        var reader = window.trackwpConsentReader;
+        var c = null;
+        if (reader && typeof reader.read === 'function') {
+            try { c = reader.read(); } catch (e) { c = null; }
+        }
+        if (!c || typeof c !== 'object') {
+            return { has: false, statistics: false, marketing: false, personalisation: false, v: 0, id: '' };
+        }
+        return {
+            has: true,
+            statistics: c.statistics === true,
+            marketing: c.marketing === true,
+            personalisation: c.personalisation === true,
+            v: parseInt(c.v, 10) || 0,
+            id: typeof c.id === 'string' ? c.id.substring(0, 36) : ''
+        };
+    }
+
+    // Bumped on every revocation; async work started under an older
+    // generation (hashing) is dropped when it resolves.
+    var consentGeneration = 0;
+
+    // === URL / TITLE CLEANING (K6) ===
+    // The ONE JS cleaner is window.trackwpPrivacy (TrackWP_Privacy::cleaner_js(),
+    // printed inline on wp_head priority 1). No local copy. Without it,
+    // page URLs are reduced to origin + path and titles are not sent.
+
+    function privacy() {
+        var p = window.trackwpPrivacy;
+        return (p && typeof p.cleanUrl === 'function' && typeof p.cleanTitle === 'function') ? p : null;
+    }
+
+    function originAndPath(url) {
+        var str = String(url || '');
+        var cut = str.search(/[?#]/);
+        return cut === -1 ? str : str.substring(0, cut);
+    }
+
+    /**
+     * @param {string}  url
+     * @param {boolean} keepClickIds  true only with marketing consent
+     * @param {boolean} onlyPath      true without analytics and marketing
+     */
+    function cleanUrl(url, keepClickIds, onlyPath) {
+        if (!url) return '';
+        var p = privacy();
+        if (!p) return originAndPath(url);
+        var cleaned = '';
+        try { cleaned = String(p.cleanUrl(String(url), !keepClickIds) || ''); } catch (e) { return originAndPath(url); }
+        return onlyPath ? originAndPath(cleaned) : cleaned;
+    }
+
+    // Returns null when the text cannot be cleaned (no cleaner available).
+    function cleanTitle(title) {
+        var p = privacy();
+        if (!p) return null;
+        try { return String(p.cleanTitle(String(title || '')) || ''); } catch (e) { return null; }
+    }
+
+    // === ENGAGEMENT TIME (K8) ===
+
+    function nowMs() {
+        try {
+            if (window.performance && typeof window.performance.now === 'function') return window.performance.now();
+        } catch (e) {}
+        return Date.now();
+    }
+
+    var engagedAccum = 0;
+    var visibleSince = (document.visibilityState === 'hidden') ? null : nowMs();
+
+    document.addEventListener('visibilitychange', function() {
+        if (document.visibilityState === 'visible') {
+            if (visibleSince === null) visibleSince = nowMs();
+        } else if (visibleSince !== null) {
+            engagedAccum += nowMs() - visibleSince;
+            visibleSince = null;
+        }
+    });
+
+    function takeEngagedMs() {
+        var total = engagedAccum;
+        if (visibleSince !== null) {
+            var n = nowMs();
+            total += n - visibleSince;
+            visibleSince = n;
+        }
+        engagedAccum = 0;
+        total = Math.round(total);
+        if (total < 0) total = 0;
+        if (total > 3600000) total = 3600000;
+        return total;
+    }
+
+    // === CLICK IDS (RAM until marketing, K7) ===
+
+    var clickIds = {};
+    var clickIdsPersisted = false;
+
+    function captureClickIds() {
+        var names = ['gclid', 'gbraid', 'wbraid', 'fbclid'];
+        for (var i = 0; i < names.length; i++) {
+            var v = getUrlParam(names[i]);
+            if (v && CLICK_ID_RE.test(v)) clickIds[names[i]] = v;
+        }
+    }
+
+    function readClickCookie() {
+        var raw = getCookie('_twp_click');
+        if (!raw) return {};
+        try {
+            var data = JSON.parse(raw);
+            return (data && typeof data === 'object') ? data : {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function fbcFrom(fbclid, ms) {
+        return 'fb.1.' + ms + '.' + fbclid;
+    }
+
+    function persistClickIds() {
+        if (clickIdsPersisted) return;
+        var c = readConsent();
+        if (!c.marketing) return;
+        var now = Date.now();
+        var stored = readClickCookie();
+        var changed = false;
+        var keys = ['gclid', 'gbraid', 'wbraid'];
+        for (var i = 0; i < keys.length; i++) {
+            if (clickIds[keys[i]]) {
+                stored[keys[i]] = { v: clickIds[keys[i]], ts: now };
+                changed = true;
+            }
+        }
+        if (changed) setCookie('_twp_click', JSON.stringify(stored), 90);
+        if (clickIds.fbclid) {
+            clickIds.fbc = fbcFrom(clickIds.fbclid, now);
+            setCookie('_fbc', clickIds.fbc, 90, config.cookieDomain || '');
+        }
+        clickIdsPersisted = true;
+    }
+
+    function clickIdFor(name) {
+        if (clickIds[name]) return clickIds[name];
+        var stored = readClickCookie()[name];
+        if (stored && stored.v && CLICK_ID_RE.test(stored.v) && (Date.now() - (parseInt(stored.ts, 10) || 0)) < CLICK_TTL_MS) {
+            return String(stored.v);
+        }
+        if (name === 'gclid') {
+            var p = getCookie('_gcl_aw').split('.');
+            if (p.length >= 3 && CLICK_ID_RE.test(p[2])) return p[2];
+        }
+        return '';
+    }
+
+    // === CLIENT / SESSION ID (analytics only) ===
+
+    var ephemeralClientId = null;
+
+    function fpCookieDays() {
+        var days = parseInt(config.fpCookieDays, 10);
+        if (!(days > 0)) days = (parseInt(config.fpCookieMonths, 10) || 24) * 30;
+        return Math.min(days, 400);
+    }
 
     function getClientId() {
-        // 1. GA4 _ga cookie (preferred — lets server-side events stitch to gtag sessions)
         var ga = getCookie('_ga');
         if (ga) {
             var parts = ga.split('.');
-            if (parts.length >= 3) {
+            if (parts.length >= 3 && /^\d+\.\d+$/.test(parts.slice(2).join('.'))) {
                 return parts.slice(2).join('.');
             }
         }
-
-        // 2. Our first-party cookie — only if it holds a GA4-compatible numeric id.
-        //    Legacy "twp_..." ids are ignored and replaced (GA4 MP can't build sessions from them).
         var cid = getCookie(cookieName);
         if (cid && /^\d+\.\d+$/.test(cid)) return cid;
-
-        // Reuse the ephemeral id within this page load (a real cookie id above still wins).
         if (ephemeralClientId) return ephemeralClientId;
-
-        // 3. Generate new GA4-compatible id: <random int32>.<unix timestamp>
         var newId = Math.floor(Math.random() * 0x7FFFFFFF) + '.' + Math.floor(Date.now() / 1000);
-        // Never persist a client id without statistics consent (ePrivacy) —
-        // fall back to a per-pageload ephemeral id.
-        if (config.fpCookieEnabled !== false && getConsentState().statistics) {
-            setCookie(cookieName, newId, (parseInt(config.fpCookieMonths, 10) || 24) * 30);
+        if (fpCookieEnabled) {
+            setCookie(cookieName, newId, fpCookieDays());
         } else {
             ephemeralClientId = newId;
         }
         return newId;
     }
 
-    // === SESSION ID ===
-
     function getSessionId() {
         var key = 'trackwp_sid';
         var sid = null;
-        try {
-            sid = sessionStorage.getItem(key);
-        } catch(e) {}
-        // Ignore legacy "ses_..." ids — GA4 requires a numeric session_id.
-        if (sid && !/^\d+$/.test(sid)) sid = null;
+        try { sid = window.sessionStorage.getItem(key); } catch (e) {}
+        if (sid && !/^\d{1,12}$/.test(sid)) sid = null;
         if (!sid) {
             sid = String(Math.floor(Date.now() / 1000));
-            try {
-                sessionStorage.setItem(key, sid);
-            } catch(e) {}
+            try { window.sessionStorage.setItem(key, sid); } catch (e) {}
         }
         return sid;
     }
 
+    function collectGaSessionCookies() {
+        var cookies = [];
+        var raw = document.cookie || '';
+        var re = /(?:^|;\s*)_ga_([A-Z0-9]+)=([^;]+)/g;
+        var m;
+        while ((m = re.exec(raw)) !== null) {
+            cookies.push({ id: m[1], value: safeDecode(m[2]) });
+        }
+        return cookies;
+    }
+
     // === ID GENERATORS ===
 
-    function generateUUID() {
-        try {
-            return crypto.randomUUID().replace(/-/g, '').substring(0, 32);
-        } catch(e) {
-            // Fallback for older browsers
-            var s = '';
-            for (var i = 0; i < 32; i++) {
-                s += Math.floor(Math.random() * 16).toString(16);
-            }
-            return s;
-        }
-    }
-
     function generateEventId() {
-        return 'evt_' + generateUUID();
+        var s = '';
+        try {
+            s = window.crypto.randomUUID().replace(/-/g, '');
+        } catch (e) {
+            for (var i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
+        }
+        return 'evt_' + s.substring(0, 32);
     }
 
-    // === SHA-256 (for Enhanced Conversions) ===
+    // === NORMALISATION (K8, mirrors TrackWP_Hash; shared vectors R19) ===
+
+    var PHONE_COUNTRIES = {
+        DK: ['45', null], NO: ['47', null], SE: ['46', '0'], FI: ['358', '0'],
+        DE: ['49', '0'], GB: ['44', '0'], NL: ['31', '0'], FR: ['33', '0'], IS: ['354', null]
+    };
+
+    function normGoogleEmail(value) {
+        if (!value) return '';
+        var email = String(value).replace(/^\s+|\s+$/g, '').toLowerCase();
+        var at = email.lastIndexOf('@');
+        if (at <= 0) return email;
+        var local = email.substring(0, at);
+        var domain = email.substring(at + 1);
+        if (domain === 'gmail.com' || domain === 'googlemail.com') {
+            local = local.split('+')[0].split('.').join('');
+        }
+        return local + '@' + domain;
+    }
+
+    function normMetaEmail(value) {
+        if (!value) return '';
+        return String(value).replace(/^\s+|\s+$/g, '').toLowerCase();
+    }
+
+    // E.164 with '+', or '' when the number cannot be qualified.
+    function normPhoneE164(value, country) {
+        if (!value) return '';
+        var raw = String(value).replace(/^\s+|\s+$/g, '');
+        var digits = raw.replace(/\D/g, '');
+        if (!digits) return '';
+        if (raw.charAt(0) === '+') return '+' + digits;
+        if (digits.indexOf('00') === 0) {
+            digits = digits.substring(2);
+            return digits ? '+' + digits : '';
+        }
+        var entry = PHONE_COUNTRIES[String(country || defaultPhoneCountry).toUpperCase()];
+        if (!entry) return '';
+        if (entry[1] && digits.indexOf(entry[1]) === 0) digits = digits.substring(entry[1].length);
+        return digits ? '+' + entry[0] + digits : '';
+    }
+
+    // Meta ph: the E.164 number without '+'.
+    function normMetaPhone(value, country) {
+        var e164 = normPhoneE164(value, country);
+        return e164 ? e164.substring(1) : '';
+    }
+
+    // === SHA-256 ===
+
+    function utf8Bytes(str) {
+        if (typeof window.TextEncoder === 'function') return new window.TextEncoder().encode(str);
+        var bin = unescape(encodeURIComponent(str));
+        var out = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+        return out;
+    }
 
     function hashValue(value) {
         if (!value) return Promise.resolve(null);
-
-        if (window.crypto && window.crypto.subtle) {
-            var encoder = new TextEncoder();
-            var data = encoder.encode(value);
-            return crypto.subtle.digest('SHA-256', data).then(function(buffer) {
-                var arr = new Uint8Array(buffer);
-                var hex = '';
-                for (var i = 0; i < arr.length; i++) {
-                    hex += ('0' + arr[i].toString(16)).slice(-2);
-                }
-                return hex;
-            });
-        }
-
-        // No crypto.subtle — return null (caller falls back to raw value for server-side rehash)
-        return Promise.resolve(null);
+        var subtle = window.crypto && window.crypto.subtle;
+        if (!subtle) return Promise.resolve(null);
+        return subtle.digest('SHA-256', utf8Bytes(value)).then(function(buffer) {
+            var arr = new Uint8Array(buffer);
+            var hex = '';
+            for (var i = 0; i < arr.length; i++) hex += ('0' + arr[i].toString(16)).slice(-2);
+            return hex;
+        }, function() { return null; });
     }
 
+    // K2a keys: email_sha256 (Google), email_meta_sha256 (Meta),
+    // phone_e164_sha256 (Google, '+'), phone_sha256 (Meta, digits).
     function hashUserData(data) {
-        if (!data) return Promise.resolve({});
-
         var hasSubtle = !!(window.crypto && window.crypto.subtle);
-        var promises = [];
         var keys = [];
-        var rawFallback = {};
-
-        if (data.email) {
-            var normalizedEmail = normalizeEmail(data.email);
-            if (normalizedEmail) {
-                if (hasSubtle) {
-                    // Google-normalized (gmail dot/plus strip) for Google Ads EC
-                    keys.push('email_sha256');
-                    promises.push(hashValue(normalizedEmail));
-                    // Meta-normalized (trim+lowercase only) for Meta CAPI
-                    keys.push('email_meta_sha256');
-                    promises.push(hashValue(normalizeEmailMeta(data.email)));
-                } else {
-                    // Server rehashes via TrackWP_Hash::normalize_enhanced()
-                    rawFallback.email = normalizedEmail;
-                }
-            }
+        var promises = [];
+        var out = {};
+        var gEmail = normGoogleEmail(data.email);
+        var e164 = normPhoneE164(data.phone);
+        if (!hasSubtle) {
+            // Server rehashes via TrackWP_Hash::normalize_enhanced().
+            if (data.email) out.email = normMetaEmail(data.email);
+            if (e164) out.phone = e164;
+            return Promise.resolve(out);
         }
-        if (data.phone) {
-            var ccDigits = phoneCcDigits(data.phone);
-            if (ccDigits) {
-                if (hasSubtle) {
-                    keys.push('phone_sha256');
-                    promises.push(hashValue(ccDigits));
-                    // E.164 variant ('+' prefixed) for platforms that hash with '+'
-                    keys.push('phone_e164_sha256');
-                    promises.push(hashValue('+' + ccDigits));
-                } else {
-                    // Server rehashes via TrackWP_Hash::normalize_enhanced()
-                    rawFallback.phone = normalizePhone(data.phone);
-                }
-            }
+        if (gEmail) {
+            keys.push('email_sha256'); promises.push(hashValue(gEmail));
+            keys.push('email_meta_sha256'); promises.push(hashValue(normMetaEmail(data.email)));
         }
-
+        if (e164) {
+            keys.push('phone_e164_sha256'); promises.push(hashValue(e164));
+            keys.push('phone_sha256'); promises.push(hashValue(e164.substring(1)));
+        }
         return Promise.all(promises).then(function(results) {
-            var hashed = {};
             for (var i = 0; i < keys.length; i++) {
-                if (results[i]) {
-                    hashed[keys[i]] = results[i];
-                }
+                if (results[i]) out[keys[i]] = results[i];
             }
-            if (rawFallback.email) hashed.email = rawFallback.email;
-            if (rawFallback.phone) hashed.phone = rawFallback.phone;
-            return hashed;
+            return out;
         });
     }
 
-    // === CONSENT STATE ===
-
-    function getConsentState() {
-        if (window.trackwpConsent && typeof window.trackwpConsent.getState === 'function') {
-            return window.trackwpConsent.getState();
-        }
-        // consent.js may not have executed yet (both scripts load async) —
-        // fall back to the JSON consent cookie it writes.
-        var raw = getCookie('trackwp_consent');
-        if (raw) {
-            try {
-                var data = JSON.parse(raw);
-                if (data && typeof data === 'object') {
-                    // Enforce consent version: a policy change invalidates old consent.
-                    // consentVersion 0/undefined means "skip the version check".
-                    var requiredVersion = parseInt(config.consentVersion, 10) || 0;
-                    if (requiredVersion > 0 && data.v !== requiredVersion) {
-                        return { necessary: true, statistics: false, marketing: false, personalisation: false };
-                    }
-                    return {
-                        necessary: true,
-                        statistics: !!data.statistics,
-                        marketing: !!data.marketing,
-                        personalisation: !!data.personalisation
-                    };
-                }
-            } catch (e) {}
-        }
-        return { necessary: true, statistics: false, marketing: false, personalisation: false };
+    // Enhanced input is read synchronously from the form at dispatch time,
+    // and only with marketing consent and customer data sharing enabled.
+    function readFormEnhanced(form) {
+        if (!form || typeof form.querySelector !== 'function') return null;
+        var emailEl = form.querySelector('[type="email"]');
+        var phoneEl = form.querySelector('[type="tel"]');
+        var email = emailEl && emailEl.value ? String(emailEl.value) : '';
+        var phone = phoneEl && phoneEl.value ? String(phoneEl.value) : '';
+        return (email || phone) ? { email: email, phone: phone } : null;
     }
 
-    // === FIND EVENT CONFIG ===
+    function enhancedAllowed(c) {
+        return !!(c.marketing && customerDataSharing);
+    }
+
+    // === EVENT CONFIG ===
 
     function findEventConfig(eventName) {
         for (var i = 0; i < events.length; i++) {
-            if (events[i].name === eventName) {
-                return events[i];
-            }
+            if (events[i].name === eventName) return events[i];
         }
         return null;
     }
 
-    // Per-event platform routing, mirroring the server-side rule in
-    // class-trackwp-proxy.php. A missing send_to map means "legacy config" and
-    // keeps the old send-everywhere behaviour; an explicit false must stop the
-    // client-side tag, or the Pixel/Ads conversion fires for a platform the
-    // admin deliberately routed the event away from.
     function sendsTo(eventConfig, platform) {
         if (!eventConfig) return false;
         var routing = eventConfig.send_to;
@@ -283,164 +454,215 @@
 
     // === DUPLICATE-DISPATCH GUARD ===
 
-    // Themes and menu/accessibility scripts routinely re-dispatch a synthetic
-    // click (element.click()) from inside their own handler. That produces a
-    // second, distinct Event object, so a per-Event flag cannot catch it — our
-    // capture listener simply sees a fresh click and sends the event twice.
-    // The css_click and file_download listeners are also independent and can
-    // both match the same element. A short window keyed on event name + target
-    // collapses both cases without affecting genuinely repeated interactions.
     var DEDUP_WINDOW_MS = 500;
     var recentDispatch = {};
 
-    function dedupKey(eventName, el) {
-        var id = '';
-        if (el && typeof el.getAttribute === 'function') {
-            id = el.getAttribute('href') || el.getAttribute('id') || '';
-        }
-        if (!id && el && el.tagName) {
-            id = el.tagName + ':' + (el.className || '');
-        }
-        return eventName + '|' + id;
-    }
-
     function isDuplicateDispatch(eventName, el) {
         var now = Date.now();
-        var key = dedupKey(eventName, el);
+        var id = '';
+        if (el && typeof el.getAttribute === 'function') id = el.getAttribute('href') || el.getAttribute('id') || '';
+        if (!id && el && el.tagName) id = el.tagName + ':' + (el.className || '');
+        var key = eventName + '|' + id;
         for (var k in recentDispatch) {
-            if (Object.prototype.hasOwnProperty.call(recentDispatch, k) &&
-                (now - recentDispatch[k]) > DEDUP_WINDOW_MS) {
+            if (Object.prototype.hasOwnProperty.call(recentDispatch, k) && (now - recentDispatch[k]) > DEDUP_WINDOW_MS) {
                 delete recentDispatch[k];
             }
         }
         if (recentDispatch[key] !== undefined && (now - recentDispatch[key]) < DEDUP_WINDOW_MS) {
-            if (debug) console.log('[TrackWP] duplicate suppressed:', eventName);
+            log('duplicate suppressed:', eventName);
             return true;
         }
         recentDispatch[key] = now;
         return false;
     }
 
-    // === GA4 SESSION COOKIE SCAN ===
+    // === PAYLOAD (K2 categories, filtered by a FRESH read at dispatch) ===
 
-    function collectGaSessionCookies() {
-        var cookies = [];
-        var raw = document.cookie || '';
-        var re = /(?:^|;\s*)_ga_([A-Z0-9]+)=([^;]+)/g;
-        var m;
-        while ((m = re.exec(raw)) !== null) {
-            try {
-                cookies.push({ id: m[1], value: decodeURIComponent(m[2]) });
-            } catch (e) {
-                cookies.push({ id: m[1], value: m[2] });
-            }
+    function applyCategoryFilter(payload, c) {
+        var analytics = c.statistics;
+        var marketing = c.marketing;
+        payload.consent = { analytics: analytics, marketing: marketing, v: c.has ? c.v : (parseInt(config.consentVersion, 10) || 0) };
+        if (c.id) payload.consent.id = c.id;
+        payload.page_url = cleanUrl(window.location.href, marketing, !analytics && !marketing);
+        var title = cleanTitle(document.title);
+        if (title !== null) payload.page_title = title; else delete payload.page_title;
+
+        if (analytics || marketing) {
+            payload.user_agent = window.navigator ? String(window.navigator.userAgent || '').substring(0, 500) : '';
+        } else {
+            delete payload.user_agent;
         }
-        return cookies;
+
+        if (analytics) {
+            payload.client_id = getClientId();
+            payload.session_id = getSessionId();
+            payload._ga = getCookie('_ga');
+            payload.ga_session_cookies = collectGaSessionCookies();
+            if (document.referrer) payload.page_referrer = cleanUrl(document.referrer, marketing, false);
+        } else {
+            delete payload.client_id;
+            delete payload.session_id;
+            delete payload._ga;
+            delete payload.ga_session_cookies;
+            delete payload.page_referrer;
+            delete payload.engaged_ms;
+        }
+
+        if (marketing) {
+            payload.fbp = getCookie('_fbp');
+            payload.fbc = getCookie('_fbc') || clickIds.fbc || (clickIds.fbclid ? fbcFrom(clickIds.fbclid, Date.now()) : '');
+            var gclid = clickIdFor('gclid');
+            var gbraid = clickIdFor('gbraid');
+            var wbraid = clickIdFor('wbraid');
+            if (gclid) payload.gclid = gclid; else delete payload.gclid;
+            if (gbraid) payload.gbraid = gbraid; else delete payload.gbraid;
+            if (wbraid) payload.wbraid = wbraid; else delete payload.wbraid;
+        } else {
+            delete payload.fbp;
+            delete payload.fbc;
+            delete payload.gclid;
+            delete payload.gbraid;
+            delete payload.wbraid;
+        }
+        if (!enhancedAllowed(c)) delete payload.enhanced;
+        return payload;
     }
 
-    // === DISPATCH ===
-
-    // Firefox <= 132 silently ignores fetch keepalive — detect support so
-    // nav-sends can fall back to sendBeacon (survives page unload).
     var supportsKeepalive = false;
-    try {
-        supportsKeepalive = 'keepalive' in Request.prototype;
-    } catch (e) {}
+    try { supportsKeepalive = 'keepalive' in window.Request.prototype; } catch (e) {}
 
-    function dispatchPayload(payload, isNav) {
+    function dispatchPayload(payload, isNav, requeue) {
         if (dedupMode === 'client_only') return;
+        var c = readConsent();
+        applyCategoryFilter(payload, c);
         var url = config.restUrl + 'trackwp/v1/' + endpointSlug;
-        if (isNav && !supportsKeepalive && navigator.sendBeacon) {
+        var body = JSON.stringify(payload);
+        if (isNav && !supportsKeepalive && window.navigator && window.navigator.sendBeacon) {
             try {
-                // Blob with explicit type — server reads a JSON body either way.
-                if (navigator.sendBeacon(url, new Blob([JSON.stringify(payload)], { type: 'application/json' }))) {
-                    return;
-                }
+                if (window.navigator.sendBeacon(url, new window.Blob([body], { type: 'application/json' }))) return;
             } catch (e) {}
         }
         try {
-            fetch(url, {
+            window.fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(payload),
+                headers: { 'Content-Type': 'application/json' },
+                body: body,
                 keepalive: true,
                 credentials: 'same-origin'
-            }).catch(function() {}); // Silent fail — never block UX
+            }).then(function(res) {
+                if (!res || typeof res.json !== 'function') return null;
+                return res.json().catch(function() { return null; });
+            }).then(function(json) {
+                if (json && json.consent === 'stale_version') {
+                    staleSeen = true;
+                    // consent.js revokes (and clears the queue) first; the
+                    // event is re-queued afterwards so it waits for a new choice.
+                    fireEvent('trackwp:consent_stale', { current_version: json.current_version });
+                    if (requeue) queueEvent(requeue.name, requeue.params, requeue.options, true);
+                }
+            }, function() {});
         } catch (e) {}
     }
 
     function fireKeepalive() {
-        // No consent cookie — nothing to renew.
-        if (!getCookie('trackwp_consent')) return;
-        // Throttle: at most one keepalive per hour per browser.
+        var c = readConsent();
+        if (!c.statistics && !c.marketing) return;
         try {
-            var last = parseInt(localStorage.getItem('trackwp_ka_ts'), 10);
+            var last = parseInt(window.localStorage.getItem('trackwp_ka_ts'), 10);
             if (last && (Date.now() - last) < 3600000) return;
-            localStorage.setItem('trackwp_ka_ts', String(Date.now()));
-        } catch (e) {} // private mode etc. — fall through and send
+            window.localStorage.setItem('trackwp_ka_ts', String(Date.now()));
+        } catch (e) {}
+        var p;
         try {
-            fetch(config.restUrl + 'trackwp/v1/keepalive', {
+            p = window.fetch(config.restUrl + 'trackwp/v1/keepalive', {
                 method: 'POST',
                 credentials: 'same-origin',
                 keepalive: true
-            }).catch(function() {});
-        } catch (e) {}
+            }).then(afterKeepalive, afterKeepalive);
+        } catch (e) {
+            return;
+        }
+        // consent.js waits for this (max 3 s) before a withdraw/downgrade, so
+        // the expiry headers of the withdraw answer always land last (class F).
+        pendingKeepalive = p;
+        if (window.trackwp) window.trackwp.pendingKeepalive = p;
     }
 
-    // Events GA4 and Meta treat as monetary transactions: value and currency
-    // are REQUIRED on these, including when the amount is 0 (a fully
-    // discounted order is still a purchase).
+    var pendingKeepalive = null;
+
+    // A keepalive answer may still land after a withdraw and renew cookies
+    // for a category that is now refused: expire those again.
+    function afterKeepalive() {
+        pendingKeepalive = null;
+        if (window.trackwp) window.trackwp.pendingKeepalive = null;
+        var c = readConsent();
+        var api = window.trackwpConsent;
+        if (api && typeof api.expireTrackingCookies === 'function' && (!c.statistics || !c.marketing)) {
+            api.expireTrackingCookies({ statistics: !c.statistics, marketing: !c.marketing });
+        }
+    }
+
+    // === CLIENT-SIDE TAGS ===
+
     var TRANSACTION_EVENTS = ['purchase', 'refund'];
 
     function isTransactionEvent(eventName) {
         return TRANSACTION_EVENTS.indexOf(eventName) !== -1;
     }
 
-    // Google Ads and GA4 deduplicate on transaction_id. For a shop event that
-    // must be the ORDER NUMBER, not our random per-event id: only then does the
-    // client-side gtag conversion resolve to the same conversion as a later
-    // server-side upload, and only then can a refund be matched to the order.
     function transactionIdFor(payload, eventId) {
-        if (payload.ecommerce && payload.ecommerce.transaction_id) {
-            return String(payload.ecommerce.transaction_id);
-        }
+        if (payload.ecommerce && payload.ecommerce.transaction_id) return String(payload.ecommerce.transaction_id);
         return eventId;
     }
 
-    // Map sanitised GA4-shaped items to Meta's contents spec
-    // (id / quantity / item_price) and return the total quantity alongside.
     function metaContentsFrom(items) {
         var contents = [];
         var numItems = 0;
         for (var i = 0; i < items.length; i++) {
-            var item = items[i];
-            var quantity = parseInt(item.quantity, 10);
+            var quantity = parseInt(items[i].quantity, 10);
             if (!(quantity > 0)) quantity = 1;
             contents.push({
-                id: String(item.item_id || item.item_name || ''),
+                id: String(items[i].item_id || items[i].item_name || ''),
                 quantity: quantity,
-                item_price: parseFloat(item.price) || 0
+                item_price: parseFloat(items[i].price) || 0
             });
             numItems += quantity;
         }
         return { contents: contents, numItems: numItems };
     }
 
-    function fireGoogleAdsConversion(eventConfig, payload, eventId, consent) {
-        if (dedupMode === 'server_only') return;
-        if (!consent.marketing) return;
+    // gtag user_data from pre-hashed values (sha256_* keys).
+    function gtagUserData(enhanced) {
+        if (!enhanced) return null;
+        var ud = {};
+        if (enhanced.email_sha256) ud.sha256_email_address = enhanced.email_sha256;
+        if (enhanced.phone_e164_sha256) ud.sha256_phone_number = enhanced.phone_e164_sha256;
+        for (var k in ud) {
+            if (Object.prototype.hasOwnProperty.call(ud, k)) return ud;
+        }
+        return null;
+    }
+
+    // Independent of dedupMode (the gtag conversion is the Ads half; the
+    // server upload dedups on transaction_id/orderId).
+    function fireGoogleAdsConversion(eventConfig, payload, eventId, c, ec) {
+        if (!c.marketing) return;
         if (!googleAds.conversionId) return;
         if (!eventConfig || !eventConfig.ads_label) return;
         if (!sendsTo(eventConfig, 'google_ads')) return;
         if (typeof window.gtag !== 'function') return;
+        var ud = null;
+        if (enhancedAllowed(c)) {
+            ud = (ec && typeof ec === 'object') ? ec : gtagUserData(payload.enhanced);
+        }
+        if (ud) window.gtag('set', 'user_data', ud);
         window.gtag('event', 'conversion', {
             'send_to': googleAds.conversionId + '/' + eventConfig.ads_label,
             'value': payload.value,
             'currency': payload.currency,
             'transaction_id': transactionIdFor(payload, eventId)
         });
+        if (ud) window.gtag('set', 'user_data', {});
     }
 
     var META_STANDARD_EVENTS = [
@@ -450,54 +672,48 @@
         'Subscribe', 'ViewContent'
     ];
 
-    function fireMetaPixel(eventConfig, payload, eventId, consent) {
+    // Same rule as TrackWP_Meta::resolve_event_name(); the server ships the
+    // resolved name as meta_resolved.
+    function metaEventName(eventConfig, eventName) {
+        if (eventConfig.meta_resolved) return String(eventConfig.meta_resolved);
+        var explicit = eventConfig.meta_event;
+        if (explicit && explicit !== 'CustomEvent') return explicit;
+        if (metaEventMap[eventName]) return String(metaEventMap[eventName]);
+        return eventName;
+    }
+
+    function fireMetaPixel(eventConfig, payload, eventId, c) {
         if (dedupMode === 'server_only') return;
-        if (!consent.marketing) return;
+        if (!c.marketing) return;
         if (typeof window.fbq !== 'function') return;
-        if (!eventConfig || !eventConfig.meta_event) return;
+        if (!eventConfig || !(eventConfig.meta_resolved || eventConfig.meta_event)) return;
         if (!sendsTo(eventConfig, 'meta')) return;
         var params = {};
         if (payload.value || isTransactionEvent(payload.event)) {
             params.value = payload.value || 0;
             params.currency = payload.currency;
         }
-
-        // Ecommerce: mirror what the server-side CAPI event sends, so the two
-        // halves of a deduplicated pair do not disagree on their parameters.
+        var name = metaEventName(eventConfig, payload.event);
         var ecommerce = payload.ecommerce;
         if (ecommerce && ecommerce.items && ecommerce.items.length) {
             var mapped = metaContentsFrom(ecommerce.items);
             params.contents = mapped.contents;
             params.content_type = 'product';
-            // num_items is documented for InitiateCheckout only.
-            if (eventConfig.meta_event === 'InitiateCheckout') {
-                params.num_items = mapped.numItems;
-            }
+            if (name === 'InitiateCheckout') params.num_items = mapped.numItems;
         }
-        if (ecommerce && ecommerce.transaction_id) {
-            params.order_id = String(ecommerce.transaction_id);
-        }
-
-        // Same eventID as the server-side CAPI event — Meta dedups the pair.
-        if (META_STANDARD_EVENTS.indexOf(eventConfig.meta_event) !== -1) {
-            window.fbq('track', eventConfig.meta_event, params, { eventID: eventId });
+        if (ecommerce && ecommerce.transaction_id) params.order_id = String(ecommerce.transaction_id);
+        if (payload.form_name) params.content_name = payload.form_name;
+        if (META_STANDARD_EVENTS.indexOf(name) !== -1) {
+            window.fbq('track', name, params, { eventID: eventId });
         } else {
-            // 'CustomEvent' is the admin's "custom" choice — the server-side CAPI
-            // sends the internal event name, so use the same name here or Meta
-            // can't dedup the pair (double counting).
-            var customName = (eventConfig.meta_event === 'CustomEvent') ? payload.event : eventConfig.meta_event;
-            window.fbq('trackCustom', customName, params, { eventID: eventId });
+            window.fbq('trackCustom', name, params, { eventID: eventId });
         }
     }
 
-    // client_only mode: REST dispatch is skipped, so GA4 events must go via gtag.
-    // In client_and_server/server_only modes GA4 custom events are server-side only.
-    function fireGa4ClientEvent(eventName, payload, consent, eventConfig) {
+    function fireGa4ClientEvent(eventName, payload, c, eventConfig) {
         if (dedupMode !== 'client_only') return;
-        if (!consent.statistics) return;
+        if (!c.statistics) return;
         if (!config.measurementId) return;
-        // Unknown events (not in config) keep the legacy send behaviour;
-        // configured events honour their routing.
         if (eventConfig && !sendsTo(eventConfig, 'ga4')) return;
         if (typeof window.gtag !== 'function') return;
         var params = { send_to: config.measurementId };
@@ -511,155 +727,173 @@
             if (ecommerce.transaction_id) params.transaction_id = String(ecommerce.transaction_id);
             if (ecommerce.coupon) params.coupon = ecommerce.coupon;
         }
+        if (payload.form_id) params.form_id = payload.form_id;
+        if (payload.form_name) params.form_name = payload.form_name;
         window.gtag('event', eventName, params);
+    }
+
+    // === PRE-CONSENT QUEUE (K6) ===
+    // Only {name, value?, currency?, form_id?, form_name?, trigger_type}: no
+    // items, DOM references, enhanced data, identifiers or timestamps.
+
+    var pendingEvents = [];
+    var MAX_PENDING_EVENTS = 20;
+
+    function cleanFormId(v) {
+        return String(v || '').replace(/[^A-Za-z0-9_\-:]/g, '').substring(0, 64);
+    }
+
+    // Without the shared cleaner a name containing '@' is dropped entirely.
+    function cleanFormName(v) {
+        var raw = String(v || '');
+        var cleaned = cleanTitle(raw);
+        if (cleaned === null) cleaned = raw.indexOf('@') === -1 ? raw : '';
+        return cleaned.replace(/^\s+|\s+$/g, '').substring(0, 100);
+    }
+
+    function queueEvent(name, params, options, requeued) {
+        if (pendingEvents.length >= MAX_PENDING_EVENTS) return;
+        params = params || {};
+        options = options || {};
+        var entry = { name: String(name), trigger_type: String(options.trigger_type || 'custom') };
+        if (params.value !== undefined && isFinite(parseFloat(params.value))) entry.value = parseFloat(params.value);
+        if (params.currency && /^[A-Z]{3}$/.test(params.currency)) entry.currency = params.currency;
+        if (params.form_id) entry.form_id = cleanFormId(params.form_id);
+        if (params.form_name) entry.form_name = cleanFormName(params.form_name);
+        if (requeued) entry.requeued = true;
+        pendingEvents.push(entry);
+        log('queued (no valid consent choice):', name);
+    }
+
+    function flushPendingEvents() {
+        if (!pendingEvents.length) return;
+        var c = readConsent();
+        if (!c.has) return;
+        var queued = pendingEvents;
+        pendingEvents = [];
+        // Rejected: drop without sending.
+        if (!c.statistics && !c.marketing) return;
+        for (var i = 0; i < queued.length; i++) {
+            var q = queued[i];
+            var params = {};
+            if (q.value !== undefined) params.value = q.value;
+            if (q.currency) params.currency = q.currency;
+            if (q.form_id) params.form_id = q.form_id;
+            if (q.form_name) params.form_name = q.form_name;
+            sendInternal(q.name, params, { trigger_type: q.trigger_type, _requeued: !!q.requeued }, null);
+        }
+    }
+
+    // Set once the server answered stale_version on this page: from then on
+    // events wait for a new choice even without requireActiveConsent.
+    var staleSeen = false;
+
+    function mustQueue(c) {
+        if (c.has) return false;
+        return requireActiveConsent || staleSeen;
     }
 
     // === CORE: SEND EVENT ===
 
-    // Events triggered before the visitor made a consent choice (see sendEvent).
-    var pendingEvents = [];
-    var MAX_PENDING_EVENTS = 20;
-
-    function flushPendingEvents() {
-        if (!pendingEvents.length) return;
-        var queued = pendingEvents;
-        pendingEvents = [];
-        for (var i = 0; i < queued.length; i++) {
-            sendEvent(queued[i].name, queued[i].params, queued[i].options);
-        }
+    /**
+     * Public API (semantics for third parties unchanged in 1.10.1).
+     *
+     * @param {string} eventName
+     * @param {object} [params] value, currency, form_id, form_name, ecommerce, enhanced {email, phone},
+     *   event_id (used as payload event_id and Pixel eventID when it matches ^evt_[a-f0-9]{16,64}$),
+     *   order_ref (copied to the payload top level),
+     *   ec (pre-hashed gtag user_data; set before the Ads conversion and cleared to {} after,
+     *   only with marketing consent and customerDataSharing).
+     * @param {object} [options] nav (dispatch synchronously), trigger_type,
+     *   serverOnly (true: only POST to the server, no gtag and no fbq; see trackwp.features.serverOnly).
+     */
+    function sendEvent(eventName, params, options) {
+        sendInternal(eventName, params, options, null);
     }
 
-    function sendEvent(eventName, params, options) {
-        // Require an active consent choice before sending ANYTHING: until the
-        // trackwp_consent cookie exists the user hasn't made a choice yet. After
-        // a choice — including rejection — the flow continues as normal: the
-        // server uses rejected events for cookie cleanup and forwards nothing.
-        if (config.requireActiveConsent && !getCookie('trackwp_consent')) {
-            // Queue instead of dropping. scroll_depth / time_on_page / url_match
-            // fire once per page load, so a visitor who accepts the banner
-            // afterwards would otherwise lose them permanently.
-            if (pendingEvents.length < MAX_PENDING_EVENTS) {
-                pendingEvents.push({ name: eventName, params: params, options: options });
-            }
-            if (debug) console.log('[TrackWP] queued (no active consent choice yet):', eventName);
+    function sendInternal(eventName, params, options, form) {
+        params = params || {};
+        options = options || {};
+        var c = readConsent();
+        if (mustQueue(c)) {
+            queueEvent(eventName, params, options, false);
             return;
         }
 
-        params = params || {};
-        options = options || {};
-
-        var consent = getConsentState();
         var eventConfig = findEventConfig(eventName);
-
-        // Use config values as defaults, params override
         var value = params.value !== undefined ? params.value : (eventConfig ? eventConfig.value : 0);
         var currency = params.currency || (eventConfig ? eventConfig.currency : 'DKK');
-
-        var eventId = generateEventId();
+        var eventId = (params.event_id && EVENT_ID_RE.test(params.event_id)) ? params.event_id : generateEventId();
 
         var payload = {
             event: eventName,
-            value: parseFloat(value) || 0,
-            currency: currency,
-            page_url: window.location.href,
-            page_title: document.title,
-            client_id: getClientId(),
             event_id: eventId,
-            session_id: getSessionId(),
-            consent: {
-                analytics: consent.statistics || false,
-                marketing: consent.marketing || false
-            },
-            user_agent: navigator.userAgent,
-            fbc: getCookie('_fbc') || '',
-            fbp: getCookie('_fbp') || '',
-            gclid: trackwpGetUrlParam('gclid') || (function() {
-                var c = trackwpGetCookie('_gcl_aw');
-                var p = c.split('.');
-                return p.length >= 3 ? p[2] : '';
-            })(),
-            _ga: trackwpGetCookie('_ga'),
-            ga_session_cookies: collectGaSessionCookies()
+            value: parseFloat(value) || 0,
+            currency: currency
         };
-
-        // Form data
-        if (params.form_id) payload.form_id = params.form_id;
-        if (params.form_name) payload.form_name = params.form_name;
-
-        // Ecommerce data (WooCommerce integration). Passed through untouched:
-        // the server is the single validation gate for it
-        // (TrackWP_Proxy::sanitize_ecommerce), the same contract as `enhanced`.
-        if (params.ecommerce && typeof params.ecommerce === 'object') {
-            payload.ecommerce = params.ecommerce;
+        if (params.form_id) payload.form_id = cleanFormId(params.form_id);
+        if (params.form_name) payload.form_name = cleanFormName(params.form_name);
+        if (params.ecommerce && typeof params.ecommerce === 'object') payload.ecommerce = params.ecommerce;
+        if (params.order_ref) payload.order_ref = String(params.order_ref);
+        if (c.statistics) {
+            var engaged = takeEngagedMs();
+            if (engaged > 0) payload.engaged_ms = engaged;
         }
 
-        var hasEnhanced = !!(params.enhanced && (params.enhanced.email || params.enhanced.phone));
-        var isNavLike = options.nav === true;
+        var requeue = options._requeued ? null : { name: eventName, params: params, options: options };
+        var enhancedInput = null;
+        if (enhancedAllowed(c)) {
+            enhancedInput = form ? readFormEnhanced(form) : null;
+            if (!enhancedInput && params.enhanced && (params.enhanced.email || params.enhanced.phone)) {
+                enhancedInput = { email: params.enhanced.email || '', phone: params.enhanced.phone || '' };
+            }
+        }
 
-        // For nav-like clicks/submits (mailto/tel/outbound/downloads/HTML form
-        // navigation) we MUST dispatch synchronously in the current task — the
-        // browser may begin unload before microtasks/promises resolve. Skip
-        // async hashing and send raw normalized values instead; the server
-        // rehashes via TrackWP_Hash::normalize_enhanced().
-        if (isNavLike) {
-            if (hasEnhanced) {
-                var rawEnhanced = {};
-                // Send trim+lowercase raw email — the server derives BOTH the
-                // Google hash (gmail rules) and the Meta hash from it;
-                // pre-applying gmail munging here would corrupt the Meta hash.
-                var navEmail = normalizeEmailMeta(params.enhanced.email);
-                var navPhone = normalizePhone(params.enhanced.phone);
-                if (navEmail) rawEnhanced.email = navEmail;
-                if (navPhone) rawEnhanced.phone = navPhone;
-                if (navEmail || navPhone) payload.enhanced = rawEnhanced;
+        function finish(p) {
+            var fresh = readConsent();
+            dispatchPayload(p, options.nav === true, requeue);
+            if (options.serverOnly !== true) {
+                fireGa4ClientEvent(eventName, p, fresh, eventConfig);
+                fireGoogleAdsConversion(eventConfig, p, eventId, fresh, params.ec);
+                fireMetaPixel(eventConfig, p, eventId, fresh);
             }
-            dispatchPayload(payload, true);
-            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
-            fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
-            fireMetaPixel(eventConfig, payload, eventId, consent);
-            if (debug) {
-                console.log('[TrackWP]', eventName, payload);
-            }
+            log(eventName, p);
+        }
+
+        if (!enhancedInput) {
+            finish(payload);
             return;
         }
 
-        if (!hasEnhanced) {
-            // Synchronous dispatch — no async work needed.
-            dispatchPayload(payload);
-            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
-            fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
-            fireMetaPixel(eventConfig, payload, eventId, consent);
-            if (debug) {
-                console.log('[TrackWP]', eventName, payload);
-            }
+        if (options.nav === true) {
+            // Navigation may unload before a promise resolves: send normalised
+            // raw values, the server hashes them (K2a).
+            var raw = {};
+            var em = normMetaEmail(enhancedInput.email);
+            var ph = normPhoneE164(enhancedInput.phone);
+            if (em) raw.email = em;
+            if (ph) raw.phone = ph;
+            if (em || ph) payload.enhanced = raw;
+            finish(payload);
             return;
         }
 
-        // Enhanced data — hash then send
-        hashUserData(params.enhanced).then(function(hashed) {
-            if (Object.keys(hashed).length > 0) {
+        var generation = consentGeneration;
+        hashUserData(enhancedInput).then(function(hashed) {
+            if (generation !== consentGeneration) {
+                log('hashing cancelled (consent changed):', eventName);
+            } else if (hashed && Object.keys(hashed).length) {
                 payload.enhanced = hashed;
             }
-            dispatchPayload(payload);
-            fireGa4ClientEvent(eventName, payload, consent, eventConfig);
-            fireGoogleAdsConversion(eventConfig, payload, eventId, consent);
-            fireMetaPixel(eventConfig, payload, eventId, consent);
-            if (debug) {
-                console.log('[TrackWP]', eventName, payload);
-            }
+            finish(payload);
+        }, function() {
+            finish(payload);
         });
     }
 
-    // === AUTO-DETECTION ===
+    // === TRIGGERS & CONDITIONS ===
 
-    // Selectors that indicate the click will trigger navigation/unload.
-    // These require synchronous dispatch (no async hashing before fetch).
-    var NAV_LIKE_SELECTORS = [
-        'a[href^="mailto:"]',
-        'a[href^="tel:"]',
-        'a[href^="sms:"]',
-        'a[download]'
-    ];
+    var NAV_LIKE_SELECTORS = ['a[href^="mailto:"]', 'a[href^="tel:"]', 'a[href^="sms:"]', 'a[download]'];
     var FILE_EXT_SELECTORS = [
         'a[href$=".pdf"]', 'a[href$=".doc"]', 'a[href$=".docx"]',
         'a[href$=".xls"]', 'a[href$=".xlsx"]', 'a[href$=".zip"]',
@@ -680,24 +914,15 @@
         try {
             var url = new URL(anchor.href, window.location.href);
             if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
-            return url.hostname && url.hostname !== window.location.hostname;
+            return !!url.hostname && url.hostname !== window.location.hostname;
         } catch (e) {
             return false;
         }
     }
 
-    // === FIRING TRIGGERS & CONDITIONS ===
-    //
-    // Mirrors Google Tag Manager: an event fires when ANY of its triggers
-    // matches, and a trigger matches when ALL of its conditions are true.
-    // The server ships a normalised `triggers` array on every event; the flat
-    // legacy fields are only a fallback for configs saved before 1.9.0.
-
     function triggersFor(evt) {
-        if (evt.triggers && evt.triggers.length) {
-            return evt.triggers;
-        }
-        // Pre-1.9.0 shape — one implicit trigger, no conditions.
+        if (evt.triggers && evt.triggers.length) return evt.triggers;
+        if (!evt.trigger_type) return [];
         return [{
             type: evt.trigger_type,
             css_selector: evt.css_selector || '',
@@ -711,34 +936,16 @@
 
     function normalizeText(value) {
         if (!value) return '';
-        // Collapse runs of whitespace so "Book \n  now" compares as "Book now",
-        // and cap the length — matching against a whole page section is never
-        // what the admin meant.
-        return String(value).replace(/\s+/g, ' ').trim().substring(0, 300);
+        return String(value).replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '').substring(0, 300);
     }
 
-    function getQueryParam(name) {
-        if (!name) return '';
-        try {
-            return new URLSearchParams(window.location.search).get(name) || '';
-        } catch (e) {
-            return '';
-        }
-    }
-
-    /**
-     * Resolve a condition variable.
-     * Returns null when the variable is not in scope (e.g. a click variable on
-     * a timer trigger) — null NEVER matches, not even with a negative operator,
-     * so "Click ID does not equal X" cannot be trivially true on a timer.
-     */
     function computeVariable(name, param, el) {
         switch (name) {
             case 'page_url':      return window.location.href;
             case 'page_hostname': return (window.location.hostname || '').toLowerCase();
             case 'page_path':     return window.location.pathname || '';
             case 'page_fragment': return (window.location.hash || '').replace(/^#/, '');
-            case 'query_param':   return getQueryParam(param);
+            case 'query_param':   return getUrlParam(param);
             case 'page_title':    return document.title || '';
             case 'referrer':      return document.referrer || '';
             case 'click_id':
@@ -754,46 +961,30 @@
         }
     }
 
-    function resolveVariable(name, param, el, cache) {
-        var key = name + '|' + (param || '');
-        if (Object.prototype.hasOwnProperty.call(cache, key)) {
-            return cache[key];
-        }
-        var value = computeVariable(name, param, el);
-        cache[key] = value;
-        return value;
-    }
-
     function evaluateCondition(cond, el, cache) {
-        var value = resolveVariable(cond.variable, cond.param, el, cache);
-        if (value === null || value === undefined) {
-            return false; // Not in scope — never matches.
-        }
-
-        var op     = cond.operator;
+        var key = cond.variable + '|' + (cond.param || '');
+        if (!Object.prototype.hasOwnProperty.call(cache, key)) cache[key] = computeVariable(cond.variable, cond.param, el);
+        var value = cache[key];
+        if (value === null || value === undefined) return false;
+        var op = cond.operator;
         var target = cond.value || '';
-
-        // Element variables: selector matching only.
         if (op === 'matches_selector' || op === 'not_matches_selector') {
             var matched = false;
             try {
                 matched = !!(value && typeof value.matches === 'function' && value.matches(target));
             } catch (e) {
-                matched = false; // Invalid selector — treat as no match.
+                matched = false;
             }
             return op === 'matches_selector' ? matched : !matched;
         }
-
-        // Class lists are token-based: "has class btn" must not match "btn-primary".
         if (op === 'has_class' || op === 'not_has_class') {
             var tokens = String(value).split(/\s+/);
-            var hasIt  = false;
+            var hasIt = false;
             for (var i = 0; i < tokens.length; i++) {
                 if (tokens[i] === target) { hasIt = true; break; }
             }
             return op === 'has_class' ? hasIt : !hasIt;
         }
-
         var str = String(value);
         switch (op) {
             case 'exists':       return str !== '';
@@ -803,42 +994,89 @@
             case 'contains':     return str.indexOf(target) !== -1;
             case 'not_contains': return str.indexOf(target) === -1;
             case 'starts_with':  return str.lastIndexOf(target, 0) === 0;
-            case 'ends_with':    return target.length <= str.length &&
-                                        str.indexOf(target, str.length - target.length) !== -1;
+            case 'ends_with':    return target.length <= str.length && str.indexOf(target, str.length - target.length) !== -1;
             default:             return false;
         }
     }
 
-    /**
-     * Does this trigger's condition set pass? Variables are computed lazily and
-     * cached per call, so ten conditions on one click cost one DOM read each.
-     */
     function triggerMatches(trg, el) {
         var conds = trg.conditions;
-        if (!conds || !conds.length) {
-            return true;
-        }
+        if (!conds || !conds.length) return true;
         var cache = {};
         for (var i = 0; i < conds.length; i++) {
             if (!evaluateCondition(conds[i], el, cache)) {
-                if (debug) {
-                    console.log('[TrackWP] condition failed:', conds[i].variable, conds[i].operator, conds[i].value);
-                }
+                log('condition failed:', conds[i].variable, conds[i].operator, conds[i].value);
                 return false;
             }
         }
         return true;
     }
 
-    function initAutoDetect() {
-        var clickTriggers    = [];
-        var downloadTriggers = [];
-        var formTriggers     = [];
+    /**
+     * Page-scoped trigger check for integrations (woocommerce.js, §2.1).
+     * True when the event has no triggers at all, or when at least one of its
+     * triggers of `triggerType` passes its conditions (evaluated without an
+     * element, so element variables never match).
+     */
+    function passesPageConditions(eventName, triggerType) {
+        var evt = findEventConfig(eventName);
+        if (!evt) return true;
+        var triggers = triggersFor(evt);
+        if (!triggers.length) return true;
+        for (var i = 0; i < triggers.length; i++) {
+            if (triggers[i].type !== triggerType) continue;
+            if (triggerMatches(triggers[i], null)) return true;
+        }
+        return false;
+    }
 
+    /**
+     * Form integrations (class-trackwp-forms.php) call this after a successful
+     * submission. Every form_submit trigger of every event is evaluated on its
+     * own against the form (selector + conditions). The integration never
+     * reads field values; enhanced data is read here, synchronously, at
+     * dispatch time, and only with marketing consent.
+     *
+     * @param {{form_id?:string, form_name?:string, plugin?:string, nav?:boolean}} detail
+     * @param {Element|null} form
+     * @return {number} number of events sent or queued
+     */
+    function sendFormEvent(detail, form) {
+        detail = detail || {};
+        var sent = 0;
         for (var i = 0; i < events.length; i++) {
             var evt = events[i];
             var triggers = triggersFor(evt);
+            for (var t = 0; t < triggers.length; t++) {
+                var trg = triggers[t];
+                if (trg.type !== 'form_submit') continue;
+                if (trg.css_selector) {
+                    if (!form || typeof form.matches !== 'function') continue;
+                    try {
+                        if (!form.matches(trg.css_selector)) continue;
+                    } catch (err) {
+                        continue;
+                    }
+                }
+                if (!triggerMatches(trg, form || null)) continue;
+                if (isDuplicateDispatch(evt.name, form)) break;
+                sendInternal(evt.name, {
+                    form_id: detail.form_id || (form && form.id) || '',
+                    form_name: detail.form_name || ''
+                }, { nav: detail.nav === true, trigger_type: 'form_submit' }, form || null);
+                sent++;
+                break; // one dispatch per event
+            }
+        }
+        return sent;
+    }
 
+    function initAutoDetect() {
+        var clickTriggers = [];
+        var downloadTriggers = [];
+        for (var i = 0; i < events.length; i++) {
+            var evt = events[i];
+            var triggers = triggersFor(evt);
             for (var t = 0; t < triggers.length; t++) {
                 var trg = triggers[t];
                 switch (trg.type) {
@@ -857,64 +1095,29 @@
                     case 'file_download':
                         downloadTriggers.push({ evt: evt, trg: trg });
                         break;
-                    case 'form_submit':
-                        // Generic 'form_submit' is handled by class-trackwp-forms.php.
-                        // Custom-named form events with their own selector are bound here.
-                        if (evt.name !== 'form_submit' && trg.css_selector) {
-                            formTriggers.push({ evt: evt, trg: trg });
-                        }
-                        break;
                     case 'js_event':
                         if (trg.js_event) bindJsEvent(evt, trg);
                         break;
+                    // form_submit: class-trackwp-forms.php -> sendFormEvent().
                 }
             }
         }
-
         bindClickEvents(clickTriggers);
         bindFileDownloads(downloadTriggers);
-        bindCustomFormEvents(formTriggers);
         evaluateUrlTriggers();
         watchUrlChanges();
     }
 
-    // Custom JavaScript event trigger — listens for the configured event name
-    // dispatched on document (e.g. document.dispatchEvent(new CustomEvent('my_event'))).
     function bindJsEvent(evt, trg) {
-        document.addEventListener(trg.js_event, function (e) {
+        document.addEventListener(trg.js_event, function(e) {
             if (isDuplicateDispatch(evt.name, e && e.target)) return;
             if (!triggerMatches(trg, null)) return;
-            sendEvent(evt.name);
+            sendInternal(evt.name, {}, { trigger_type: 'js_event' }, null);
         });
-    }
-
-    // Custom-named form events (trigger form_submit + own selector). The generic
-    // 'form_submit' event is handled by class-trackwp-forms.php.
-    function bindCustomFormEvents(formTriggers) {
-        if (!formTriggers.length) return;
-        document.addEventListener('submit', function (e) {
-            var form = e.target;
-            if (!form || typeof form.matches !== 'function') return;
-            for (var i = 0; i < formTriggers.length; i++) {
-                var evt = formTriggers[i].evt;
-                var trg = formTriggers[i].trg;
-                try {
-                    if (!form.matches(trg.css_selector)) continue;
-                } catch (err) {
-                    continue; // invalid selector — skip
-                }
-                if (!triggerMatches(trg, form)) continue;
-                if (isDuplicateDispatch(evt.name, form)) continue;
-                sendEvent(evt.name, {}, { nav: true });
-            }
-        }, true);
     }
 
     function bindClickEvents(clickTriggers) {
         if (!clickTriggers.length) return;
-        // Delegation on document — works for dynamically-injected links (AJAX/SPA).
-        // Capture phase so we dispatch before any inline onclick handlers.
-        // We do NOT preventDefault — mailto/tel/outbound must navigate as normal.
         document.addEventListener('click', function(e) {
             if (!e.target || typeof e.target.closest !== 'function') return;
             for (var i = 0; i < clickTriggers.length; i++) {
@@ -922,9 +1125,6 @@
                 var trg = clickTriggers[i].trg;
                 var match;
                 try {
-                    // closest() so a click on a <span>/<svg> inside a link
-                    // resolves to the element the selector actually targets —
-                    // conditions must be evaluated against THAT element.
                     match = e.target.closest(trg.css_selector);
                 } catch (err) {
                     continue;
@@ -933,8 +1133,7 @@
                 if (!triggerMatches(trg, match)) continue;
                 if (isDuplicateDispatch(evt.name, match)) continue;
                 var nav = isNavLikeSelector(trg.css_selector) || isOutboundLink(match);
-                sendEvent(evt.name, {}, { nav: nav });
-                // continue loop — one element may match multiple events
+                sendInternal(evt.name, {}, { nav: nav, trigger_type: 'css_click' }, null);
             }
         }, true);
     }
@@ -947,20 +1146,16 @@
             for (var i = 0; i < downloadTriggers.length; i++) {
                 var evt = downloadTriggers[i].evt;
                 var trg = downloadTriggers[i].trg;
-                // Triggers with their own selector only fire when it matches the
-                // clicked element; others use the default file-extension list.
-                var selector = trg.css_selector ? trg.css_selector : defaultSelector;
                 var match;
                 try {
-                    match = e.target.closest(selector);
+                    match = e.target.closest(trg.css_selector ? trg.css_selector : defaultSelector);
                 } catch (err) {
-                    continue; // invalid selector — skip this trigger
+                    continue;
                 }
                 if (!match) continue;
                 if (!triggerMatches(trg, match)) continue;
                 if (isDuplicateDispatch(evt.name, match)) continue;
-                // File downloads always trigger navigation/unload — send synchronously.
-                sendEvent(evt.name, {}, { nav: true });
+                sendInternal(evt.name, {}, { nav: true, trigger_type: 'file_download' }, null);
             }
         }, true);
     }
@@ -968,21 +1163,18 @@
     function bindScrollEvent(evt, trg) {
         var depth = parseInt(trg.scroll_depth, 10) || 50;
         var fired = false;
-
         function checkScroll() {
             if (fired) return;
             var scrollTop = window.pageYOffset || document.documentElement.scrollTop;
             var docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
             if (docHeight <= 0) return;
-            var percent = (scrollTop / docHeight) * 100;
-            if (percent >= depth) {
+            if ((scrollTop / docHeight) * 100 >= depth) {
                 fired = true;
                 window.removeEventListener('scroll', checkScroll);
                 if (!triggerMatches(trg, null)) return;
-                sendEvent(evt.name);
+                sendInternal(evt.name, {}, { trigger_type: 'scroll_depth' }, null);
             }
         }
-
         window.addEventListener('scroll', checkScroll, { passive: true });
     }
 
@@ -990,96 +1182,104 @@
         var seconds = parseInt(trg.time_seconds, 10) || 30;
         setTimeout(function() {
             if (!triggerMatches(trg, null)) return;
-            sendEvent(evt.name);
+            sendInternal(evt.name, {}, { trigger_type: 'time_on_page' }, null);
         }, seconds * 1000);
     }
 
-    // === URL / PAGE-VIEW TRIGGERS ===
-    //
-    // Re-evaluated on SPA navigation too: many WordPress themes and page
-    // builders swap content via the History API, where no page load happens and
-    // a one-shot check at init would miss every subsequent "page".
-
-    var urlTriggers  = [];
+    var urlTriggers = [];
     var firedUrlKeys = {};
 
     function evaluateUrlTriggers() {
         for (var i = 0; i < urlTriggers.length; i++) {
             var evt = urlTriggers[i].evt;
             var trg = urlTriggers[i].trg;
-            // Dedupe per event + URL so a re-render does not re-fire.
             var key = evt.name + '|' + window.location.href;
             if (firedUrlKeys[key]) continue;
             if (trg.url_match && window.location.href.indexOf(trg.url_match) === -1) continue;
             if (!triggerMatches(trg, null)) continue;
             firedUrlKeys[key] = true;
-            sendEvent(evt.name);
+            sendInternal(evt.name, {}, { trigger_type: 'url_match' }, null);
         }
     }
 
     function watchUrlChanges() {
         if (!urlTriggers.length) return;
-
-        // Defer one tick: an SPA router updates location before it swaps the
-        // DOM/title, so conditions on Page Title would read the old value.
         function reEvaluate() {
             setTimeout(evaluateUrlTriggers, 0);
         }
-
         try {
             var methods = ['pushState', 'replaceState'];
             for (var i = 0; i < methods.length; i++) {
-                (function (name) {
+                (function(name) {
                     var original = window.history[name];
                     if (typeof original !== 'function') return;
-                    window.history[name] = function () {
+                    window.history[name] = function() {
                         var result = original.apply(this, arguments);
                         reEvaluate();
                         return result;
                     };
                 })(methods[i]);
             }
-        } catch (e) { /* history is not patchable here — popstate still works */ }
-
+        } catch (e) {}
         window.addEventListener('popstate', reEvaluate);
         window.addEventListener('hashchange', reEvaluate);
     }
+
+    // === CONSENT CHANGES ===
+
+    document.addEventListener('trackwp:consent_updated', function() {
+        var c = readConsent();
+        if (c.marketing) persistClickIds();
+        flushPendingEvents();
+        if (c.statistics || c.marketing) fireKeepalive();
+    });
+
+    // Withdraw / downgrade (K4, R6): clear RAM per category and cancel hashing.
+    document.addEventListener('trackwp:consent_revoked', function(e) {
+        var d = (e && e.detail) || {};
+        consentGeneration++;
+        if (d.full) pendingEvents = [];
+        if (d.marketing || d.full) {
+            clickIds = {};
+            clickIdsPersisted = false;
+            expireCookie('_twp_click');
+            expireCookie('_fbc', config.cookieDomain || '');
+        }
+        if (d.statistics || d.full) {
+            ephemeralClientId = null;
+            try { window.sessionStorage.removeItem('trackwp_sid'); } catch (err) {}
+            engagedAccum = 0;
+        }
+    });
+
     // === EXPOSE API ===
 
     window.trackwp = {
-        sendEvent: sendEvent
+        sendEvent: sendEvent,
+        sendFormEvent: sendFormEvent,
+        passesPageConditions: passesPageConditions,
+        features: { serverOnly: true },
+        pendingKeepalive: null,
+        normalize: {
+            googleEmail: normGoogleEmail,
+            metaEmail: normMetaEmail,
+            phoneE164: normPhoneE164,
+            metaPhone: normMetaPhone
+        }
     };
 
-    // Signal readiness — this script loads async, so inline integrations
-    // (class-trackwp-forms.php) may parse before window.trackwp exists.
-    (function() {
-        var readyEvent;
-        try {
-            readyEvent = new CustomEvent('trackwp:ready');
-        } catch (e) {
-            readyEvent = document.createEvent('CustomEvent');
-            readyEvent.initCustomEvent('trackwp:ready', true, true, null);
-        }
-        document.dispatchEvent(readyEvent);
-    })();
+    fireEvent('trackwp:ready', null);
 
     // === INIT ===
 
+    captureClickIds();
+    if (readConsent().marketing) persistClickIds();
+
     function trackwpInit() {
         initAutoDetect();
-        if (getConsentState().statistics) {
-            fireKeepalive();
-        }
+        var c = readConsent();
+        if (c.statistics || c.marketing) fireKeepalive();
     }
-
-    // Replay events that fired before the visitor made a choice, and renew
-    // cookies right after statistics consent is granted in-page.
-    document.addEventListener('trackwp:consent_updated', function(e) {
-        flushPendingEvents();
-        if (e && e.detail && e.detail.statistics) {
-            fireKeepalive();
-        }
-    });
 
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', trackwpInit);
