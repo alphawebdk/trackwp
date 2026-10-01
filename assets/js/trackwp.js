@@ -645,7 +645,11 @@
 
     // Independent of dedupMode (the gtag conversion is the Ads half; the
     // server upload dedups on transaction_id/orderId).
+    // KC9/D5: when the dataLayer layer is active, GTM's own Ads tag owns the
+    // conversion via the dataLayer push (pushDataLayer()); TrackWP must not
+    // also fire a competing gtag conversion into the same dataLayer.
     function fireGoogleAdsConversion(eventConfig, payload, eventId, c, ec) {
+        if (dataLayerActive()) return;
         if (!c.marketing) return;
         if (!googleAds.conversionId) return;
         if (!eventConfig || !eventConfig.ads_label) return;
@@ -710,7 +714,10 @@
         }
     }
 
+    // KC9/D5: same guard as fireGoogleAdsConversion — GTM's GA4 event tag
+    // owns this via the dataLayer push when the layer is active.
     function fireGa4ClientEvent(eventName, payload, c, eventConfig) {
+        if (dataLayerActive()) return;
         if (dedupMode !== 'client_only') return;
         if (!c.statistics) return;
         if (!config.measurementId) return;
@@ -732,6 +739,171 @@
         window.gtag('event', eventName, params);
     }
 
+    // === DATA LAYER (D2-D5, KC7-KC9) ===
+    // Pushes GA4-shaped e-commerce events to window.dataLayer synchronously,
+    // independent of consent and of the proxy request, under Advanced
+    // Consent Mode. GTM/Consent Mode decide what actually leaves the browser.
+
+    function dataLayerActive() {
+        return !!(config.dataLayer && config.dataLayer.enabled === true);
+    }
+
+    // Mirrors TrackWP_DataLayer::ga4_route() (PHP) exactly; both are tested
+    // against the same vector file (tests/fixtures/datalayer/ga4-route-vectors.json).
+    function ga4Route(inp) {
+        inp = inp || {};
+        // Strict boolean, matching PHP's ga4_route(): missing key defaults to
+        // active, but a present key must be the literal boolean true — a
+        // falsy non-boolean (0, '', null) never counts as active.
+        var datalayerActive = (inp.datalayer_active === undefined) ? true : (inp.datalayer_active === true);
+        if (!datalayerActive || !inp.send_to_ga4 || !inp.ga4_enabled) return 'off';
+        var source     = inp.source || 'gtm';
+        var eventName  = inp.event || '';
+        var mp         = !!inp.mp_configured;
+        var statistics = !!inp.statistics;
+        var dedup      = inp.dedup_mode || '';
+        if (source === 'split' && eventName === 'purchase' && mp && statistics && dedup !== 'client_only') {
+            return 'server';
+        }
+        return 'gtm';
+    }
+
+    var DL_ITEM_KEYS = [
+        'item_id', 'item_name', 'item_sku', 'item_category', 'item_category2',
+        'item_category3', 'item_category4', 'item_category5', 'item_variant',
+        'item_list_id', 'item_list_name', 'index', 'price', 'discount', 'quantity'
+    ];
+
+    function dataLayerItems(items) {
+        var out = [];
+        for (var i = 0; i < items.length; i++) {
+            var src = items[i] || {};
+            var clean = {};
+            for (var k = 0; k < DL_ITEM_KEYS.length; k++) {
+                var key = DL_ITEM_KEYS[k];
+                if (src[key] !== undefined && src[key] !== null && src[key] !== '') clean[key] = src[key];
+            }
+            out.push(clean);
+        }
+        return out;
+    }
+
+    // Builds the `ecommerce` branch of the push (KC7). Returns null when
+    // there is nothing ecommerce-shaped to push at all (most events).
+    function dataLayerEcommerce(ec, currency, c) {
+        if (!ec || typeof ec !== 'object') return null;
+        var out = {};
+        out.currency = ec.currency || currency;
+        if (ec.items && ec.items.length) {
+            var items = dataLayerItems(ec.items);
+            out.items = items;
+            var sum = 0;
+            for (var i = 0; i < items.length; i++) {
+                var price = parseFloat(items[i].price);
+                if (!isFinite(price)) price = 0;
+                var qty = parseFloat(items[i].quantity);
+                if (!(qty > 0)) qty = 1;
+                sum += price * qty;
+            }
+            out.value = Math.round(sum * 100) / 100;
+        }
+        if (ec.transaction_id) out.transaction_id = String(ec.transaction_id);
+        if (isFinite(parseFloat(ec.tax))) out.tax = parseFloat(ec.tax);
+        if (isFinite(parseFloat(ec.shipping))) out.shipping = parseFloat(ec.shipping);
+        if (isFinite(parseFloat(ec.discount))) out.discount = parseFloat(ec.discount);
+        // D2/KC7: coupon only leaves RAM with at least one consent choice.
+        if (ec.coupon && (c.statistics || c.marketing)) out.coupon = ec.coupon;
+        if (ec.item_list_id) out.item_list_id = ec.item_list_id;
+        if (ec.item_list_name) out.item_list_name = ec.item_list_name;
+        return out;
+    }
+
+    /**
+     * Public API (KC7): pushes one event to window.dataLayer, independent of
+     * consent and of the proxy request, and returns the GA4 route decided
+     * for it. Returns null when nothing was pushed (layer inactive, or the
+     * event is not a configured/active one).
+     *
+     * @param {string} eventName
+     * @param {object} [params]  Same shape as sendEvent(): value, currency,
+     *   ecommerce, ec (pre-hashed gtag user_data, purchase only), event_id.
+     * @param {object} [options] eventId (reused verbatim when valid).
+     * @return {'gtm'|'server'|'off'|null}
+     *
+     * Never throws (coordinator fix, Krav 2): a malformed window.dataLayer,
+     * or any other unexpected failure, is caught here, logged only when
+     * debug is on, and answered with null — this is public API, third
+     * parties may call it directly, and it must never break their code or
+     * the caller's own server dispatch (see sendInternal()).
+     */
+    function pushDataLayer(eventName, params, options) {
+        try {
+            return pushDataLayerCore(eventName, params, options);
+        } catch (e) {
+            log('pushDataLayer failed:', e && e.message ? e.message : e);
+            // The event push itself may be what threw (e.g. window.dataLayer
+            // is not an array); the closing reset is still attempted, in its
+            // own try, so a partially-applied push never leaves ecommerce/
+            // user_data/trackwp set for the NEXT, unrelated dataLayer push.
+            try {
+                var layer = window.dataLayer = window.dataLayer || [];
+                layer.push({ ecommerce: null, user_data: null, trackwp: null });
+            } catch (e2) {}
+            return null;
+        }
+    }
+
+    function pushDataLayerCore(eventName, params, options) {
+        if (!dataLayerActive()) return null;
+        var eventConfig = findEventConfig(eventName);
+        if (!eventConfig) return null;
+        params = params || {};
+        options = options || {};
+        var c = readConsent();
+        var dl = config.dataLayer;
+
+        var route = ga4Route({
+            datalayer_active: true,
+            send_to_ga4: sendsTo(eventConfig, 'ga4'),
+            ga4_enabled: dl.ga4Enabled === true,
+            mp_configured: dl.mpConfigured === true,
+            source: dl.ga4Source || 'gtm',
+            event: eventName,
+            statistics: c.statistics,
+            dedup_mode: dedupMode
+        });
+
+        var eventId = (options.eventId && EVENT_ID_RE.test(options.eventId)) ? options.eventId
+            : ((params.event_id && EVENT_ID_RE.test(params.event_id)) ? params.event_id : generateEventId());
+
+        var value = params.value !== undefined ? (parseFloat(params.value) || 0) : (eventConfig.value || 0);
+        var currency = params.currency || eventConfig.currency || 'DKK';
+
+        var ecommerce = dataLayerEcommerce(params.ecommerce, currency, c);
+
+        // D3: only the purchase tag may read user_data, and only with
+        // marketing consent held at push time. Never raw PII (K2a keys only).
+        var userData = null;
+        if ('purchase' === eventName && c.marketing === true && params.ec && typeof params.ec === 'object') {
+            var hasKeys = false;
+            for (var uk in params.ec) { if (Object.prototype.hasOwnProperty.call(params.ec, uk)) { hasKeys = true; break; } }
+            if (hasKeys) userData = params.ec;
+        }
+
+        var reset = { ecommerce: null, user_data: null, trackwp: null };
+        var layer = window.dataLayer = window.dataLayer || [];
+        layer.push(reset);
+        var push = { event: eventName };
+        if (ecommerce) push.ecommerce = ecommerce;
+        if (userData) push.user_data = userData;
+        push.trackwp = { source: 'trackwp', ga4_route: route, conversion_value: value, event_id: eventId };
+        layer.push(push);
+        layer.push(reset);
+
+        log('dataLayer push:', eventName, route);
+        return route;
+    }
+
     // === PRE-CONSENT QUEUE (K6) ===
     // Only {name, value?, currency?, form_id?, form_name?, trigger_type}: no
     // items, DOM references, enhanced data, identifiers or timestamps.
@@ -751,7 +923,7 @@
         return cleaned.replace(/^\s+|\s+$/g, '').substring(0, 100);
     }
 
-    function queueEvent(name, params, options, requeued) {
+    function queueEvent(name, params, options, requeued, ga4Route_, eventId_) {
         if (pendingEvents.length >= MAX_PENDING_EVENTS) return;
         params = params || {};
         options = options || {};
@@ -761,6 +933,15 @@
         if (params.form_id) entry.form_id = cleanFormId(params.form_id);
         if (params.form_name) entry.form_name = cleanFormName(params.form_name);
         if (requeued) entry.requeued = true;
+        // KC7: ga4_route and dl are not identifiers, so K6 still holds. Only
+        // stored when a dataLayer push actually happened for this event; the
+        // event_id is the one already pushed, so a later flush reuses it
+        // instead of minting a second id for the same dataLayer event (TR8).
+        if (null !== ga4Route_ && undefined !== ga4Route_) {
+            entry.ga4_route = ga4Route_;
+            entry.dl = true;
+            entry.event_id = eventId_;
+        }
         pendingEvents.push(entry);
         log('queued (no valid consent choice):', name);
     }
@@ -780,7 +961,13 @@
             if (q.currency) params.currency = q.currency;
             if (q.form_id) params.form_id = q.form_id;
             if (q.form_name) params.form_name = q.form_name;
-            sendInternal(q.name, params, { trigger_type: q.trigger_type, _requeued: !!q.requeued }, null);
+            var flushOptions = { trigger_type: q.trigger_type, _requeued: !!q.requeued };
+            if (q.dl) {
+                flushOptions.dataLayerDone = true;
+                flushOptions.ga4Route = q.ga4_route;
+                flushOptions.eventId = q.event_id;
+            }
+            sendInternal(q.name, params, flushOptions, null);
         }
     }
 
@@ -814,16 +1001,31 @@
     function sendInternal(eventName, params, options, form) {
         params = params || {};
         options = options || {};
+
+        // TR8: event_id is minted ONCE for this event, before the dataLayer
+        // push, and the very same id is reused for the push, gtag/fbq and the
+        // server payload (and, via the queue entry, after a later flush).
+        var eventId = (options.eventId && EVENT_ID_RE.test(options.eventId)) ? options.eventId
+            : ((params.event_id && EVENT_ID_RE.test(params.event_id)) ? params.event_id : generateEventId());
+
+        // D2/KC7: the dataLayer push is independent of consent and of the
+        // proxy request, so it happens here, before mustQueue(). pushDataLayer()
+        // itself never throws (Krav 2), so no guard is needed at this call
+        // site; the server dispatch below always runs regardless.
+        var route = null;
+        if (options.dataLayerDone !== true) {
+            route = pushDataLayer(eventName, params, { eventId: eventId });
+        }
+
         var c = readConsent();
         if (mustQueue(c)) {
-            queueEvent(eventName, params, options, false);
+            queueEvent(eventName, params, options, false, route, eventId);
             return;
         }
 
         var eventConfig = findEventConfig(eventName);
         var value = params.value !== undefined ? params.value : (eventConfig ? eventConfig.value : 0);
         var currency = params.currency || (eventConfig ? eventConfig.currency : 'DKK');
-        var eventId = (params.event_id && EVENT_ID_RE.test(params.event_id)) ? params.event_id : generateEventId();
 
         var payload = {
             event: eventName,
@@ -831,6 +1033,8 @@
             value: parseFloat(value) || 0,
             currency: currency
         };
+        var effectiveRoute = options.ga4Route || route;
+        if (dataLayerActive() && effectiveRoute) payload.ga4_route = effectiveRoute;
         if (params.form_id) payload.form_id = cleanFormId(params.form_id);
         if (params.form_name) payload.form_name = cleanFormName(params.form_name);
         if (params.ecommerce && typeof params.ecommerce === 'object') payload.ecommerce = params.ecommerce;
@@ -1258,7 +1462,8 @@
         sendEvent: sendEvent,
         sendFormEvent: sendFormEvent,
         passesPageConditions: passesPageConditions,
-        features: { serverOnly: true },
+        pushDataLayer: pushDataLayer,
+        features: { serverOnly: true, dataLayer: true },
         pendingKeepalive: null,
         normalize: {
             googleEmail: normGoogleEmail,

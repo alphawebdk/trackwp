@@ -52,11 +52,130 @@ class TrackWP_Meta {
 
     /**
      * Check if Meta is enabled with valid credentials.
+     *
+     * The token check goes through access_token() (TR6): CAPI is also
+     * "configured" when TrackWP has no token of its own but falls back to
+     * Meta for WooCommerce's token for the same pixel.
      */
     public function is_enabled() {
         return !empty($this->config['meta_enabled'])
             && !empty($this->config['meta_pixel_id'])
-            && !empty($this->config['meta_access_token']);
+            && self::access_token($this->config) !== '';
+    }
+
+    /**
+     * TR6 (PLAN-1.11.1-v2 §9): the Conversions API access token to use.
+     *
+     * 1. TrackWP's own token (`trackwp_platforms.meta_access_token`),
+     *    decoded via TrackWP_Hash::decode() — the only decode point.
+     * 2. Otherwise, as a fallback, Meta for WooCommerce's token
+     *    (`wc_facebook_access_token`), used RAW (never decoded — it is not
+     *    TrackWP-encoded), but ONLY when fb4woo is connected to the SAME
+     *    pixel as TrackWP (`get_option('wc_facebook_pixel_id') ===
+     *    trackwp_platforms.meta_pixel_id`).
+     *
+     * This is the single reader every consumer of the token must use
+     * (is_enabled(), send_event(), TrackWP_Meta_Takeover::has_token()) so
+     * they can never disagree. The token is never written to
+     * trackwp_platforms, never logged and never exported.
+     *
+     * @param array|null $platforms trackwp_platforms, or null to fetch it.
+     * @return string '' when neither source has a usable token.
+     */
+    public static function access_token($platforms = null) {
+        $resolved = static::resolve_token($platforms);
+        return $resolved['token'];
+    }
+
+    /**
+     * TR8: which source access_token() resolved to, for status() display
+     * ("CAPI via token fra Meta for WooCommerce" when the source is fb4woo).
+     *
+     * @param array|null $platforms trackwp_platforms, or null to fetch it.
+     * @return string 'trackwp'|'fb4woo'|'' (no token from either source).
+     */
+    public static function access_token_source($platforms = null) {
+        $resolved = static::resolve_token($platforms);
+        return $resolved['source'];
+    }
+
+    /**
+     * @param array|null $platforms
+     * @return array{token:string,source:string}
+     */
+    private static function resolve_token($platforms) {
+        if ($platforms === null) {
+            $platforms = get_option('trackwp_platforms', array());
+        }
+        $platforms = is_array($platforms) ? $platforms : array();
+
+        if (!empty($platforms['meta_access_token']) && is_string($platforms['meta_access_token'])) {
+            $decoded = trim((string) TrackWP_Hash::decode($platforms['meta_access_token']));
+            if ($decoded !== '') {
+                return array('token' => $decoded, 'source' => 'trackwp');
+            }
+        }
+
+        $fallback = static::fb4woo_fallback_token($platforms);
+        if ($fallback !== '') {
+            return array('token' => $fallback, 'source' => 'fb4woo');
+        }
+
+        return array('token' => '', 'source' => '');
+    }
+
+    /**
+     * TR6/TR8: Meta for WooCommerce's own token, used only when fb4woo is
+     * connected to the SAME pixel TrackWP is configured for. Read via
+     * `WooCommerce\Facebook\Handlers\Connection::get_access_token()`
+     * (fb4woo 3.7.6, includes/Handlers/Connection.php:648-658, applies the
+     * `wc_facebook_connection_access_token` filter internally), if that
+     * class is loaded, otherwise the raw option
+     * `wc_facebook_access_token` (Connection::OPTION_ACCESS_TOKEN,
+     * Connection.php:76) is used as a fallback. The pixel-id option is
+     * `wc_facebook_pixel_id` (Handlers/MetaExtension.php:46). Verified live
+     * 29-09-2026 and in tmp-research/fb4woo/v376 (TR8).
+     *
+     * @param array $platforms trackwp_platforms.
+     * @return string '' when fb4woo is not connected to the same pixel.
+     */
+    private static function fb4woo_fallback_token($platforms) {
+        $pixel_id = isset($platforms['meta_pixel_id']) && is_scalar($platforms['meta_pixel_id'])
+            ? (string) $platforms['meta_pixel_id']
+            : '';
+        if ($pixel_id === '') {
+            return '';
+        }
+        $fb4woo_pixel_id = (string) get_option('wc_facebook_pixel_id', '');
+        if ($fb4woo_pixel_id === '' || $fb4woo_pixel_id !== $pixel_id) {
+            return '';
+        }
+        return trim(static::fb4woo_connection_token());
+    }
+
+    /**
+     * Reads fb4woo's token, preferring its Connection handler (which applies
+     * fb4woo's own `wc_facebook_connection_access_token` filter) over the
+     * raw option. Protected (not private) and called via `static::` the
+     * whole way down from access_token(), so a test-only subclass can
+     * override just this one method to prove the Connection-handler branch
+     * is taken, without a global `facebook_for_woocommerce()` stub that
+     * would leak `function_exists()` into unrelated tests (e.g.
+     * TrackWP_Meta_Takeover::fb4woo_active()). See tests/test-meta.php.
+     *
+     * @return string
+     */
+    protected static function fb4woo_connection_token() {
+        if (function_exists('facebook_for_woocommerce')) {
+            $plugin = facebook_for_woocommerce();
+            if (is_object($plugin) && method_exists($plugin, 'get_connection_handler')) {
+                $handler = $plugin->get_connection_handler();
+                if (is_object($handler) && method_exists($handler, 'get_access_token')) {
+                    return (string) $handler->get_access_token();
+                }
+            }
+        }
+        return (string) get_option('wc_facebook_access_token', '');
     }
 
     /**
@@ -146,7 +265,7 @@ class TrackWP_Meta {
         }
 
         $pixel_id     = $this->config['meta_pixel_id'];
-        $access_token = TrackWP_Hash::decode($this->config['meta_access_token']);
+        $access_token = self::access_token($this->config);
 
         $api_version = !empty($this->platforms['meta_api_version']) ? $this->platforms['meta_api_version'] : self::DEFAULT_API_VERSION;
         $api_version = apply_filters('trackwp_meta_api_version', $api_version);
@@ -430,10 +549,12 @@ class TrackWP_Meta {
 
             $code = (int) wp_remote_retrieve_response_code($response);
             if ($code >= 200 && $code < 300) {
+                self::clear_token_error();
                 return self::result('ok', 'sent', $code, $attempts);
             }
 
-            $detail = self::error_detail(wp_remote_retrieve_body($response));
+            $raw_body = wp_remote_retrieve_body($response);
+            $detail   = self::error_detail($raw_body);
             if ($code === 429) {
                 $result = self::result('failed', 'http_429', $code, $attempts, $detail);
                 break;
@@ -443,6 +564,7 @@ class TrackWP_Meta {
                 continue;
             }
             $result = self::result('failed', 'http_4xx', $code, $attempts, $detail);
+            self::record_token_error($code, $raw_body);
             break;
         }
 
@@ -450,6 +572,82 @@ class TrackWP_Meta {
             $this->log($result);
         }
         return $result;
+    }
+
+    /**
+     * Is this Graph response a token or permission error (KB15)?
+     *
+     * HTTP 400/401/403 with Graph error code 190 (invalid/expired access
+     * token) or code 10 / 200-299 (permission errors). Codes:
+     * https://developers.facebook.com/docs/graph-api/guides/error-handling/
+     *
+     * @param int    $http_code
+     * @param string $raw_body
+     * @return array|null Parsed Graph error array, or null when not a token error.
+     */
+    public static function token_error($http_code, $raw_body) {
+        if (!in_array((int) $http_code, array(400, 401, 403), true)) {
+            return null;
+        }
+        $data = json_decode((string) $raw_body, true);
+        if (!is_array($data) || empty($data['error']) || !is_array($data['error']) || !isset($data['error']['code'])) {
+            return null;
+        }
+        $code = (int) $data['error']['code'];
+        if ($code === 190 || $code === 10 || ($code >= 200 && $code <= 299)) {
+            return $data['error'];
+        }
+        return null;
+    }
+
+    /**
+     * Store a Graph token/permission error in TrackWP_Meta_Takeover's
+     * last_error option (not autoloaded), at most once per hour. The Meta
+     * takeover is deliberately left in place (no automatic fallback to
+     * fb4woo); the admin shows the stored error.
+     *
+     * @param int    $http_code
+     * @param string $raw_body
+     * @return bool True when the error was written.
+     */
+    private static function record_token_error($http_code, $raw_body) {
+        $error = self::token_error($http_code, $raw_body);
+        if ($error === null) {
+            return false;
+        }
+        $option   = TrackWP_Meta_Takeover::LAST_ERROR_OPTION;
+        $previous = get_option($option, null);
+        if (is_array($previous) && isset($previous['time']) && (time() - (int) $previous['time']) < HOUR_IN_SECONDS) {
+            return false;
+        }
+        $clean = static function ($key) use ($error) {
+            return isset($error[$key]) && is_scalar($error[$key]) ? preg_replace('/[^A-Za-z0-9_\-]/', '', (string) $error[$key]) : '';
+        };
+        $value = array(
+            'time'          => time(),
+            'http_code'     => (int) $http_code,
+            'code'          => (int) $error['code'],
+            'error_subcode' => isset($error['error_subcode']) ? (int) $error['error_subcode'] : 0,
+            'type'          => $clean('type'),
+            'message'       => isset($error['message']) && is_scalar($error['message']) ? substr(sanitize_text_field((string) $error['message']), 0, 300) : '',
+            'fbtrace_id'    => $clean('fbtrace_id'),
+        );
+        if ($previous === null) {
+            add_option($option, $value, '', false);
+        } else {
+            update_option($option, $value, false);
+        }
+        return true;
+    }
+
+    /**
+     * A successful send proves the token works again: drop a stored token
+     * error so the admin notice does not outlive the fix.
+     */
+    private static function clear_token_error() {
+        if (get_option(TrackWP_Meta_Takeover::LAST_ERROR_OPTION, null) !== null) {
+            delete_option(TrackWP_Meta_Takeover::LAST_ERROR_OPTION);
+        }
     }
 
     /**

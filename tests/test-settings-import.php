@@ -27,6 +27,7 @@ class TrackWP_Settings_Import_Test extends WP_UnitTestCase {
         delete_option( 'trackwp_consent' );
         delete_option( 'trackwp_cookie_declarations' );
         delete_option( 'trackwp_woocommerce' );
+        delete_option( 'trackwp_blocker' );
         parent::tear_down();
     }
 
@@ -242,6 +243,10 @@ class TrackWP_Settings_Import_Test extends WP_UnitTestCase {
     public function test_every_checkbox_has_a_preceding_hidden_zero_fallback() {
         $template = file_get_contents( TRACKWP_PLUGIN_DIR . 'templates/settings-page.php' );
         $this->assertNotFalse( $template );
+        // 1.11.0: the Blokering tab is a partial included by settings-page.php.
+        $partial = file_get_contents( TRACKWP_PLUGIN_DIR . 'templates/partials/admin-blocker.php' );
+        $this->assertNotFalse( $partial );
+        $template .= $partial;
 
         preg_match_all( '/<input\s+type="checkbox"[^>]*name="([^"]+)"/s', $template, $matches );
         $checkbox_names = $matches[1];
@@ -312,5 +317,87 @@ class TrackWP_Settings_Import_Test extends WP_UnitTestCase {
         // Benign values must survive unchanged.
         $this->assertSame( 'Mozilla/5.0', $method->invoke( null, 'Mozilla/5.0' ) );
         $this->assertSame( '', $method->invoke( null, '' ) );
+    }
+
+    /**
+     * 1.11.0: trackwp_blocker and M1 are exported and restored on import.
+     * Producers: TrackWP_Settings::sanitize_blocker() / sanitize_platforms()
+     * for the stored options, export_settings() for the file.
+     */
+    public function test_blocker_and_m1_round_trip_through_export_import() {
+        $settings = new TrackWP_Settings();
+        $blocker  = $settings->sanitize_blocker( array(
+            'mode'           => 'test',
+            'rules'          => array( 'host:cdn.leadinfo.net' => array( 'block' => '1', 'category' => 'marketing', 'vendor' => '' ) ),
+            'custom_vendors' => array( array( 'name' => 'Partner Ads', 'category' => 'marketing' ) ),
+            'exceptions'     => array( 'allow' => array( array( 'type' => 'host', 'value' => 'cdn.example.com' ) ), 'paths' => '/kasse/' ),
+            'extra_paths'    => '/kontakt/',
+        ) );
+        update_option( 'trackwp_blocker', $blocker );
+        update_option( 'trackwp_platforms', $settings->sanitize_platforms( array( 'meta_pixel_with_gtm' => '1' ) ) );
+
+        $exported = TrackWP_Settings::export_settings();
+        $this->assertSame( $blocker, $exported['blocker'] );
+
+        delete_option( 'trackwp_blocker' );
+        delete_option( 'trackwp_platforms' );
+        $this->assertTrue( TrackWP_Settings::import_settings( json_decode( wp_json_encode( $exported ), true ) ) );
+
+        $this->assertSame( $blocker, get_option( 'trackwp_blocker' ) );
+        $this->assertTrue( get_option( 'trackwp_platforms' )['meta_pixel_with_gtm'] );
+
+        // An import file from before 1.11.0 leaves the option untouched.
+        unset( $exported['blocker'] );
+        update_option( 'trackwp_blocker', array( 'mode' => 'on' ) );
+        TrackWP_Settings::import_settings( $exported );
+        $this->assertSame( 'on', get_option( 'trackwp_blocker' )['mode'] );
+    }
+
+    /**
+     * 1.11.1 KC1/TR7: fb4woo_tracking_off, gtm_datalayer_events, ga4_source
+     * and trackwp_blocker['nocache_params'] round-trip through export/import.
+     */
+    public function test_1_11_1_keys_round_trip_through_export_import() {
+        $settings  = new TrackWP_Settings();
+        $platforms = $settings->sanitize_platforms( array(
+            'fb4woo_tracking_off'  => '1',
+            'gtm_enabled'          => '1',
+            'gtm_container_id'     => 'GTM-ABCD123',
+            'gtm_datalayer_events' => 'on',
+            'ga4_source'           => 'split',
+        ) );
+        update_option( 'trackwp_platforms', $platforms );
+
+        $blocker = $settings->sanitize_blocker( array(
+            'nocache_params' => array( 'pacid', 'gclid' ),
+        ) );
+        update_option( 'trackwp_blocker', $blocker );
+
+        $exported = TrackWP_Settings::export_settings();
+        $this->assertTrue( $exported['platforms']['fb4woo_tracking_off'] );
+        $this->assertSame( 'on', $exported['platforms']['gtm_datalayer_events'] );
+        $this->assertSame( 'split', $exported['platforms']['ga4_source'] );
+        $this->assertSame( array( 'pacid', 'gclid' ), $exported['blocker']['nocache_params'] );
+
+        delete_option( 'trackwp_platforms' );
+        delete_option( 'trackwp_blocker' );
+        $this->assertTrue( TrackWP_Settings::import_settings( json_decode( wp_json_encode( $exported ), true ) ) );
+
+        $restored_platforms = get_option( 'trackwp_platforms' );
+        $this->assertTrue( $restored_platforms['fb4woo_tracking_off'] );
+        $this->assertSame( 'on', $restored_platforms['gtm_datalayer_events'] );
+        $this->assertSame( 'split', $restored_platforms['ga4_source'] );
+        $this->assertSame( array( 'pacid', 'gclid' ), get_option( 'trackwp_blocker' )['nocache_params'] );
+    }
+
+    /**
+     * An import file predating 1.11.1 has no nocache_params key; the
+     * sanitizer/defaults fill in the generic click-id list.
+     */
+    public function test_blocker_defaults_fill_missing_nocache_params_on_old_import() {
+        $this->assertSame(
+            TrackWP_Settings::default_nocache_params(),
+            TrackWP_Settings::blocker_defaults()['nocache_params']
+        );
     }
 }

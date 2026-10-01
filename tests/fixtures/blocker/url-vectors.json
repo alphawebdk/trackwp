@@ -1,0 +1,511 @@
+{
+  "_comment": "Shared by PHP (tests/test-blocker-rules.php) and JS (T3 guard tests). vectors: S3/KB6 normalization; expected = TrackWP_Blocker_Rules::url_key() form host[:port]/path, or null for non-http(s). home defaults to the top-level home. match: extra T2 section; settings is a trackwp_blocker option compiled by the producer (TrackWP_Blocker_Rules::compile, dumped for JS by tests/js/blocker-rules-dump.php); cases with php_only=true use handle/inline matching the guard does not do.",
+  "home": "https://example.org",
+  "vectors": [
+    {
+      "url": "//static.klaviyo.com/onsite/js/x.js",
+      "base": "https://example.org/shop/",
+      "expected": "static.klaviyo.com/onsite/js/x.js"
+    },
+    {
+      "url": "//static.klaviyo.com/onsite/js/QNtDCQ/klaviyo.js?ver=3.8.3",
+      "base": "https://example.org/",
+      "expected": "static.klaviyo.com/onsite/js/QNtDCQ/klaviyo.js"
+    },
+    {
+      "url": "//sleeknotecustomerscripts.sleeknote.com/1.js",
+      "base": "https://example.org/",
+      "expected": "sleeknotecustomerscripts.sleeknote.com/1.js"
+    },
+    {
+      "url": "//static.klaviyo.com/onsite/js/x.js",
+      "base": "http://example.org/",
+      "home": "http://example.org",
+      "expected": "static.klaviyo.com/onsite/js/x.js"
+    },
+    {
+      "url": "https://unpkg.com/meta-capi-param-builder-clientjs/dist/clientParamBuilder.bundle.js?ver=3.7.6",
+      "base": "https://example.org/",
+      "expected": "unpkg.com/meta-capi-param-builder-clientjs/dist/clientParamBuilder.bundle.js"
+    },
+    {
+      "url": "https://cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs@1.3.2/dist/clientParamBuilder.bundle.js",
+      "base": "https://example.org/",
+      "expected": "cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs@1.3.2/dist/clientParamBuilder.bundle.js"
+    },
+    {
+      "url": "HTTPS://CDN.Leadinfo.NET:443/Ping.js#frag",
+      "base": "https://example.org/",
+      "expected": "cdn.leadinfo.net/Ping.js"
+    },
+    {
+      "url": "http://stats.wp.com:80/e-202640.js",
+      "base": "https://example.org/",
+      "expected": "stats.wp.com/e-202640.js"
+    },
+    {
+      "url": "https://example.org:8443/a.js",
+      "base": "https://example.org/",
+      "expected": "example.org:8443/a.js"
+    },
+    {
+      "url": "https://Static.Klaviyo.com/Onsite/JS/X.js",
+      "base": "https://example.org/",
+      "expected": "static.klaviyo.com/Onsite/JS/X.js"
+    },
+    {
+      "url": "https://user:pw@evil.example/a.js",
+      "base": "https://example.org/",
+      "expected": "evil.example/a.js"
+    },
+    {
+      "url": "https://example.org",
+      "base": "https://example.org/",
+      "expected": "example.org/"
+    },
+    {
+      "url": "/wp-content/plugins/x/a.js?v=1",
+      "base": "https://example.org/blog/post/",
+      "expected": "example.org/wp-content/plugins/x/a.js"
+    },
+    {
+      "url": "/wp-content/plugins/x/a.js",
+      "base": "https://cdn.example.net/assets/",
+      "home": "https://example.org:8080",
+      "expected": "example.org:8080/wp-content/plugins/x/a.js"
+    },
+    {
+      "url": "../js/a.js",
+      "base": "https://example.org/shop/cart/",
+      "expected": "example.org/shop/js/a.js"
+    },
+    {
+      "url": "../../../js/a.js",
+      "base": "https://example.org/shop/cart/",
+      "expected": "example.org/js/a.js"
+    },
+    {
+      "url": "js/a.js",
+      "base": "https://example.org/shop/cart/page",
+      "expected": "example.org/shop/cart/js/a.js"
+    },
+    {
+      "url": "./a.js?x=1#y",
+      "base": "https://example.org/shop/",
+      "expected": "example.org/shop/a.js"
+    },
+    {
+      "url": "b/c.js",
+      "base": "https://cdn.example.net/assets/",
+      "expected": "cdn.example.net/assets/b/c.js"
+    },
+    {
+      "url": "?x=1",
+      "base": "https://example.org/p/q",
+      "expected": "example.org/p/q"
+    },
+    {
+      "url": "/a/./b/../c.js",
+      "base": "https://example.org/",
+      "expected": "example.org/a/c.js"
+    },
+    {
+      "url": "  https://stats.wp.com/s-1.js  ",
+      "base": "https://example.org/",
+      "expected": "stats.wp.com/s-1.js"
+    },
+    {
+      "url": "data:text/javascript,alert(1)",
+      "base": "https://example.org/",
+      "expected": null
+    },
+    {
+      "url": "javascript:void(0)",
+      "base": "https://example.org/",
+      "expected": null
+    },
+    {
+      "url": "blob:https://example.org/1234",
+      "base": "https://example.org/",
+      "expected": null
+    },
+    {
+      "url": "",
+      "base": "https://example.org/",
+      "expected": null
+    }
+  ],
+  "match": {
+    "home": "https://example.org",
+    "settings": {
+      "mode": "on",
+      "rules": {
+        "host:stats.wp.com": {
+          "block": true,
+          "category": "statistics",
+          "vendor": "jetpack"
+        },
+        "host:connect.facebook.net": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "url:unpkg.com/meta-capi-param-builder-clientjs/": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "url:cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:static.klaviyo.com": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:sleeknote.com": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:leadinfo.net": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:cdn.other.test": {"block": true, "category": "marketing", "vendor": ""},
+        "url:prefix.test/a/": {
+          "block": true,
+          "category": "statistics",
+          "vendor": ""
+        },
+        "url:prefix.test/a/b/": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:prefix.test": {
+          "block": true,
+          "category": "personalisation",
+          "vendor": ""
+        },
+        "host:ads.test": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:blocked.test": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "url:www.google.com/": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:example.org": {
+          "block": true,
+          "category": "statistics",
+          "vendor": ""
+        },
+        "pixel:www.facebook.com/tr": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:off.test": {
+          "block": false,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "host:necessary.test": {
+          "block": true,
+          "category": "necessary",
+          "vendor": ""
+        },
+        "handle:wc-order-attribution": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "handle:jquery": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "handle:trackwp-consent": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        },
+        "inline:fbevents.js": {
+          "block": true,
+          "category": "marketing",
+          "vendor": ""
+        }
+      },
+      "exceptions": {
+        "allow": [
+          "url:blocked.test/ok/"
+        ],
+        "paths": []
+      }
+    },
+    "cases": [
+      {"kind": "script", "url": "https://cdn.other.test/wp-content/plugins/trackwp/x.js", "base": "https://example.org/", "expect": "host:cdn.other.test"},
+      {
+        "kind": "script",
+        "url": "//static.klaviyo.com/onsite/js/x.js",
+        "base": "https://example.org/",
+        "expect": "host:static.klaviyo.com"
+      },
+      {
+        "kind": "script",
+        "url": "//sleeknotecustomerscripts.sleeknote.com/1.js",
+        "base": "https://example.org/",
+        "expect": "host:sleeknote.com"
+      },
+      {
+        "kind": "script",
+        "url": "https://cdn.leadinfo.net/ping.js",
+        "base": "https://example.org/",
+        "expect": "host:leadinfo.net"
+      },
+      {
+        "kind": "script",
+        "url": "https://notleadinfo.net/ping.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://stats.wp.com/e-202640.js",
+        "base": "https://example.org/",
+        "expect": "host:stats.wp.com"
+      },
+      {
+        "kind": "script",
+        "url": "https://unpkg.com/meta-capi-param-builder-clientjs/dist/clientParamBuilder.bundle.js?ver=3.7.6",
+        "base": "https://example.org/",
+        "expect": "url:unpkg.com/meta-capi-param-builder-clientjs/"
+      },
+      {
+        "kind": "script",
+        "url": "https://unpkg.com/other-package/dist/x.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs@1.3.2/dist/clientParamBuilder.bundle.js",
+        "base": "https://example.org/",
+        "expect": "url:cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs"
+      },
+      {
+        "kind": "script",
+        "url": "https://prefix.test/a/b/c.js",
+        "base": "https://example.org/",
+        "expect": "url:prefix.test/a/b/"
+      },
+      {
+        "kind": "script",
+        "url": "https://prefix.test/a/c.js",
+        "base": "https://example.org/",
+        "expect": "url:prefix.test/a/"
+      },
+      {
+        "kind": "script",
+        "url": "https://prefix.test/z.js",
+        "base": "https://example.org/",
+        "expect": "host:prefix.test"
+      },
+      {
+        "kind": "script",
+        "url": "https://cdn.ads.test/x.js",
+        "base": "https://example.org/",
+        "expect": "host:ads.test"
+      },
+      {
+        "kind": "script",
+        "url": "https://notads.test/x.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://ads.test.evil.example/x.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://blocked.test/no/a.js",
+        "base": "https://example.org/",
+        "expect": "host:blocked.test"
+      },
+      {
+        "kind": "script",
+        "url": "https://blocked.test/ok/a.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://www.google.com/recaptcha/api.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://www.google.com/foo.js",
+        "base": "https://example.org/",
+        "expect": "url:www.google.com/"
+      },
+      {
+        "kind": "script",
+        "url": "https://www.googletagmanager.com/gtm.js?id=GTM-X",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://challenges.cloudflare.com/turnstile/v0/api.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-content/plugins/trackwp/assets/js/consent.min.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-includes/js/jquery/jquery.min.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-content/plugins/wpforms-lite/assets/js/frontend.min.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-content/plugins/woocommerce/assets/client/blocks/cart.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-content/cache/min/1/all.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "/wp-content/plugins/other/a.js",
+        "base": "https://example.org/",
+        "expect": "host:example.org"
+      },
+      {
+        "kind": "script",
+        "url": "https://off.test/a.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://necessary.test/a.js",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "iframe",
+        "url": "https://cdn.ads.test/frame.html",
+        "base": "https://example.org/",
+        "expect": "host:ads.test"
+      },
+      {
+        "kind": "pixel",
+        "url": "https://www.facebook.com/tr?id=1&ev=PageView&noscript=1",
+        "base": "https://example.org/",
+        "expect": "pixel:www.facebook.com/tr"
+      },
+      {
+        "kind": "pixel",
+        "url": "https://cdn.ads.test/p.gif",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://www.facebook.com/tr?id=1",
+        "base": "https://example.org/",
+        "expect": null
+      },
+      {
+        "kind": "script",
+        "url": "https://connect.facebook.net/en_US/fbevents.js",
+        "base": "https://example.org/",
+        "expect": "host:connect.facebook.net"
+      },
+      {
+        "kind": "script",
+        "handle": "wc-order-attribution",
+        "url": "/wp-content/plugins/woocommerce/assets/js/frontend/order-attribution.min.js",
+        "base": "https://example.org/",
+        "expect": "handle:wc-order-attribution",
+        "php_only": true
+      },
+      {
+        "kind": "inline",
+        "handle": "wc-order-attribution",
+        "text": "var wc_order_attribution = {};",
+        "expect": "handle:wc-order-attribution",
+        "php_only": true
+      },
+      {
+        "kind": "script",
+        "handle": "jquery",
+        "url": "https://code.jquery.test/jquery.js",
+        "base": "https://example.org/",
+        "expect": null,
+        "php_only": true
+      },
+      {
+        "kind": "script",
+        "handle": "trackwp-consent",
+        "url": "https://ads.test/x.js",
+        "base": "https://example.org/",
+        "expect": null,
+        "php_only": true
+      },
+      {
+        "kind": "inline",
+        "handle": "",
+        "text": "!function(f,b,e,v,n,t,s){}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');",
+        "expect": "inline:fbevents.js",
+        "php_only": true
+      },
+      {
+        "kind": "inline",
+        "handle": "",
+        "text": "window.trackwpMeta=1;fbq('init','1');'https://connect.facebook.net/en_US/fbevents.js'",
+        "expect": null,
+        "php_only": true
+      },
+      {
+        "kind": "inline",
+        "handle": "",
+        "text": "window.trackwpConsentReader={};",
+        "expect": null,
+        "php_only": true
+      }
+    ]
+  }
+}

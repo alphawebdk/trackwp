@@ -34,13 +34,25 @@ function trackwp_uninstall_site() {
         'trackwp_stats',
         'trackwp_cookie_declarations',
         'trackwp_woocommerce',
+        // 1.11.0: blocking until consent and the Meta takeover.
+        'trackwp_blocker',
+        'trackwp_blocker_scan',
+        'trackwp_blocker_compiled',
+        'trackwp_blocker_status',
+        'trackwp_meta_last_error',
+        // 1.11.1: the CDN-purge notice (versionless key since 1.11.1) and
+        // its predecessor, plus the D1 Meta-takeover one-time notice (KC15).
+        'trackwp_upgrade_notice',
+        'trackwp_upgrade_notice_1_10_1',
+        'trackwp_upgrade_notice_meta_takeover',
     );
     foreach ( $options as $option ) {
         delete_option( $option );
     }
 
-    // Transients (incl. rate-limit buckets _transient_trackwp_rl_* and the
-    // consent ts transients _transient_trackwp_cts_*).
+    // Transients (incl. rate-limit buckets _transient_trackwp_rl_*, the
+    // consent ts transients _transient_trackwp_cts_* and the blocker's scan
+    // lock and observe tokens _transient_trackwp_blk_*).
     $wpdb->query(
         $wpdb->prepare(
             "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",

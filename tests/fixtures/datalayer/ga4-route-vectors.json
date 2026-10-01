@@ -1,0 +1,70 @@
+{
+  "description": "Vectors for TrackWP_DataLayer::ga4_route() (PHP) and ga4Route() (assets/js/trackwp.js). Both must return the same 'expected' value for the same 'input' (D4, KC8, TR4).",
+  "cases": [
+    {
+      "name": "send_to_ga4 false gives off",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": false, "source": "gtm", "event": "view_item", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "off"
+    },
+    {
+      "name": "ga4_enabled false gives off, even with everything else true",
+      "input": { "datalayer_active": true, "ga4_enabled": false, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "off"
+    },
+    {
+      "name": "datalayer_active false gives off (defensive)",
+      "input": { "datalayer_active": false, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "off"
+    },
+    {
+      "name": "source gtm always routes via gtm, even for purchase with statistics",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "gtm", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "gtm"
+    },
+    {
+      "name": "split purchase with statistics and mp_configured routes to server",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "server"
+    },
+    {
+      "name": "split purchase without statistics falls back to gtm (cookieless ping)",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": false, "dedup_mode": "client_and_server" },
+      "expected": "gtm"
+    },
+    {
+      "name": "split purchase without mp_configured falls back to gtm",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": false, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "gtm"
+    },
+    {
+      "name": "split purchase with dedup_mode client_only falls back to gtm",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_only" },
+      "expected": "gtm"
+    },
+    {
+      "name": "split with a non-purchase event routes via gtm",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "view_item", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "gtm"
+    },
+    {
+      "name": "split purchase, statistics and mp_configured, default dedup_mode (missing key)",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true },
+      "expected": "server"
+    },
+    {
+      "name": "missing source defaults to gtm behaviour",
+      "input": { "datalayer_active": true, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "gtm"
+    },
+    {
+      "name": "datalayer_active as integer 0 is falsy, gives off (not just literal false)",
+      "input": { "datalayer_active": 0, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "off"
+    },
+    {
+      "name": "datalayer_active as integer 1 (truthy but not strictly true) gives off (Krav 3 parity)",
+      "input": { "datalayer_active": 1, "ga4_enabled": true, "mp_configured": true, "send_to_ga4": true, "source": "split", "event": "purchase", "statistics": true, "dedup_mode": "client_and_server" },
+      "expected": "off"
+    }
+  ]
+}

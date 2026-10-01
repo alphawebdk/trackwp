@@ -249,7 +249,26 @@ class TrackWP_Consent_Profile {
      * The research recommends re-validation every 6-12 months.
      *
      * 'transfer_basis': 'dpf' (EU-US Data Privacy Framework), 'scc' (standard
-     * contractual clauses) or 'none' (no transfer outside the EU/EEA).
+     * contractual clauses), 'none' (no transfer outside the EU/EEA) or 'other'
+     * (unresolved or not DPF; the banner then never claims DPF).
+     *
+     * 1.11.0 (PLAN-1.11.0-v2 KB5): every entry also carries
+     *  - 'signatures' => array(handles, urls, hosts, inline, pixels), see catalog_signatures(),
+     *  - 'server_side_note' => '' or a Danish note about server-to-server traffic that
+     *    cannot be blocked in the browser (scan status cannot_serverside).
+     * New vendors (leadinfo, klaviyo, jetpack, wc_order_attribution, sleeknote) follow
+     * VENDOR-DEKLARATIONER.md "Tillæg 1.11.0" (research 2026-09-29), verified items only:
+     *  - Leadinfo: leadinfo.com/en/legal/privacy/, help.leadinfo.com/en/what-cookies-are-created-by-leadinfo,
+     *    help.leadinfo.com/en/cookieless-tracking. Transfer mechanism not named: "uafklaret".
+     *  - Klaviyo: help.klaviyo.com/hc/en-us/articles/360034666712,
+     *    klaviyo.com/legal/privacy/privacy-notice-12-31-2024, dataprivacyframework.gov/participant/6149.
+     *  - Jetpack/WooCommerce Analytics: automattic.com/privacy/, automattic.com/cookies/,
+     *    jetpack.com/support/cookies/, wpvip.com/privacyframework/ (Automattic's DPF,
+     *    participant/4709, excludes Jetpack and WooCommerce: SCC only).
+     *  - Sleeknote: sleeknote.com/gdpr (Sleeknote ApS, CVR 35840699). Cookie names and
+     *    transfer are unverified (help.sleeknote.com HTTP 403): "uafklaret".
+     *  - Order attribution: woocommerce.com/document/order-attribution-tracking/ (sbjs_*,
+     *    first-party, 30 minutes/session, nothing sent to another domain).
      *
      * @return array<string,array>
      */
@@ -257,7 +276,8 @@ class TrackWP_Consent_Profile {
         $dpf     = __('USA (EU-US Data Privacy Framework)', 'trackwp');
         $ads     = __('Måling af annoncer samt tilpasning og målretning af annoncer', 'trackwp');
         $managed = __('Styret af udbyderen', 'trackwp');
-        return array(
+        $unknown = self::unresolved();
+        $catalog = array(
             'ga4' => array(
                 'key'            => 'ga4',
                 'name'           => 'Google Analytics 4',
@@ -344,6 +364,228 @@ class TrackWP_Consent_Profile {
                 'transfer'       => __('Primært EU. Enkelte oplysninger kan overføres til USA (EU\'s standardkontraktbestemmelser, SCC)', 'trackwp'),
                 'transfer_basis' => 'scc',
             ),
+            'leadinfo' => array(
+                'key'            => 'leadinfo',
+                'name'           => 'Leadinfo',
+                'provider'       => __('Leadinfo B.V., Nederlandene', 'trackwp'),
+                'recipient'      => 'Leadinfo',
+                'category'       => 'marketing',
+                // Leadinfo may also run cookieless, depending on the site's own Leadinfo setting.
+                'cookies'        => '_li_id.*, _li_ses.*',
+                'purpose'        => __('Identifikation af virksomheder, der besøger websitet (B2B-leadgenerering)', 'trackwp'),
+                'lifetime'       => __('_li_id.*: 2 år. _li_ses.*: session. Kan køre uden cookies, afhængigt af opsætningen hos Leadinfo', 'trackwp'),
+                // Leadinfo only states "appropriate safeguards"; the mechanism is not named.
+                'transfer'       => $unknown,
+                'transfer_basis' => 'other',
+            ),
+            'klaviyo' => array(
+                'key'              => 'klaviyo',
+                'name'             => 'Klaviyo',
+                'provider'         => __('Klaviyo, Inc. (USA), fælles ansvarlig med Klaviyo Ltd og Klaviyo Ireland Limited', 'trackwp'),
+                'recipient'        => 'Klaviyo',
+                'category'         => 'marketing',
+                'cookies'          => '__kla_id',
+                'purpose'          => __('E-mailmarkedsføring, tilmeldingsformularer og målretning', 'trackwp'),
+                'lifetime'         => self::up_to(__('2 år, begrænset af browseren', 'trackwp')),
+                'transfer'         => $dpf,
+                'transfer_basis'   => 'dpf',
+                'server_side_note' => __('Klaviyo-pluginet kan sende oplysninger direkte fra serveren til Klaviyo. Det kan ikke blokeres i browseren.', 'trackwp'),
+            ),
+            'jetpack' => array(
+                'key'              => 'jetpack',
+                'name'             => __('Jetpack Stats og WooCommerce Analytics', 'trackwp'),
+                'provider'         => __('Aut O\'Mattic A8C Ireland Ltd. (Jetpack) og WooCommerce Ireland Ltd. (WooCommerce Analytics), Irland', 'trackwp'),
+                'recipient'        => 'Automattic',
+                'category'         => 'statistics',
+                'cookies'          => 'tk_ai, tk_qs, tk_ni, tk_*',
+                'purpose'          => __('Statistik over besøg og butikshændelser', 'trackwp'),
+                'lifetime'         => __('tk_ai og tk_qs: session. Øvrige: styret af udbyderen', 'trackwp'),
+                // Automattic's DPF certification excludes Jetpack and WooCommerce: SCC only.
+                'transfer'         => __('USA (EU\'s standardkontraktbestemmelser, SCC)', 'trackwp'),
+                'transfer_basis'   => 'scc',
+                'server_side_note' => __('WooCommerce Analytics kan sende hændelser fra serveren. Det kan ikke blokeres i browseren.', 'trackwp'),
+            ),
+            'wc_order_attribution' => array(
+                'key'            => 'wc_order_attribution',
+                'name'           => __('WooCommerce ordreattribution', 'trackwp'),
+                'provider'       => __('Dette website (førsteparts)', 'trackwp'),
+                'recipient'      => '',
+                // Default marketing (WooCommerce #59611); the admin may change it per rule.
+                'category'       => 'marketing',
+                'cookies'        => 'sbjs_*',
+                'purpose'        => __('Registrerer, hvor besøget kom fra (fx en kampagne eller en henvisning), så en ordre kan knyttes til kilden', 'trackwp'),
+                'lifetime'       => __('30 minutter (session)', 'trackwp'),
+                'transfer'       => '',
+                'transfer_basis' => 'none',
+            ),
+            'sleeknote' => array(
+                'key'            => 'sleeknote',
+                'name'           => 'Sleeknote',
+                'provider'       => __('Sleeknote ApS, Danmark', 'trackwp'),
+                'recipient'      => 'Sleeknote',
+                'category'       => 'marketing',
+                // Cookie names could not be verified in an official source.
+                'cookies'        => $unknown,
+                'purpose'        => __('Pop-ups og tilmeldingsformularer til markedsføring', 'trackwp'),
+                'lifetime'       => $managed,
+                'transfer'       => $unknown,
+                'transfer_basis' => 'other',
+            ),
+        );
+
+        $catalog['meta']['server_side_note'] = __('Meta for WooCommerce kan sende hændelser direkte fra serveren (Conversions API). Det kan ikke blokeres i browseren.', 'trackwp');
+
+        $signatures = self::catalog_signatures();
+        foreach ($catalog as $key => $entry) {
+            $catalog[$key]['signatures'] = isset($signatures[$key]) ? $signatures[$key] : self::empty_signatures();
+            $catalog[$key] += array('server_side_note' => '');
+        }
+        return $catalog;
+    }
+
+    /** @return string The Danish marker for data without a verified source. */
+    public static function unresolved() {
+        return __('uafklaret', 'trackwp');
+    }
+
+    /** @return array Signature structure with every list present and empty. */
+    protected static function empty_signatures() {
+        return array('handles' => array(), 'urls' => array(), 'hosts' => array(), 'inline' => array(), 'pixels' => array());
+    }
+
+    /**
+     * Blocker signatures per catalog vendor (KB5). Only read through vendor_catalog().
+     *  - handles: WordPress script handles (matched via script_loader_tag and id="<handle>-js*").
+     *  - urls / pixels: host + path prefix, no scheme and no query.
+     *  - hosts: host, matched on domain boundaries.
+     *  - inline: markers ([A-Za-z0-9._-]{8,64}) searched in inline scripts without src.
+     * ga4 and google_ads have none (status gtm_consent_mode).
+     *
+     * Sources:
+     *  - meta, leadinfo, klaviyo, jetpack, wc_order_attribution, sleeknote: live HTML
+     *    live-test/adashofmagic/fe2-source-home.html (fb4woo 3.7.6: lines 667-673, 949-959,
+     *    4455, 4505, 4531; noscript facebook.com/tr; Leadinfo 4124; Klaviyo 4416 and 4516;
+     *    Jetpack 381 and 4518-4523; Sleeknote 458-465; sourcebuster-js / wc-order-attribution).
+     *  - Meta param builder on jsdelivr: fb4woo latest, facebook-commerce-events-tracker.php:37
+     *    (cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs@1.3.2, unpkg as fallback :40).
+     *  - Hosts per VENDOR-DEKLARATIONER.md "Tillæg 1.11.0" del B: LinkedIn
+     *    linkedin.com/help/lms/answer/a425696; Microsoft UET hlp_BA_CONC_UETv2CSP.md
+     *    (bat.bing.com); Hotjar help.hotjar.com/hc/en-us/articles/36820026388881 and
+     *    docs.contentsquare.com/en/web/content-security-policy/ (t.contentsquare.net);
+     *    Leadinfo help.leadinfo.com/en/why-is-the-leadinfo-tracker-blocked-on-my-website;
+     *    Klaviyo help.klaviyo.com/hc/en-us/articles/115005076767 and /360034666712.
+     *  - UNVERIFIED, kept: TikTok analytics.tiktok.com (TikTok does not publish the pixel
+     *    code; consistent in independent reviews and not in official help text) and Sleeknote
+     *    sleeknotecustomerscripts.sleeknote.com (official CSP page only seen as a search
+     *    snippet, but also present in the live HTML).
+     *
+     * @return array<string,array>
+     */
+    protected static function catalog_signatures() {
+        $s = array(
+            'meta' => array(
+                'handles' => array('wc-facebook-pixel-events', 'facebook-capi-param-builder', 'facebook-for-woocommerce-inline', 'wc-facebook-signals'),
+                'urls'    => array('unpkg.com/meta-capi-param-builder-clientjs', 'cdn.jsdelivr.net/npm/meta-capi-param-builder-clientjs'),
+                'hosts'   => array('connect.facebook.net'),
+                'inline'  => array('connect.facebook.net', 'FacebookSignals'),
+                'pixels'  => array('www.facebook.com/tr'),
+            ),
+            'tiktok' => array(
+                'hosts'  => array('analytics.tiktok.com'),
+                'inline' => array('analytics.tiktok.com'),
+            ),
+            'linkedin' => array(
+                'hosts'  => array('snap.licdn.com'),
+                'inline' => array('_linkedin_partner_id', 'snap.licdn.com'),
+                'pixels' => array('px.ads.linkedin.com/collect'),
+            ),
+            'microsoft_ads' => array(
+                'hosts'  => array('bat.bing.com'),
+                'inline' => array('bat.bing.com'),
+                'pixels' => array('bat.bing.com/action'),
+            ),
+            'hotjar' => array(
+                'hosts'  => array('static.hotjar.com', 'script.hotjar.com', 't.contentsquare.net'),
+                'inline' => array('static.hotjar.com'),
+            ),
+            'leadinfo' => array(
+                'hosts'  => array('cdn.leadinfo.net', 'collector.leadinfo.net'),
+                'inline' => array('cdn.leadinfo.net'),
+            ),
+            'klaviyo' => array(
+                'handles' => array('kl-identify-browser'),
+                'hosts'   => array('static.klaviyo.com', 'static-tracking.klaviyo.com'),
+                'inline'  => array('static.klaviyo.com'),
+            ),
+            'jetpack' => array(
+                'handles' => array('jetpack-stats', 'woocommerce-analytics', 'woocommerce-analytics-client'),
+                'hosts'   => array('stats.wp.com'),
+                'pixels'  => array('pixel.wp.com/g.gif'),
+            ),
+            'wc_order_attribution' => array(
+                'handles' => array('sourcebuster-js', 'wc-order-attribution'),
+            ),
+            'sleeknote' => array(
+                'hosts'  => array('sleeknotecustomerscripts.sleeknote.com'),
+                'inline' => array('sleeknotecustomerscripts.sleeknote.com'),
+            ),
+        );
+        foreach ($s as $key => $sig) {
+            $s[$key] = array_merge(self::empty_signatures(), $sig);
+        }
+        return $s;
+    }
+
+    /**
+     * Normalise one admin-entered custom vendor (GTM vendors use 'gtm_', the
+     * blocker's custom_vendors use 'blk_'). Shared so both declare identically.
+     *
+     * @param mixed  $entry  {name, provider, category, cookies, purpose, lifetime, transfer}
+     * @param string $prefix Key prefix.
+     * @return array|null Vendor entry, or null when the name or category is invalid.
+     */
+    public static function normalize_custom_vendor($entry, $prefix) {
+        if (!is_array($entry) || self::str($entry, 'name') === '') {
+            return null;
+        }
+        $cat = self::str($entry, 'category');
+        if (!in_array($cat, self::OPTIONAL_CATEGORIES, true)) {
+            return null;
+        }
+        $name     = self::str($entry, 'name');
+        $provider = self::str($entry, 'provider');
+        $key      = $prefix . sanitize_key($name);
+
+        // 1.11.1 F3 (KC14): an empty transfer field must not silently read as
+        // "no transfer" (transfer_basis 'none' asserts something the admin
+        // never confirmed). Only an explicit "Ingen"/"none" does that.
+        $transfer_raw = self::str($entry, 'transfer');
+        $lower        = strtolower($transfer_raw);
+        if ($transfer_raw === '') {
+            $transfer       = self::unresolved();
+            $transfer_basis = 'other';
+        } elseif (in_array($lower, array('ingen', 'ingen overførsel', 'none'), true)) {
+            $transfer       = $transfer_raw;
+            $transfer_basis = 'none';
+        } elseif (stripos($transfer_raw, 'Data Privacy Framework') !== false || preg_match('/\bDPF\b/', $transfer_raw)) {
+            $transfer       = $transfer_raw;
+            $transfer_basis = 'dpf';
+        } else {
+            $transfer       = $transfer_raw;
+            $transfer_basis = 'other';
+        }
+
+        return array(
+            'key'            => $key,
+            'name'           => $name,
+            'provider'       => $provider,
+            'recipient'      => $provider !== '' ? $provider : $name,
+            'category'       => $cat,
+            'cookies'        => self::str($entry, 'cookies'),
+            'purpose'        => self::str($entry, 'purpose'),
+            'lifetime'       => self::str($entry, 'lifetime') !== '' ? self::str($entry, 'lifetime') : __('Styret af udbyderen', 'trackwp'),
+            'transfer'       => $transfer,
+            'transfer_basis' => $transfer_basis,
         );
     }
 
@@ -369,39 +611,206 @@ class TrackWP_Consent_Profile {
             }
         }
         foreach ($custom as $entry) {
-            if (!is_array($entry) || self::str($entry, 'name') === '') {
-                continue;
+            $v = self::normalize_custom_vendor($entry, 'gtm_');
+            if ($v !== null) {
+                $out[$v['key']] = $v;
             }
-            $cat = self::str($entry, 'category');
-            if (!in_array($cat, self::OPTIONAL_CATEGORIES, true)) {
-                continue;
-            }
-            $name     = self::str($entry, 'name');
-            $provider = self::str($entry, 'provider');
-            $key      = 'gtm_' . sanitize_key($name);
-            $out[$key] = array(
-                'key'       => $key,
-                'name'      => $name,
-                'provider'  => $provider,
-                'recipient' => $provider !== '' ? $provider : $name,
-                'category'  => $cat,
-                'cookies'   => self::str($entry, 'cookies'),
-                'purpose'   => self::str($entry, 'purpose'),
-                'lifetime'  => self::str($entry, 'lifetime') !== '' ? self::str($entry, 'lifetime') : __('Styret af udbyderen', 'trackwp'),
-                'transfer'  => self::str($entry, 'transfer'),
-                // Free text: only an explicit DPF mention counts as DPF.
-                'transfer_basis' => self::str($entry, 'transfer') === ''
-                    ? 'none'
-                    : ((stripos(self::str($entry, 'transfer'), 'Data Privacy Framework') !== false || preg_match('/\bDPF\b/', self::str($entry, 'transfer'))) ? 'dpf' : 'other'),
-            );
         }
         return array_values($out);
     }
 
     /**
+     * Vendors found by the blocker scan (option trackwp_blocker_scan, KB3) plus
+     * the blocker's custom_vendors (option trackwp_blocker, KB1), REGARDLESS of
+     * the block toggle and of the blocker mode: they run on the site either way.
+     * The category comes from the rule (KB1 rules[rule_id].category), else the
+     * catalog; the vendor from the rule, else the scan item. Missing fields
+     * read unresolved().
+     *
+     * Each entry gets via_blocker=true and blocked=bool (true only when every
+     * rule of that vendor has block=true).
+     *
+     * 1.11.1 F1 (KC12): scan rows of kind 'server_side', or 'server_cookie'
+     * without a rule_id, declare the vendor's presence but never toggle
+     * $blocked (there is no browser rule to block them by). A vendor that is
+     * found ONLY through such rows gets server_only=true.
+     *
+     * @return array<string,array> keyed by vendor key, in scan order.
+     */
+    public static function blocker_vendors() {
+        $blocker = self::opt('trackwp_blocker');
+        $scan    = self::opt('trackwp_blocker_scan');
+        $rules   = isset($blocker['rules']) && is_array($blocker['rules']) ? $blocker['rules'] : array();
+        $items   = isset($scan['items']) && is_array($scan['items']) ? $scan['items'] : array();
+        $custom  = isset($blocker['custom_vendors']) && is_array($blocker['custom_vendors']) ? $blocker['custom_vendors'] : array();
+        $catalog = self::vendor_catalog();
+        $cats    = array_merge(array('necessary'), self::OPTIONAL_CATEGORIES);
+        $unknown = self::unresolved();
+
+        $customs = array();
+        foreach ($custom as $entry) {
+            $v = self::normalize_custom_vendor($entry, 'blk_');
+            if ($v !== null) {
+                $customs[$v['key']] = $v;
+            }
+        }
+
+        $out         = array();
+        $blocked     = array();
+        $server_only = array();
+        foreach ($items as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            $rule_id = self::str($item, 'rule_id');
+            $rule    = ($rule_id !== '' && isset($rules[$rule_id]) && is_array($rules[$rule_id])) ? $rules[$rule_id] : array();
+            $key     = self::str($rule, 'vendor') !== '' ? self::str($rule, 'vendor') : self::str($item, 'vendor');
+            $key     = sanitize_key($key);
+            if ($key === '' || $key === 'uafklaret' || $key === 'unresolved') {
+                continue;
+            }
+            $kind             = self::str($item, 'kind');
+            $server_decl      = ($kind === 'server_side') || ($kind === 'server_cookie' && $rule_id === '');
+            $known_vendor_key = isset($catalog[$key]) || isset($customs[$key]);
+
+            // M3: a server_cookie row without an explicit cookie: rule (KC2)
+            // may carry the scanner's display-only text in 'vendor' (a cookie
+            // provider name such as "Webserver (PHP)", not a catalog key,
+            // TrackWP_Blocker_Scanner::server_cookie_items()). Inventing an
+            // unknown-vendor entry from that text would sanitize_key() it
+            // into a phantom duplicate. Only a row that already resolves to a
+            // real catalog key or a declared custom vendor is accepted here;
+            // every other row kind keeps the existing "declare it honestly as
+            // unresolved" fallback below, which IS intentional for genuine
+            // signature findings (script/inline/server_side) with an unknown key.
+            if ($kind === 'server_cookie' && $rule_id === '' && !$known_vendor_key) {
+                continue;
+            }
+
+            if (!isset($server_only[$key])) {
+                $server_only[$key] = true;
+            }
+            if (!$server_decl) {
+                $server_only[$key] = false;
+                $is_blocked    = !empty($rule['block']);
+                $blocked[$key] = isset($blocked[$key]) ? ($blocked[$key] && $is_blocked) : $is_blocked;
+            }
+            if (isset($out[$key])) {
+                continue;
+            }
+            if (isset($catalog[$key])) {
+                $v = $catalog[$key];
+            } elseif (isset($customs[$key])) {
+                $v = $customs[$key];
+            } else {
+                // A vendor key the catalog does not know: declare it honestly as unresolved.
+                $v = array(
+                    'key'            => $key,
+                    'name'           => $key,
+                    'provider'       => $unknown,
+                    'recipient'      => $key,
+                    'category'       => 'marketing',
+                    'cookies'        => $unknown,
+                    'purpose'        => $unknown,
+                    'lifetime'       => __('Styret af udbyderen', 'trackwp'),
+                    'transfer'       => $unknown,
+                    'transfer_basis' => 'other',
+                );
+            }
+            $rule_cat = self::str($rule, 'category');
+            if (in_array($rule_cat, $cats, true)) {
+                $v['category'] = $rule_cat;
+            }
+            $out[$key] = $v;
+        }
+        foreach ($customs as $key => $v) {
+            if (!isset($out[$key])) {
+                $out[$key] = $v;
+            }
+        }
+        foreach ($out as $key => $v) {
+            foreach (array('provider', 'cookies', 'purpose', 'lifetime') as $f) {
+                if (!isset($v[$f]) || $v[$f] === '') {
+                    $v[$f] = $f === 'lifetime' ? __('Styret af udbyderen', 'trackwp') : $unknown;
+                }
+            }
+            $v['via_blocker'] = true;
+            $v['blocked']     = !empty($blocked[$key]);
+            $v['server_only'] = !empty($server_only[$key]);
+            $out[$key]        = $v;
+        }
+        return $out;
+    }
+
+    /**
+     * Keys of vendors found by the blocker in an optional category that are
+     * not blocked (warning 'unblocked_vendors'). Excludes server_only vendors
+     * (KC12 F1): there is no browser rule that could block them, so listing
+     * them here would be misleading.
+     *
+     * @return string[]
+     */
+    public static function unblocked_vendors() {
+        $keys = array();
+        foreach (self::active_vendors() as $key => $v) {
+            if (!empty($v['via_blocker']) && empty($v['blocked']) && empty($v['server_only']) && $v['category'] !== 'necessary') {
+                $keys[] = $key;
+            }
+        }
+        return $keys;
+    }
+
+    /**
+     * Display-name warning lists for the admin notice (KC12 F1). 'not_selected'
+     * mirrors unblocked_vendors() (browser-blockable, found, but not chosen to
+     * block). 'server_side' lists vendors that can never be blocked in the
+     * browser (server_only=true), so blocking has to happen elsewhere (a
+     * server-side cookie rule, a plugin setting) or is not possible at all.
+     *
+     * 'meta' is dropped from 'server_side' when TrackWP itself is delivering
+     * Meta and has suppressed Meta for WooCommerce's own server delivery
+     * (TrackWP_Meta_Takeover::status()['fb4woo_suppressed']): in that case the
+     * "cannot be blocked server-side" warning would be about traffic TrackWP
+     * already stopped. W5 owns that class and key; both are read defensively
+     * because the two workstreams change in parallel.
+     *
+     * @return array{not_selected: string[], server_side: string[]}
+     */
+    public static function blocker_warning_vendors() {
+        $suppressed = false;
+        if (class_exists('TrackWP_Meta_Takeover') && method_exists('TrackWP_Meta_Takeover', 'status')) {
+            $status     = TrackWP_Meta_Takeover::status();
+            $suppressed = is_array($status) && isset($status['fb4woo_suppressed']) && $status['fb4woo_suppressed'];
+        }
+
+        $not_selected = array();
+        $server_side  = array();
+        foreach (self::active_vendors() as $key => $v) {
+            if (empty($v['via_blocker']) || $v['category'] === 'necessary') {
+                continue;
+            }
+            if (!empty($v['server_only'])) {
+                if ($key === 'meta' && $suppressed) {
+                    continue;
+                }
+                $server_side[] = $v['name'];
+                continue;
+            }
+            if (empty($v['blocked'])) {
+                $not_selected[] = $v['name'];
+            }
+        }
+        return array(
+            'not_selected' => $not_selected,
+            'server_side'  => $server_side,
+        );
+    }
+
+    /**
      * Active third-party vendors, keyed by vendor key, in a stable order.
      * Each: key, name, provider, recipient, category, cookies, purpose,
-     * lifetime, transfer, placeholder (bool), via_gtm (bool).
+     * lifetime, transfer, placeholder (bool), via_gtm (bool), via_blocker (bool),
+     * blocked (bool). Order: native, GTM, blocker findings (blocker_vendors()).
      *
      * @return array<string,array>
      */
@@ -465,8 +874,15 @@ class TrackWP_Consent_Profile {
             }
         }
 
+        // Blocker scan findings and custom vendors (1.11.0, §3.6): native and GTM win.
+        foreach (self::blocker_vendors() as $key => $v) {
+            if (!isset($out[$key]) || $out[$key]['cookies'] === '') {
+                $out[$key] = $v;
+            }
+        }
+
         foreach ($out as $k => $v) {
-            $out[$k] += array('placeholder' => false, 'via_gtm' => false);
+            $out[$k] += array('placeholder' => false, 'via_gtm' => false, 'via_blocker' => false, 'blocked' => false, 'server_only' => false);
         }
         return apply_filters('trackwp_consent_profile_vendors', $out, $s);
     }
@@ -474,12 +890,16 @@ class TrackWP_Consent_Profile {
     /**
      * Admin-facing warnings (W7 renders them as notices).
      *
-     * @return string[] Warning codes: 'gtm_vendors_missing', 'controller_missing'.
+     * @return string[] Warning codes: 'gtm_vendors_missing', 'controller_missing',
+     *                  'unblocked_vendors' (see unblocked_vendors()).
      */
     public static function warnings() {
         $w = array();
         if (isset(self::active_vendors()[self::GTM_PLACEHOLDER_KEY])) {
             $w[] = 'gtm_vendors_missing';
+        }
+        if (self::unblocked_vendors()) {
+            $w[] = 'unblocked_vendors';
         }
         if (self::str(self::opt('trackwp_consent'), 'controller_name') === '') {
             $w[] = 'controller_missing';

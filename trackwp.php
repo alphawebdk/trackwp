@@ -3,7 +3,7 @@
  * Plugin Name: TrackWP
  * Plugin URI: https://trackwp.com
  * Description: Server-side tracking proxy with built-in cookie consent and Consent Mode v2. Supports GA4, Google Ads, and Meta.
- * Version: 1.10.1
+ * Version: 1.11.2
  * Author: TrackWP
  * Author URI: https://trackwp.com
  * License: GPLv2 or later
@@ -17,7 +17,7 @@
 
 defined('ABSPATH') || exit;
 
-define('TRACKWP_VERSION', '1.10.1');
+define('TRACKWP_VERSION', '1.11.2');
 define('TRACKWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRACKWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -85,8 +85,20 @@ final class TrackWP {
     /** Single event that continues a cut-off consent-log migration; same as TrackWP_Consent_Log::MIGRATE_HOOK. */
     const CRON_MIGRATE_CONSENT_LOG = 'trackwp_migrate_consent_log';
 
-    /** Option flag: show the "purge your CDN" notice after the 1.10.1 upgrade. */
-    const OPTION_UPGRADE_NOTICE = 'trackwp_upgrade_notice_1_10_1';
+    /**
+     * Option flag: show the "purge your CDN" notice after an upgrade. Value
+     * is the version string that triggered it (KC15, PLAN-1.11.1-v2). Before
+     * 1.11.1 this held a fixed key per version (trackwp_upgrade_notice_1_10_1
+     * with value 1); upgrade_1_11_1() deletes that old key.
+     */
+    const OPTION_UPGRADE_NOTICE = 'trackwp_upgrade_notice';
+
+    /**
+     * Option flag (not autoloaded): D1 flipped Meta delivery on for this site
+     * during the 1.11.1 upgrade (missing_conditions() no longer requires a
+     * token). Shown once, dismissible, separate from OPTION_UPGRADE_NOTICE.
+     */
+    const OPTION_META_TAKEOVER_NOTICE = 'trackwp_upgrade_notice_meta_takeover';
 
     /** Option holding the material_hash baseline the admin notice compares against. */
     const OPTION_MATERIAL_HASH = 'trackwp_consent_material_hash';
@@ -159,12 +171,34 @@ final class TrackWP {
         // Keep cron jobs in step with the settings whenever they are saved.
         add_action('update_option_trackwp_advanced', [$this, 'sync_cron_jobs']);
         add_action('update_option_trackwp_consent', [$this, 'sync_cron_jobs']);
+        // Blocker rules saved: recompile the cached rule set and purge page
+        // caches, so no cached page keeps the old markup (KB7, §3.5).
+        add_action('update_option_trackwp_blocker', [$this, 'on_blocker_saved']);
+        add_action('add_option_trackwp_blocker', [$this, 'on_blocker_saved']);
+        // M2 (KB15): Meta for WooCommerce reads this filter in its tracker's
+        // constructor, which runs on 'init'. Registered here, unconditionally,
+        // so it exists before fb4woo initialises; the callback itself returns
+        // false only when TrackWP can actually deliver Pixel + CAPI.
+        add_filter('facebook_for_woocommerce_integration_pixel_enabled', ['TrackWP_Meta_Takeover', 'filter_pixel_enabled']);
         // 1.10.1 upgrade side effects: purge known page caches, flag a CDN notice.
         add_action('trackwp_upgraded_1_10_1', [$this, 'purge_known_page_caches']);
         add_action('admin_notices', [$this, 'render_upgrade_notice']);
         add_action('admin_post_trackwp_dismiss_upgrade_notice', [$this, 'handle_dismiss_upgrade_notice']);
+        // D1: one-time notice when Meta delivery flips on during the 1.11.1
+        // upgrade because the CAPI token requirement is dropped (KC16).
+        add_action('admin_notices', [$this, 'render_meta_takeover_notice']);
+        add_action('admin_post_trackwp_dismiss_meta_takeover_notice', [$this, 'handle_dismiss_meta_takeover_notice']);
         // Front-end admin-bar shortcut to the console debug mode.
         add_action('admin_bar_menu', [$this, 'admin_bar_debug_link'], 100);
+
+        // KC3/D6: the servercookie gate (new class, W1). class_exists() also
+        // triggers the autoloader, so this is a no-op until the file lands.
+        if ( class_exists('TrackWP_Cookie_Gate') ) {
+            TrackWP_Cookie_Gate::hook();
+        }
+        // TR5: same no-cache trio as click-id pages, but for admins previewing
+        // the dataLayer in "test" mode (KC1/KC7).
+        add_action('template_redirect', [$this, 'maybe_set_datalayer_test_nocache'], 0);
 
         // "Settings" link on Plugins page
         add_filter('plugin_action_links_' . TRACKWP_PLUGIN_BASENAME, ['TrackWP_Settings', 'add_plugin_action_links']);
@@ -545,6 +579,14 @@ final class TrackWP {
             $this->upgrade_1_10_1($stored);
         }
 
+        if ( version_compare($stored, '1.11.0', '<') ) {
+            $this->upgrade_1_11_0();
+        }
+
+        if ( version_compare($stored, '1.11.1', '<') ) {
+            $this->upgrade_1_11_1($stored);
+        }
+
         $this->sync_cron_jobs();
         update_option('trackwp_version', TRACKWP_VERSION);
 
@@ -648,6 +690,156 @@ final class TrackWP {
     }
 
     /**
+     * Did this site's stored options already satisfy TrackWP's Meta takeover
+     * BEFORE 1.11.1 dropped the CAPI-token requirement (D1)? Mirrors the old
+     * missing_conditions() rule (token mandatory) purely from raw options,
+     * because the running code already applies D1 and there is no way to
+     * re-execute the pre-1.11.1 logic to compare against. Read-only, used
+     * once during the upgrade to detect a status().delivering flip (KC16).
+     * Returns null when TrackWP_Meta_Takeover is not loaded yet (guarded by
+     * the caller, class_exists()).
+     *
+     * @return bool|null
+     */
+    private function meta_was_delivering_pre_1_11_1() {
+        $p = get_option('trackwp_platforms', array());
+        if ( ! is_array($p) ) {
+            $p = array();
+        }
+        if ( empty($p['meta_pixel_with_gtm']) || empty($p['meta_enabled']) || empty($p['meta_pixel_client_enabled']) ) {
+            return false;
+        }
+        if ( ! isset($p['meta_pixel_id']) || ! is_scalar($p['meta_pixel_id'])
+            || preg_match('/^\d{5,20}$/', (string) $p['meta_pixel_id']) !== 1 ) {
+            return false;
+        }
+        if ( empty($p['meta_access_token']) || ! is_string($p['meta_access_token'])
+            || trim((string) TrackWP_Hash::decode($p['meta_access_token'])) === '' ) {
+            return false;
+        }
+        $woo = new TrackWP_WooCommerce(false);
+        if ( $woo->is_available() && ! $woo->is_enabled() ) {
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * 1.11.1 migration (PLAN-1.11.1-v2 KC15/KC16, BESLUTNINGER D1).
+     *
+     * KC1 keys are backfilled with array_key_exists, the same pattern as the
+     * 1.1.0 block above (lines ~384-402). Blocking, dataLayer push and the
+     * cookie gate stay behaviourally OFF until the owner turns them on
+     * (KC16 "uændret indtil det slås til"): gtm_datalayer_events defaults to
+     * 'off' and the new Woo event flags default to false.
+     * trackwp_blocker_compiled needs no explicit rebuild here — its own
+     * version check (TrackWP_Blocker_Rules::compiled()) already recompiles
+     * on a version bump (plan §1, verified fact).
+     *
+     * @param string $stored Version the site is upgrading from.
+     * @return void
+     */
+    private function upgrade_1_11_1($stored) {
+        // Computed BEFORE any option below is touched (none of them affect
+        // Meta delivery) so it reflects the pre-upgrade state.
+        $was_delivering = class_exists('TrackWP_Meta_Takeover') ? $this->meta_was_delivering_pre_1_11_1() : null;
+
+        $platforms = get_option('trackwp_platforms', array());
+        if ( is_array($platforms) ) {
+            $changed = false;
+            if ( ! array_key_exists('fb4woo_tracking_off', $platforms) ) {
+                $platforms['fb4woo_tracking_off'] = false;
+                $changed = true;
+            }
+            if ( ! array_key_exists('gtm_datalayer_events', $platforms) ) {
+                $platforms['gtm_datalayer_events'] = 'off';
+                $changed = true;
+            }
+            if ( ! array_key_exists('ga4_source', $platforms) ) {
+                $platforms['ga4_source'] = 'gtm';
+                $changed = true;
+            }
+            if ( $changed ) {
+                update_option('trackwp_platforms', $platforms);
+            }
+        }
+
+        $woo = get_option('trackwp_woocommerce', array());
+        if ( is_array($woo) ) {
+            $changed = false;
+            // D13: remove_from_cart is cut from 1.11.1.
+            foreach ( array('event_view_item_list', 'event_view_cart') as $key ) {
+                if ( ! array_key_exists($key, $woo) ) {
+                    $woo[ $key ] = false;
+                    $changed = true;
+                }
+            }
+            if ( $changed ) {
+                update_option('trackwp_woocommerce', $woo);
+            }
+        }
+
+        // KC15: the new, versionless notice option replaces the old
+        // per-version flag. A true fresh install (never ran an older
+        // version) gets neither notice, same rule as upgrade_1_10_1() above.
+        delete_option('trackwp_upgrade_notice_1_10_1');
+        if ( version_compare($stored, '1.0.0', '>') ) {
+            update_option(self::OPTION_UPGRADE_NOTICE, '1.11.1', false);
+            $this->purge_known_page_caches();
+
+            // D1: Meta delivery flips from off to on purely because the code
+            // upgraded (missing_conditions() no longer requires a token).
+            if ( false === $was_delivering && class_exists('TrackWP_Meta_Takeover') ) {
+                $status = TrackWP_Meta_Takeover::status();
+                if ( ! empty($status['delivering']) ) {
+                    update_option(self::OPTION_META_TAKEOVER_NOTICE, 1, false);
+                }
+            }
+        }
+    }
+
+    /**
+     * 1.11.0 migration. Blocking stays off and Meta is not taken over until
+     * the owner turns them on, so the front end is unchanged by the upgrade.
+     * add_option() never overwrites an existing value; the Meta flag is only
+     * added when the key is missing.
+     *
+     * @return void
+     */
+    private function upgrade_1_11_0() {
+        add_option('trackwp_blocker', array(
+            'mode'           => 'off',
+            'rules'          => array(),
+            'custom_vendors' => array(),
+            'exceptions'     => array(
+                'allow' => array(),
+                'paths' => array(),
+            ),
+            'extra_paths'    => array(),
+        ));
+
+        $platforms = get_option('trackwp_platforms', array());
+        if ( is_array($platforms) && ! array_key_exists('meta_pixel_with_gtm', $platforms) ) {
+            $platforms['meta_pixel_with_gtm'] = false;
+            update_option('trackwp_platforms', $platforms);
+        }
+    }
+
+    /**
+     * update_option_trackwp_blocker / add_option_trackwp_blocker: recompile
+     * and cache the rules (KB7, the one implementation is
+     * TrackWP_Blocker_Rules::rebuild(), which reads the stored option) and
+     * purge known page caches, since cached HTML still carries the markup of
+     * the previous rules.
+     *
+     * @return void
+     */
+    public function on_blocker_saved() {
+        TrackWP_Blocker_Rules::rebuild();
+        $this->purge_known_page_caches();
+    }
+
+    /**
      * Purge page caches of known caching plugins after the 1.10.1 upgrade.
      * Hooked on 'trackwp_upgraded_1_10_1'. Every call is guarded, so an absent
      * plugin is a no-op; the do_action() calls are the plugins' own public
@@ -675,25 +867,31 @@ final class TrackWP {
     }
 
     /**
-     * Admin notice after the 1.10.1 upgrade: purge the CDN / host cache.
+     * Admin notice after an upgrade that changed the banner or tracking
+     * script: purge the CDN / host cache (KC15). The version shown is
+     * whatever upgrade_1_11_1() (or an older upgrade block) stored.
      *
      * @return void
      */
     public function render_upgrade_notice() {
-        if ( ! current_user_can('manage_options') || ! get_option(self::OPTION_UPGRADE_NOTICE) ) {
+        $version = get_option(self::OPTION_UPGRADE_NOTICE, '');
+        if ( ! current_user_can('manage_options') || '' === $version || false === $version ) {
             return;
         }
         $dismiss = wp_nonce_url(
             admin_url('admin-post.php?action=trackwp_dismiss_upgrade_notice'),
             'trackwp_dismiss_upgrade_notice'
         );
-        echo '<div class="notice notice-warning"><p><strong>TrackWP 1.10.1:</strong> ';
+        echo '<div class="notice notice-warning"><p><strong>';
+        /* translators: %s: plugin version, e.g. "1.11.1". */
+        echo esc_html( sprintf( __('TrackWP %s:', 'trackwp'), (string) $version ) );
+        echo '</strong> ';
         echo esc_html__('Samtykkebanneret og tracking-scriptet er opdateret. Kendte cache-plugins er forsøgt tømt automatisk, men en CDN (fx Cloudflare) eller en servercache hos dit webhotel skal du tømme manuelt. Ellers kan besøgende få den gamle version, indtil cachen udløber.', 'trackwp');
         echo '</p><p><a class="button" href="' . esc_url($dismiss) . '">' . esc_html__('Jeg har tømt cachen', 'trackwp') . '</a></p></div>';
     }
 
     /**
-     * admin-post handler — dismiss the 1.10.1 upgrade notice.
+     * admin-post handler — dismiss the upgrade notice.
      */
     public function handle_dismiss_upgrade_notice() {
         if ( ! current_user_can('manage_options') ) {
@@ -704,6 +902,79 @@ final class TrackWP {
         $back = wp_get_referer();
         wp_safe_redirect( $back ? $back : admin_url() );
         exit;
+    }
+
+    /**
+     * D1 one-time notice: Meta delivery flipped on for this site during the
+     * 1.11.1 upgrade, because a Conversions API token is no longer required
+     * (KC16). Separate from render_upgrade_notice() / OPTION_UPGRADE_NOTICE.
+     *
+     * @return void
+     */
+    public function render_meta_takeover_notice() {
+        if ( ! current_user_can('manage_options') || ! get_option(self::OPTION_META_TAKEOVER_NOTICE) ) {
+            return;
+        }
+        $dismiss = wp_nonce_url(
+            admin_url('admin-post.php?action=trackwp_dismiss_meta_takeover_notice'),
+            'trackwp_dismiss_meta_takeover_notice'
+        );
+        echo '<div class="notice notice-info"><p><strong>' . esc_html__('TrackWP: Meta-overtagelse', 'trackwp') . '</strong> ';
+        echo esc_html__('Efter opgraderingen leverer TrackWP nu Meta (Pixel) for denne shop, selvom der ikke er sat et Conversions API-token.', 'trackwp') . ' ';
+        // Reviewer-deep: the "fb4woo is switched off" sentence only makes
+        // sense when fb4woo is actually installed — it was previously shown
+        // unconditionally, which was misleading on sites without the plugin.
+        if ( class_exists('TrackWP_Meta_Takeover') && ! empty(TrackWP_Meta_Takeover::status()['fb4woo_active']) ) {
+            echo esc_html__('Meta for WooCommerce\'s pixel og CAPI er slået fra; katalogsync kører fortsat.', 'trackwp') . ' ';
+        }
+        echo esc_html__('Tilføj et token under Meta-indstillingerne, hvis du også vil have Conversions API.', 'trackwp');
+        echo '</p><p><a class="button" href="' . esc_url($dismiss) . '">' . esc_html__('OK, forstået', 'trackwp') . '</a></p></div>';
+    }
+
+    /**
+     * admin-post handler — dismiss the D1 Meta-takeover notice.
+     */
+    public function handle_dismiss_meta_takeover_notice() {
+        if ( ! current_user_can('manage_options') ) {
+            wp_die( esc_html__('Adgang nægtet.', 'trackwp') );
+        }
+        check_admin_referer('trackwp_dismiss_meta_takeover_notice');
+        delete_option(self::OPTION_META_TAKEOVER_NOTICE);
+        $back = wp_get_referer();
+        wp_safe_redirect( $back ? $back : admin_url() );
+        exit;
+    }
+
+    /**
+     * TR5 (PLAN-1.11.1-v2 §9): when an admin previews the dataLayer in
+     * "test" mode, this request must never be cached, same rule as a
+     * click-id page (KC4.6). Only possible in GTM mode (KC1: the sanitizer
+     * already forces gtm_datalayer_events to 'off' without GTM, but this is
+     * re-checked here so a stale/edited option can never leak a cached page
+     * with the wrong dataLayer state to a non-admin visitor).
+     *
+     * @return void
+     */
+    public function maybe_set_datalayer_test_nocache() {
+        if ( ! function_exists('current_user_can') || ! current_user_can('manage_options') ) {
+            return;
+        }
+        $platforms = get_option('trackwp_platforms', array());
+        $advanced  = get_option('trackwp_advanced', array());
+        if ( ! is_array($platforms) || 'test' !== ( $platforms['gtm_datalayer_events'] ?? '' ) ) {
+            return;
+        }
+        $gtm_active = ! empty($platforms['gtm_enabled']) || ( is_array($advanced) && ! empty($advanced['uses_gtm']) );
+        if ( ! $gtm_active ) {
+            return;
+        }
+        if ( ! defined('DONOTCACHEPAGE') ) {
+            define('DONOTCACHEPAGE', true);
+        }
+        if ( function_exists('nocache_headers') ) {
+            nocache_headers();
+        }
+        do_action('litespeed_control_set_nocache', 'trackwp datalayer test');
     }
 
     /**
@@ -835,7 +1106,12 @@ final class TrackWP {
         }
         $advanced = get_option('trackwp_advanced', array());
         $ad_signals = ! empty($advanced['consent_mode_ad_signals']);
-        echo "\n<!-- TrackWP consent reader + Consent Mode v2 defaults -->\n<script>";
+        // Blocking active for this request (§3.2): the tag opts out of
+        // Cloudflare Rocket Loader, LiteSpeed and WP Rocket optimisation, and
+        // the guard is inlined. With blocking off the output is unchanged.
+        $blocking = TrackWP_Blocker::active_for_request();
+        echo "\n<!-- TrackWP consent reader + Consent Mode v2 defaults -->\n";
+        echo $blocking ? '<script data-cfasync="false" data-no-optimize="1" data-no-defer="1">' : '<script>';
         // (1) The one consent-cookie reader (K3/R3). Every inline gate below
         // and consent.js / trackwp.js / woocommerce.js use it; nothing else
         // parses the trackwp_consent cookie.
@@ -848,6 +1124,11 @@ final class TrackWP {
         // one ignoring query strings) would otherwise serve one visitor's URL
         // or referrer — possibly with an e-mail address — to everyone.
         echo TrackWP_Privacy::cleaner_js(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static JS built by TrackWP_Privacy.
+        // (1b) Blocker guard, window.trackwpBlocker (KB10). After the reader,
+        // which it uses; before anything else can insert a tracking script.
+        if ( $blocking ) {
+            echo TrackWP_Blocker::guard_js(); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- static JS plus JSON rules built by TrackWP_Blocker.
+        }
         // (2) Consent Mode defaults.
         echo "window.dataLayer=window.dataLayer||[];";
         echo "function gtag(){dataLayer.push(arguments);}window.gtag=window.gtag||gtag;";
@@ -1061,25 +1342,48 @@ final class TrackWP {
     /**
      * Render Meta Pixel (client-side) gated on marketing consent. Pairs with
      * server-side CAPI; both send the same event_id so Meta dedups. Skipped
-     * when GTM is used.
+     * when GTM is used, unless TrackWP takes over Meta (M1,
+     * trackwp_platforms['meta_pixel_with_gtm']).
      */
+    /**
+     * The one source of the settings under which render_meta_pixel() prints
+     * TrackWP's client-side Meta Pixel (also used by the blocker scanner).
+     * Settings only: per-request context (admin screen, consent) is not
+     * part of it.
+     *
+     * - meta_enabled and meta_pixel_client_enabled are on;
+     * - meta_pixel_id matches ^\d{5,20}$;
+     * - GTM gate: neither gtm_enabled nor trackwp_advanced.uses_gtm is set,
+     *   unless TrackWP takes over Meta (M1, meta_pixel_with_gtm).
+     *
+     * @return bool
+     */
+    public static function client_meta_pixel_will_render() {
+        $platforms = get_option('trackwp_platforms', array());
+        $advanced  = get_option('trackwp_advanced', array());
+        $platforms = is_array($platforms) ? $platforms : array();
+        $advanced  = is_array($advanced) ? $advanced : array();
+        // Without M1 the GTM container is expected to contain the Meta Pixel tag.
+        $takeover = ! empty($platforms['meta_pixel_with_gtm']);
+        if ( ! $takeover && ( ! empty($platforms['gtm_enabled']) || ! empty($advanced['uses_gtm']) ) ) {
+            return false;
+        }
+        if ( empty($platforms['meta_enabled']) || empty($platforms['meta_pixel_client_enabled']) ) {
+            return false;
+        }
+        $pixel_id = isset($platforms['meta_pixel_id']) ? $platforms['meta_pixel_id'] : '';
+        return is_scalar($pixel_id) && 1 === preg_match('/^\d{5,20}$/', (string) $pixel_id);
+    }
+
     public function render_meta_pixel() {
         if ( is_admin() ) {
             return;
         }
+        if ( ! self::client_meta_pixel_will_render() ) {
+            return;
+        }
         $platforms = get_option('trackwp_platforms', array());
-        $advanced  = get_option('trackwp_advanced', array());
-        // GTM container is expected to contain the Meta Pixel tag.
-        if ( ! empty($platforms['gtm_enabled']) || ! empty($advanced['uses_gtm']) ) {
-            return;
-        }
-        if ( empty($platforms['meta_enabled']) || empty($platforms['meta_pixel_client_enabled']) ) {
-            return;
-        }
-        $pixel_id = isset($platforms['meta_pixel_id']) ? $platforms['meta_pixel_id'] : '';
-        if ( ! preg_match('/^\d{5,20}$/', $pixel_id) ) {
-            return;
-        }
+        $pixel_id  = (string) $platforms['meta_pixel_id'];
         // GDPR: fbevents.js is only loaded once marketing consent exists —
         // either via the trackwp_consent cookie at load, or when consent.js
         // fires the 'trackwp:consent_updated' CustomEvent with detail.marketing=true.
@@ -1095,7 +1399,10 @@ final class TrackWP {
         if ( ! empty($am) && is_array($am) ) {
             $init_args .= ',' . wp_json_encode($am, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
         }
-        echo "\n<!-- Meta Pixel (TrackWP, consent-gated) -->\n<script>";
+        // id and the trackwpMeta marker identify TrackWP's own pixel (S15):
+        // both are on the blocker's never-list and ignored by the scanner.
+        echo "\n<!-- Meta Pixel (TrackWP, consent-gated) -->\n<script id=\"trackwp-meta-pixel\">";
+        echo "window.trackwpMeta=1;";
         echo "(function(){";
         echo "var loaded=false;";
         echo "function loadPixel(){";
@@ -1131,6 +1438,11 @@ final class TrackWP {
         // consent, so the noscript fallback is skipped entirely when gating.
         $advanced = get_option('trackwp_advanced', array());
         if ( array_key_exists('consent_mode_cookieless_pings', $advanced) && empty($advanced['consent_mode_cookieless_pings']) ) {
+            return;
+        }
+        // The noscript iframe cannot be gated by the guard; with blocking
+        // active for this request it is left out entirely.
+        if ( TrackWP_Blocker::active_for_request() ) {
             return;
         }
         echo "\n<!-- Google Tag Manager (noscript) -->\n";
@@ -1201,6 +1513,10 @@ final class TrackWP {
         new TrackWP_Cookie_Scanner();
         // Registers nothing unless WooCommerce is active; see the class docblock.
         $this->woocommerce = new TrackWP_WooCommerce();
+        // Blocking until consent. The class decides what to hook: observe
+        // mode for the scanner always (S12), rewriting only in test/on mode
+        // on WP 6.5+ (§3.1, KB12).
+        new TrackWP_Blocker();
     }
 
     public function admin_menu() {
@@ -1219,6 +1535,10 @@ final class TrackWP {
 
         $loader = new TrackWP_Loader();
         $loader->register_routes();
+
+        // POST /trackwp/v1/blocker/scan (§3.4).
+        $scanner = new TrackWP_Blocker_Scanner();
+        $scanner->register_routes();
     }
 
     /**
@@ -1271,6 +1591,23 @@ final class TrackWP {
                 'jsEvent'       => __('JavaScript-eventnavn', 'trackwp'),
             ),
         ));
+
+        // "Blokering" tab: scan button and rule table (T5 owns the script).
+        wp_enqueue_script(
+            'trackwp-admin-blocker',
+            self::asset_url('assets/admin/blocker.js'),
+            ['trackwp-admin'],
+            TRACKWP_VERSION,
+            true
+        );
+        wp_add_inline_script(
+            'trackwp-admin-blocker',
+            'window.trackwpBlockerAdmin=' . self::json_for_script(array(
+                'scanUrl' => rest_url('trackwp/v1/blocker/scan'),
+                'nonce'   => wp_create_nonce('wp_rest'),
+            )) . ';',
+            'before'
+        );
     }
 
     /**
@@ -1393,6 +1730,17 @@ final class TrackWP {
             'customerDataSharing'  => TrackWP_Hash::customer_data_sharing_enabled(),
             // Registrable domain for cookies that must span subdomains (_fbc, K7).
             'cookieDomain'         => (string) TrackWP_Cookies::registrable_domain(),
+            // KC7 (D2/D3): the dataLayer push layer. class_exists() also
+            // autoloads; falls back to "everything off" until W4 lands the
+            // file, so the key is always present with the contract's shape.
+            'dataLayer'            => class_exists('TrackWP_DataLayer')
+                ? TrackWP_DataLayer::client_config()
+                : array(
+                    'enabled'      => false,
+                    'ga4Source'    => 'gtm',
+                    'ga4Enabled'   => false,
+                    'mpConfigured' => false,
+                ),
         ];
     }
 
@@ -1427,6 +1775,8 @@ final class TrackWP {
             'consentVersion'       => TrackWP_Consent::server_version(),
             'log_consent'          => !empty($consent['log_consent']),
             'restUrl'              => rest_url(),
+            // Blocking active for this request (KB11: revoking a category reloads the page).
+            'blockerActive'        => (bool) TrackWP_Blocker::active_for_request(),
         ];
     }
 }

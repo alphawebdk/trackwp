@@ -431,6 +431,179 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
     }
 
     // ------------------------------------------------------------------
+    // KC8/TR4: ga4_route (dataLayer routing argument)
+    // ------------------------------------------------------------------
+
+    private function enable_datalayer( $source = 'gtm', $mode = 'on' ) {
+        update_option( 'trackwp_platforms', array(
+            'ga4_enabled'           => true,
+            'ga4_measurement_id'    => 'G-TEST12345',
+            'ga4_api_secret'        => 'test-secret',
+            'gtm_datalayer_events'  => $mode,
+            'ga4_source'            => $source,
+            // M2: configured_for_site() (used by route(), unlike
+            // active_for_request()) also requires GTM to be active.
+            'gtm_enabled'           => true,
+            'gtm_container_id'      => 'GTM-ABC123',
+        ) );
+    }
+
+    public function test_ga4_route_gtm_is_skipped_with_ga4_via_gtm_reason() {
+        $this->enable_datalayer( 'gtm' );
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'gtm',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 0, $this->ga4_requests() );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'ga4_via_gtm', $rows[0]['reason'] );
+    }
+
+    public function test_ga4_route_off_is_skipped_with_routed_off_reason() {
+        $this->enable_datalayer( 'gtm' );
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'off',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 0, $this->ga4_requests() );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'routed_off', $rows[0]['reason'] );
+    }
+
+    /**
+     * TR4 (M5 fix): a client 'server' claim that the server's own
+     * recomputation does NOT confirm (here: site config is ga4_source=gtm,
+     * so the server always recomputes 'gtm') falls back to the ORDINARY
+     * consent-based reason codes (no_consent/stale_version) — never a
+     * fabricated ga4_via_gtm/routed_off for a route the client never
+     * actually claimed. Without analytics consent, that ordinary reason is
+     * no_consent.
+     */
+    public function test_server_claim_mismatch_without_consent_uses_no_consent_reason() {
+        $this->enable_datalayer( 'gtm' ); // site config: everything via GTM
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'server', // a forged or stale client claim
+            'consent'   => array( 'analytics' => false, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 0, $this->ga4_requests() );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'no_consent', $rows[0]['reason'] );
+    }
+
+    /**
+     * Same mismatch, but WITH analytics consent: TR4 says fall back to the
+     * plain 1.11.0 consent check, which sends (no special-cased skip).
+     */
+    public function test_server_claim_mismatch_with_consent_dispatches_like_1_11_0() {
+        $this->enable_datalayer( 'gtm' );
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'server',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 1, $this->ga4_requests(), 'a server-claim mismatch with consent present falls back to the ordinary consent branch, which sends' );
+    }
+
+    /**
+     * M2: the server must not silently ignore ga4_route in "test" mode just
+     * because the REST request carries no reliable admin session — this is
+     * the exact scenario the reviewer reproduced (double GA4 delivery).
+     */
+    public function test_ga4_route_applies_in_test_mode_even_without_admin_session() {
+        $this->enable_datalayer( 'gtm', 'test' );
+        // Deliberately no wp_set_current_user(): a real REST POST from a
+        // visitor's browser is not an authenticated admin session either.
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'gtm',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 0, $this->ga4_requests(), 'ga4_route must still be honoured in test mode without an admin session' );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'ga4_via_gtm', $rows[0]['reason'] );
+    }
+
+    public function test_ga4_route_server_dispatches_when_both_sides_agree() {
+        $this->enable_datalayer( 'split' );
+        $events   = TrackWP_Events::get_defaults();
+        $events[] = array(
+            'name' => 'purchase', 'enabled' => true, 'trigger_type' => 'custom',
+            'send_to' => array( 'ga4' => true, 'meta' => false, 'google_ads' => false ),
+            'value' => 0, 'currency' => 'DKK',
+        );
+        update_option( 'trackwp_events', $events );
+
+        $this->post_event( $this->base_body( array(
+            'event'     => 'purchase',
+            'ga4_route' => 'server',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 1, $this->ga4_requests(), 'both client and server agree on server: MP must dispatch' );
+    }
+
+    /**
+     * KC8/TR4: the client decided 'gtm' at push time (e.g. no statistics
+     * consent then); the server, recomputing with split + purchase + MP +
+     * statistics, would say 'server' -- but it must never upgrade the
+     * client's 'gtm' claim, or GA4 would receive the purchase twice
+     * (GTM tag from the dataLayer AND Measurement Protocol).
+     */
+    public function test_server_never_upgrades_client_gtm_to_server_when_server_would_say_server() {
+        $this->enable_datalayer( 'split' );
+        $events   = TrackWP_Events::get_defaults();
+        $events[] = array(
+            'name' => 'purchase', 'enabled' => true, 'trigger_type' => 'custom',
+            'send_to' => array( 'ga4' => true, 'meta' => false, 'google_ads' => false ),
+            'value' => 0, 'currency' => 'DKK',
+        );
+        update_option( 'trackwp_events', $events );
+
+        $this->post_event( $this->base_body( array(
+            'event'     => 'purchase',
+            'ga4_route' => 'gtm',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 0, $this->ga4_requests(), 'client gtm must never be upgraded to an MP send' );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'ga4_via_gtm', $rows[0]['reason'] );
+    }
+
+    public function test_missing_ga4_route_falls_back_to_1_11_0_behaviour() {
+        $this->enable_datalayer( 'gtm' );
+        // No ga4_route field at all (old cached JS, or an event pushDataLayer
+        // never saw): plain consent-based routing, unaffected by KC8.
+        $this->post_event( $this->base_body( array(
+            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 1, $this->ga4_requests() );
+    }
+
+    public function test_ga4_route_ignored_when_layer_not_active() {
+        // dataLayer is off (gtm_datalayer_events absent/off): a ga4_route
+        // value must never suppress GA4 delivery.
+        update_option( 'trackwp_platforms', array(
+            'ga4_enabled'        => true,
+            'ga4_measurement_id' => 'G-TEST12345',
+            'ga4_api_secret'     => 'test-secret',
+        ) );
+        $this->post_event( $this->base_body( array(
+            'ga4_route' => 'gtm',
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+        ) ) );
+
+        $this->assertCount( 1, $this->ga4_requests(), 'ga4_route must be inert while the dataLayer layer is off' );
+    }
+
+    // ------------------------------------------------------------------
     // Purchase (R9): a bad order_ref sends nothing and claims nothing
     // ------------------------------------------------------------------
 

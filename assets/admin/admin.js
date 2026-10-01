@@ -338,7 +338,7 @@
         // Send To checkboxes
         var sendTo = event.send_to || {};
         var $sendTo = $('<p>');
-        $sendTo.append($('<strong>').text((window.trackwpAdminConfig && trackwpAdminConfig.strings.sendTo) || 'Send til') + ' ');
+        $sendTo.append($('<strong>').text((window.trackwpAdminConfig && trackwpAdminConfig.strings.sendTo) || 'Send til')).append(' ');
         $.each([['ga4', 'GA4'], ['google_ads', 'Google Ads'], ['meta', 'Meta']], function (i, pair) {
             var key = pair[0];
             var $cb = $('<input>').attr({ type: 'checkbox' }).prop('checked', !!sendTo[key])

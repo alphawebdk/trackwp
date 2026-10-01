@@ -36,6 +36,16 @@
  * so the classic path claims a short suppression window to stop the store
  * watcher counting the same add a second time.
  *
+ * dataLayer (D2/KC7, 1.11.1): every event here goes through emit(), which
+ * pushes to window.trackwp.pushDataLayer() FIRST -- synchronously, before
+ * consent is known -- and only afterwards waits for consent (whenConsented())
+ * before POSTing to the server. window.trackwp.pushDataLayer() and
+ * window.trackwp.sendEvent() both live in trackwp.js and already gate
+ * everything that depends on live consent (dataLayer user_data, the gtag Ads
+ * conversion, the KC9 dataLayer-active guard) internally; this file's own
+ * consent gate exists only to keep ecommerce items out of trackwp.js's
+ * generic pre-consent queue, which is not allowed to hold them (K6).
+ *
  * @since 2.0.0
  * @package TrackWP
  */
@@ -59,6 +69,23 @@
     // How long the store watcher stays quiet after the classic path emitted.
     var SUPPRESS_MS = 3000;
     var suppressUntil = 0;
+
+    // Same regex trackwp.js uses to accept a caller-supplied event_id
+    // (assets/js/trackwp.js EVENT_ID_RE). Duplicated rather than imported:
+    // trackwp.js exposes no generator, and this is the one id woocommerce.js
+    // must mint itself (TR8: generated once, before the dataLayer push,
+    // reused verbatim for the later server send).
+    var EVENT_ID_RE = /^evt_[a-f0-9]{16,64}$/;
+
+    function generateEventId() {
+        var s = '';
+        try {
+            s = window.crypto.randomUUID().replace(/-/g, '');
+        } catch (e) {
+            for (var i = 0; i < 32; i++) s += Math.floor(Math.random() * 16).toString(16);
+        }
+        return 'evt_' + s.substring(0, 32);
+    }
 
     function log() {
         if (!debug || typeof console === 'undefined' || !console.log) return;
@@ -162,8 +189,83 @@
         return true;
     }
 
-    // === Events PHP already resolved (view_item, begin_checkout, purchase,
-    // and add_to_cart replayed from a non-AJAX add on the previous request) ===
+    // === emit(): the one entry point every shop event goes through (KC7) ===
+    //
+    // 1. passesConditions() (page conditions on this event).
+    // 2. A deterministic event_id is minted here (or reused from `params`,
+    //    e.g. purchase's server-issued id, TR3/TR8) and pushed to the
+    //    dataLayer via window.trackwp.pushDataLayer() -- synchronously,
+    //    independent of consent (D2). The route it returns ('gtm'|'server'|
+    //    'off') is remembered.
+    // 3. whenConsented() gates the actual POST: send() is only called once a
+    //    real choice (statistics or marketing) exists, so an ecommerce
+    //    payload never enters trackwp.js's generic pre-consent queue (K6).
+    //    The remembered route travels along as options.ga4Route, so the
+    //    server never has to guess it after the fact.
+    //
+    // options.skipDataLayerPush lets a caller (a replayed "already sent"
+    // purchase, see firePurchase()) run only the send() half: the dataLayer
+    // already carries that business event from the first render and D2 says
+    // it must not be pushed a second time.
+    //
+    // onSent (optional) runs AFTER send() actually POSTs, i.e. only once a
+    // real consent choice exists -- never synchronously, and never on a
+    // rejection (M1: rememberPurchase() must not run before or without
+    // consent, matching 1.11.0's "write only after the send" rule, R14).
+    function emit(eventName, value, currency, items, extra, params, options, onSent) {
+        if (!passesConditions(eventName)) {
+            log('page conditions not met, skipped', eventName);
+            return false;
+        }
+
+        params = params || {};
+        var eventId = (params.event_id && EVENT_ID_RE.test(params.event_id)) ? params.event_id : generateEventId();
+        params.event_id = eventId;
+
+        var ecommerce = extra || {};
+        if (items && items.length) {
+            ecommerce.items = items;
+        }
+
+        var opts = options || {};
+        var route = null;
+        if (!opts.skipDataLayerPush && window.trackwp && typeof window.trackwp.pushDataLayer === 'function') {
+            var dlParams = {};
+            for (var key in params) {
+                if (Object.prototype.hasOwnProperty.call(params, key)) dlParams[key] = params[key];
+            }
+            dlParams.value = value || 0;
+            dlParams.currency = currency || config.currency || 'DKK';
+            if (hasAnyKey(ecommerce)) dlParams.ecommerce = ecommerce;
+            try {
+                route = window.trackwp.pushDataLayer(eventName, dlParams, { eventId: eventId });
+            } catch (e) {
+                log('pushDataLayer failed', eventName, e);
+            }
+        }
+
+        whenConsented(function () {
+            var sendOptions = {};
+            for (var ok in opts) {
+                if (Object.prototype.hasOwnProperty.call(opts, ok) && ok !== 'skipDataLayerPush') {
+                    sendOptions[ok] = opts[ok];
+                }
+            }
+            sendOptions.dataLayerDone = true;
+            sendOptions.eventId = eventId;
+            if (route) sendOptions.ga4Route = route;
+            var didSend = send(eventName, value, currency, items, extra, params, sendOptions);
+            if (didSend && typeof onSent === 'function') {
+                onSent();
+            }
+        });
+
+        return true;
+    }
+
+    // === Events PHP already resolved (view_item, view_item_list, view_cart,
+    // begin_checkout, purchase, and add_to_cart replayed from a non-AJAX add
+    // on the previous request) ===
 
     function fireImmediate() {
         var immediate = config.immediate;
@@ -172,27 +274,34 @@
         for (var i = 0; i < immediate.length; i++) {
             (function (entry) {
                 if (!entry || !entry.event) return;
-                whenConsented(function (choice) {
-                    if (entry.event === 'purchase') {
-                        firePurchase(entry, choice);
-                        return;
-                    }
-                    var ecommerce = entry.ecommerce || {};
-                    send(entry.event, entry.value, entry.currency, ecommerce.items, stripItems(ecommerce));
-                });
+                if (entry.event === 'purchase') {
+                    // Not gated behind whenConsented() here: firePurchase()
+                    // itself calls emit(), whose dataLayer push must happen
+                    // independent of consent (D2).
+                    firePurchase(entry);
+                    return;
+                }
+                var ecommerce = entry.ecommerce || {};
+                emit(entry.event, entry.value, entry.currency, ecommerce.items, stripItems(ecommerce));
             })(immediate[i]);
         }
     }
 
     // purchase: the server rebuilds the payload from the order and claims it
     // atomically, so it only needs the signed order_ref and the deterministic
-    // event_id (shared with the Pixel, so Meta deduplicates Pixel and CAPI).
+    // event_id (TR3: the SERVER's event_id, shared with the Pixel and CAPI so
+    // Meta deduplicates all three, and with the dataLayer push when active).
     //
     // A reload or back/forward navigation must not repeat the BROWSER tags
     // (gtag conversion, Pixel Purchase): the server claim cannot stop those.
-    // The local store is checked BEFORE they fire and written only after the
-    // send (R14), and only here, i.e. after consent.
-    function firePurchase(entry, choice) {
+    // The local store is checked BEFORE they fire and written only once
+    // send() has actually POSTed, i.e. from emit()'s onSent callback, which
+    // only runs after a real consent choice (M1, R14, 1.10.1 behaviour) --
+    // never synchronously and never on a rejection. A reload BEFORE any
+    // choice is made can therefore push to the dataLayer again; that is a
+    // documented, accepted risk (D2), not something localStorage can guard
+    // against pre-consent.
+    function firePurchase(entry) {
         var ecommerce = entry.ecommerce || {};
         var transactionId = ecommerce.transaction_id;
         var alreadySent = !!(transactionId && alreadySentPurchase(transactionId));
@@ -200,9 +309,12 @@
         var params = {};
         if (entry.event_id) params.event_id = entry.event_id;
         if (entry.order_ref) params.order_ref = entry.order_ref;
-        // Google Enhanced Conversions user_data, already hashed in PHP and
-        // only present when customer data sharing is on. Marketing only.
-        if (entry.ec && choice && choice.marketing === true) params.ec = entry.ec;
+        // Google Enhanced Conversions user_data, already hashed in PHP. Never
+        // sent to the server (trackwp.js's payload has no `ec` field) --
+        // trackwp.js itself gates every use of it (the gtag Ads conversion,
+        // the dataLayer's user_data) on live marketing consent, so it travels
+        // unconditionally from here.
+        if (entry.ec) params.ec = entry.ec;
 
         var options = {};
         if (alreadySent) {
@@ -213,14 +325,20 @@
                 log('purchase skipped, already sent for order', transactionId);
                 return;
             }
+            // D2: the dataLayer already carries this purchase from the first
+            // render; only the server claim still needs a chance to answer.
             options.serverOnly = true;
+            options.skipDataLayerPush = true;
             log('purchase already sent for order', transactionId, '- server only');
         }
 
-        var sent = send('purchase', entry.value, entry.currency, ecommerce.items, stripItems(ecommerce), params, options);
-        if (sent && transactionId && !alreadySent) {
-            rememberPurchase(transactionId);
-        }
+        emit('purchase', entry.value, entry.currency, ecommerce.items, stripItems(ecommerce), params, options, function () {
+            // Runs only once send() has actually POSTed (i.e. after a real
+            // consent choice) -- never before consent, never on a rejection.
+            if (transactionId && !alreadySent) {
+                rememberPurchase(transactionId);
+            }
+        });
     }
 
     // Purchases already reported from this browser. Bounded, and every access
@@ -301,9 +419,7 @@
             }
             suppressUntil = Date.now() + SUPPRESS_MS;
             var value = round2((parseFloat(item.price) || 0) * item.quantity);
-            whenConsented(function () {
-                send('add_to_cart', value, config.currency, [item]);
-            });
+            emit('add_to_cart', value, config.currency, [item]);
         });
 
         log('classic add-to-cart listener bound');
@@ -313,9 +429,7 @@
         if (!entry || !isArray(entry.items) || !entry.items.length) return;
         var value = parseFloat(entry.value);
         var currency = entry.currency || config.currency;
-        whenConsented(function () {
-            send('add_to_cart', isNaN(value) ? 0 : round2(value), currency, entry.items);
-        });
+        emit('add_to_cart', isNaN(value) ? 0 : round2(value), currency, entry.items);
     }
 
     // Resolve the clicked add-to-cart button against the product map PHP
@@ -460,9 +574,7 @@
         }
 
         var total = round2(value);
-        whenConsented(function () {
-            send('add_to_cart', total, currency, items);
-        });
+        emit('add_to_cart', total, currency, items);
     }
 
     // Store API money values are integer strings in the currency's MINOR unit,

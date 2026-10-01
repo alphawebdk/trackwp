@@ -12,138 +12,139 @@ msgstr ""
 "Language: en_US\n"
 "X-Domain: trackwp\n"
 
-#: trackwp.php:222
+#: trackwp.php:231
 msgid "Telefonklik"
 msgstr "Phone Click"
 
-#: trackwp.php:234
+#: trackwp.php:243
 msgid "E-mailklik"
 msgstr "Email Click"
 
-#: includes/class-trackwp-events.php:259
-#: trackwp.php:246
+#: includes/class-trackwp-events.php:265
+#: trackwp.php:255
 msgid "Formularindsendelse"
 msgstr "Form Submit"
 
-#: includes/class-trackwp-consent-profile.php:817
-#: trackwp.php:267
-#: trackwp.php:1404
+#: includes/class-trackwp-consent-profile.php:1142
+#: trackwp.php:276
+#: trackwp.php:1534
 msgid "Vi bruger cookies"
 msgstr "We use cookies"
 
-#: trackwp.php:268
-#: trackwp.php:607
+#: trackwp.php:277
+#: trackwp.php:620
 msgid "Vi bruger cookies til at forbedre din oplevelse og analysere trafik. Vælg dine præferencer nedenfor."
 msgstr "We use cookies to improve your experience and analyze traffic. Choose your preferences below."
 
-#: includes/class-trackwp-consent-profile.php:824
-#: trackwp.php:269
-#: trackwp.php:1406
+#: includes/class-trackwp-consent-profile.php:1149
+#: trackwp.php:278
+#: trackwp.php:1536
 msgid "Accepter alle"
 msgstr "Accept all"
 
-#: trackwp.php:595
+#: trackwp.php:608
 msgid "Afvis alle"
 msgstr "Reject all"
 
-#: trackwp.php:271
-#: trackwp.php:1408
+#: trackwp.php:280
+#: trackwp.php:1538
 msgid "Tilpas"
 msgstr "Customize"
 
-#: trackwp.php:272
-#: trackwp.php:1409
+#: trackwp.php:281
+#: trackwp.php:1539
 msgid "Gem præferencer"
 msgstr "Save preferences"
 
-#: trackwp.php:1279
+#: trackwp.php:1355
 msgid "Udvid"
 msgstr "Expand"
 
-#: trackwp.php:1280
+#: trackwp.php:1356
 msgid "Slet"
 msgstr "Delete"
 
-#: trackwp.php:1281
+#: trackwp.php:1357
 msgid "Slet denne begivenhed?"
 msgstr "Delete this event?"
 
-#: trackwp.php:1282
+#: trackwp.php:1358
 msgid "Ret venligst følgende fejl:"
 msgstr "Please fix the following errors:"
 
-#: includes/class-trackwp-settings.php:90
+#: includes/class-trackwp-settings.php:100
 msgid "TrackWP Indstillinger"
 msgstr "TrackWP Settings"
 
-#: includes/class-trackwp-settings.php:105
-#: includes/class-trackwp-settings.php:1490
+#: includes/class-trackwp-settings.php:115
+#: includes/class-trackwp-settings.php:1655
+#: includes/class-trackwp-settings.php:2095
 #: templates/settings-page.php:14
-#: trackwp.php:183
-#: trackwp.php:700
-#: trackwp.php:752
-#: trackwp.php:772
-#: trackwp.php:821
+#: trackwp.php:192
+#: trackwp.php:754
+#: trackwp.php:806
+#: trackwp.php:826
+#: trackwp.php:875
 msgid "Adgang nægtet."
 msgstr "Unauthorized access."
 
-#: includes/class-trackwp-settings.php:1561
+#: includes/class-trackwp-settings.php:2166
 msgid "Indstillinger"
 msgstr "Settings"
 
-#: includes/class-trackwp-events.php:176
+#: includes/class-trackwp-events.php:182
 msgid "Begivenhedsnavnet skal starte med et bogstav og kun indeholde små bogstaver, tal og underscores (maks. 40 tegn)."
 msgstr "Event name must start with a letter and contain only lowercase letters, numbers, and underscores (max 40 characters)."
 
-#: includes/class-trackwp-events.php:190
+#: includes/class-trackwp-events.php:196
 msgid "Ugyldig trigger-type."
 msgstr "Invalid trigger type."
 
-#: includes/class-trackwp-events.php:195
+#: includes/class-trackwp-events.php:201
 msgid "CSS-selector er påkrævet for klik-triggere."
 msgstr "CSS selector is required for click triggers."
 
-#: includes/class-trackwp-events.php:213
+#: includes/class-trackwp-events.php:219
 msgid "Konverteringsværdi skal være numerisk."
 msgstr "Conversion value must be numeric."
 
-#: includes/class-trackwp-events.php:258
+#: includes/class-trackwp-events.php:264
 msgid "Klik på CSS-selector"
 msgstr "Click on CSS selector"
 
-#: includes/class-trackwp-events.php:260
+#: includes/class-trackwp-events.php:266
 msgid "Sidevisning (URL match)"
 msgstr "Page view (URL match)"
 
-#: includes/class-trackwp-events.php:261
+#: includes/class-trackwp-events.php:267
 msgid "Scrolldybde"
 msgstr "Scroll depth"
 
-#: includes/class-trackwp-events.php:262
+#: includes/class-trackwp-events.php:268
 msgid "Tid på siden"
 msgstr "Time on page"
 
-#: includes/class-trackwp-events.php:263
+#: includes/class-trackwp-events.php:269
 msgid "JavaScript-event"
 msgstr "JavaScript event"
 
-#: includes/class-trackwp-events.php:264
+#: includes/class-trackwp-events.php:270
 msgid "Fildownload"
 msgstr "File download"
 
-#: includes/class-trackwp-events.php:340
+#: includes/class-trackwp-events.php:346
 msgid "— Ingen —"
 msgstr "— None —"
 
-#: includes/class-trackwp-events.php:351
+#: includes/class-trackwp-events.php:357
 msgid "Tilpasset begivenhed"
 msgstr "Custom Event"
 
-#: includes/class-trackwp-request-guard.php:75
+#: includes/class-trackwp-request-guard.php:82
 msgid "Cross-origin-forespørgsel afvist."
 msgstr "Cross-origin request denied."
 
-#: includes/class-trackwp-request-guard.php:78
+#: includes/class-trackwp-request-guard.php:85
 msgid "For mange forespørgsler."
 msgstr "Too many requests."
 
@@ -159,7 +160,7 @@ msgid "Platforme"
 msgstr "Platforms"
 
 #: templates/settings-page.php:49
-#: templates/settings-page.php:812
+#: templates/settings-page.php:871
 msgid "Begivenheder"
 msgstr "Events"
 
@@ -169,372 +170,377 @@ msgstr "WooCommerce"
 
 #: templates/partials/consent-tabs.php:17
 #: templates/settings-page.php:57
-#: templates/settings-page.php:1280
-#: templates/settings-page.php:1978
+#: templates/settings-page.php:1344
+#: templates/settings-page.php:2060
 msgid "Samtykke"
 msgstr "Consent"
 
-#: templates/settings-page.php:60
+#: templates/settings-page.php:63
 msgid "Avanceret"
 msgstr "Advanced"
 
-#: templates/settings-page.php:353
+#: templates/settings-page.php:357
 msgid "Google Analytics 4"
 msgstr "Google Analytics 4"
 
-#: templates/settings-page.php:360
+#: templates/settings-page.php:364
 msgid "Measurement ID"
 msgstr "Measurement ID"
 
-#: templates/settings-page.php:370
+#: templates/settings-page.php:374
 msgid "Findes i GA4 > Admin > Data Streams > din stream > Measurement ID."
 msgstr "Found in GA4 > Admin > Data Streams > your stream > Measurement ID."
 
-#: templates/settings-page.php:380
+#: templates/settings-page.php:384
 msgid "API Secret"
 msgstr "API Secret"
 
-#: templates/settings-page.php:392
-#: templates/settings-page.php:520
-#: templates/settings-page.php:558
-#: templates/settings-page.php:581
-#: templates/settings-page.php:656
+#: templates/settings-page.php:396
+#: templates/settings-page.php:527
+#: templates/settings-page.php:565
+#: templates/settings-page.php:588
+#: templates/settings-page.php:701
 msgid "Ryd"
 msgstr "Clear"
 
-#: templates/settings-page.php:397
+#: templates/settings-page.php:401
 msgid "GA4 > Admin > Data Streams > din stream > Measurement Protocol API secrets. Opret en hvis ingen findes."
 msgstr "GA4 > Admin > Data Streams > your stream > Measurement Protocol API secrets. Create one if none exist."
 
-#: templates/settings-page.php:429
+#: templates/settings-page.php:435
 msgid "Google Ads"
 msgstr "Google Ads"
 
-#: templates/settings-page.php:436
+#: templates/settings-page.php:442
 msgid "Conversion ID"
 msgstr "Conversion ID"
 
-#: templates/settings-page.php:446
+#: templates/settings-page.php:452
 msgid "Google Ads > Tools > Conversions > din konverteringshandling > Tag setup > Conversion ID."
 msgstr "Google Ads > Tools > Conversions > your conversion action > Tag setup > Conversion ID."
 
-#: templates/settings-page.php:604
+#: templates/settings-page.php:612
 msgid "Meta (Facebook)"
 msgstr "Meta (Facebook)"
 
-#: templates/settings-page.php:611
+#: templates/settings-page.php:619
 msgid "Pixel ID"
 msgstr "Pixel ID"
 
-#: templates/settings-page.php:621
+#: templates/settings-page.php:629
 msgid "Meta Events Manager > Data Sources > dit Pixel > Settings > Pixel ID."
 msgstr "Meta Events Manager > Data Sources > your Pixel > Settings > Pixel ID."
 
-#: templates/settings-page.php:644
+#: includes/class-trackwp-settings.php:1838
+#: templates/settings-page.php:689
 msgid "Access Token"
 msgstr "Access Token"
 
-#: templates/settings-page.php:661
+#: templates/settings-page.php:706
 msgid "Meta Events Manager > Data Sources > dit Pixel > Settings > Generate access token (Conversions API)."
 msgstr "Meta Events Manager > Data Sources > your Pixel > Settings > Generate access token (Conversions API)."
 
-#: templates/settings-page.php:711
+#: templates/settings-page.php:769
 msgid "Google Tag Manager"
 msgstr "Google Tag Manager"
 
-#: templates/settings-page.php:718
+#: templates/settings-page.php:776
 msgid "Container ID"
 msgstr "Container ID"
 
-#: templates/settings-page.php:728
+#: templates/settings-page.php:786
 msgid "Format: GTM-XXXXXXX. Snippet'et indsættes automatisk i <head> og <body>."
 msgstr "Format: GTM-XXXXXXX. The snippet is injected into <head> and <body> automatically."
 
-#: templates/settings-page.php:735
+#: templates/settings-page.php:793
 msgid "Gem platforme"
 msgstr "Save Platforms"
 
-#: templates/settings-page.php:753
+#: templates/settings-page.php:811
 msgid "Aktiveret"
 msgstr "Enabled"
 
-#: templates/settings-page.php:754
+#: templates/settings-page.php:812
 msgid "Begivenhedsnavn"
 msgstr "Event Name"
 
-#: templates/settings-page.php:755
+#: templates/settings-page.php:813
 msgid "Visningsnavn"
 msgstr "Display Name"
 
-#: templates/settings-page.php:756
+#: templates/settings-page.php:814
 msgid "Trigger-type"
 msgstr "Trigger Type"
 
-#: templates/settings-page.php:757
+#: templates/partials/admin-blocker.php:399
+#: templates/settings-page.php:815
 msgid "Værdi"
 msgstr "Value"
 
-#: templates/settings-page.php:758
+#: templates/settings-page.php:816
 msgid "Valuta"
 msgstr "Currency"
 
-#: templates/settings-page.php:759
+#: templates/settings-page.php:817
 msgid "Google Ads Label"
 msgstr "Google Ads Label"
 
-#: templates/settings-page.php:760
+#: templates/settings-page.php:818
 msgid "Meta Event"
 msgstr "Meta Event"
 
-#: templates/settings-page.php:761
+#: templates/settings-page.php:819
 msgid "Handlinger"
 msgstr "Actions"
 
-#: templates/settings-page.php:771
+#: templates/settings-page.php:829
 msgid "Tilføj begivenhed"
 msgstr "Add Event"
 
-#: templates/settings-page.php:781
+#: templates/settings-page.php:839
 msgid "Gem begivenheder"
 msgstr "Save Events"
 
-#: templates/settings-page.php:921
+#: templates/settings-page.php:982
 msgid "Banner-stil"
 msgstr "Banner Style"
 
-#: templates/settings-page.php:925
+#: templates/settings-page.php:986
 msgid "Stil"
 msgstr "Style"
 
-#: templates/settings-page.php:941
+#: templates/settings-page.php:1002
 msgid "Farver"
 msgstr "Colors"
 
-#: templates/settings-page.php:944
+#: templates/settings-page.php:1005
 msgid "Baggrund"
 msgstr "Background"
 
-#: templates/settings-page.php:952
-#: templates/settings-page.php:995
+#: templates/settings-page.php:1013
+#: templates/settings-page.php:1056
 msgid "Tekst"
 msgstr "Text"
 
-#: templates/settings-page.php:960
+#: templates/settings-page.php:1021
 msgid "Fremhævning / knap"
 msgstr "Accent / Button"
 
-#: templates/settings-page.php:968
+#: templates/settings-page.php:1029
 msgid "Knaptekst"
 msgstr "Button Text"
 
-#: templates/settings-page.php:977
+#: templates/settings-page.php:1038
 msgid "Udseende"
 msgstr "Appearance"
 
-#: templates/settings-page.php:981
+#: templates/settings-page.php:1042
 msgid "Hjørneradius (px)"
 msgstr "Border Radius (px)"
 
-#: templates/settings-page.php:999
+#: templates/settings-page.php:1060
 msgid "Overskrift"
 msgstr "Heading"
 
-#: templates/settings-page.php:1011
+#: templates/settings-page.php:1072
 msgid "Beskrivelse"
 msgstr "Description"
 
-#: templates/settings-page.php:1022
+#: templates/settings-page.php:1083
 msgid "Accepter-knap"
 msgstr "Accept Button"
 
-#: templates/settings-page.php:1034
+#: templates/settings-page.php:1095
 msgid "Afvis-knap"
 msgstr "Reject Button"
 
-#: templates/settings-page.php:1046
+#: templates/settings-page.php:1107
 msgid "Tilpas-knap"
 msgstr "Customize Button"
 
-#: templates/settings-page.php:1058
+#: templates/settings-page.php:1119
 msgid "Gem-knap"
 msgstr "Save Button"
 
-#: templates/settings-page.php:1070
+#: templates/settings-page.php:1131
 msgid "Side med privatlivspolitik"
 msgstr "Privacy Policy Page"
 
-#: templates/settings-page.php:1078
+#: templates/settings-page.php:1139
 msgid "-- Vælg side --"
 msgstr "-- Select page --"
 
-#: templates/settings-page.php:1086
+#: templates/settings-page.php:1147
 msgid "Adfærd"
 msgstr "Behavior"
 
-#: templates/settings-page.php:1092
+#: templates/settings-page.php:1153
 msgid "Kræv aktivt samtykke"
 msgstr "Require Active Consent"
 
-#: templates/settings-page.php:1099
+#: templates/settings-page.php:1161
 msgid "Bloker al tracking indtil brugeren aktivt accepterer (GDPR-anbefalet)."
 msgstr "Block all tracking until user actively accepts (GDPR recommended)."
 
-#: templates/settings-page.php:1104
+#: templates/settings-page.php:1166
 msgid "Log samtykke"
 msgstr "Log Consent"
 
-#: templates/settings-page.php:1111
+#: templates/settings-page.php:1174
 msgid "Gem en server-side log over hver samtykke-handling til audit-formål."
 msgstr "Store a server-side record of each consent action for auditing."
 
-#: templates/settings-page.php:1116
+#: templates/settings-page.php:1179
 msgid "Genindhent samtykke ved policy-ændring"
 msgstr "Re-consent on Policy Change"
 
-#: templates/settings-page.php:1123
+#: templates/settings-page.php:1187
 msgid "Bed automatisk brugere om nyt samtykke når samtykke-tekst ændres."
 msgstr "Automatically prompt users for new consent when consent text changes."
 
-#: templates/settings-page.php:1129
+#: templates/settings-page.php:1193
 msgid "Cookie-levetid (måneder)"
 msgstr "Cookie Lifetime (months)"
 
-#: templates/settings-page.php:1275
+#: templates/settings-page.php:1339
 msgid "Forhåndsvisning"
 msgstr "Preview"
 
-#: templates/settings-page.php:1301
+#: templates/settings-page.php:1365
 msgid "Gem samtykke-indstillinger"
 msgstr "Save Consent Settings"
 
-#: templates/settings-page.php:1490
+#: templates/settings-page.php:1559
 msgid "Endpoint"
 msgstr "Endpoint"
 
-#: templates/settings-page.php:1494
+#: templates/settings-page.php:1563
 msgid "Endpoint slug"
 msgstr "Endpoint Slug"
 
-#: templates/settings-page.php:1508
+#: templates/settings-page.php:1577
 msgid "Kun slug (a-z, 0-9, bindestreger; maks. 32 tegn). Nyttigt for at omgå adblockers. Må ikke være \"consent-log\"."
 msgstr "Slug-only (a-z, 0-9, dashes; max 32 chars). Useful for bypassing ad-blockers. Cannot be \"consent-log\"."
 
-#: templates/settings-page.php:1525
+#: templates/settings-page.php:1594
 msgid "Førsteparts-cookie"
 msgstr "First-Party Cookie"
 
-#: templates/settings-page.php:796
-#: templates/settings-page.php:1528
+#: templates/settings-page.php:854
+#: templates/settings-page.php:1597
 msgid "Aktivér"
 msgstr "Enable"
 
-#: templates/settings-page.php:1535
+#: templates/settings-page.php:1605
 msgid "Brug en førsteparts-cookie til at identificere returnerende besøgende."
 msgstr "Use a first-party cookie to identify returning visitors."
 
-#: templates/settings-page.php:1541
+#: templates/settings-page.php:1611
 msgid "Cookie-navn"
 msgstr "Cookie Name"
 
-#: templates/settings-page.php:1553
+#: templates/settings-page.php:1623
 msgid "Levetid (måneder)"
 msgstr "Lifetime (months)"
 
-#: templates/settings-page.php:1583
+#: templates/settings-page.php:1653
 msgid "Consent Mode v2"
 msgstr "Consent Mode v2"
 
-#: templates/settings-page.php:1586
+#: templates/settings-page.php:1656
 msgid "Cookieløse pings"
 msgstr "Cookieless Pings"
 
-#: templates/settings-page.php:1598
+#: templates/settings-page.php:1669
 msgid "Annoncesignaler"
 msgstr "Ad Signals"
 
-#: templates/settings-page.php:1605
+#: templates/settings-page.php:1677
 msgid "Send annonce-klik-identifiers (gclid, fbclid) i cookieløse pings."
 msgstr "Pass ad click identifiers (gclid, fbclid) in cookieless pings."
 
-#: templates/settings-page.php:1611
+#: templates/settings-page.php:1683
 msgid "Dedup-strategi"
 msgstr "Dedup Strategy"
 
-#: templates/settings-page.php:1614
+#: templates/partials/admin-blocker.php:226
+#: templates/settings-page.php:1686
 msgid "Tilstand"
 msgstr "Mode"
 
-#: templates/settings-page.php:1620
+#: templates/settings-page.php:1692
 msgid "Klient + server (standard — begge fyrer, dedup via event_id)"
 msgstr "Client + Server (default — both fire, dedup via event_id)"
 
-#: templates/settings-page.php:1624
+#: templates/settings-page.php:1696
 msgid "Kun server (brug når GTM håndterer klient-side tags)"
 msgstr "Server-only (use when GTM handles client-side tags)"
 
-#: templates/settings-page.php:1628
+#: templates/settings-page.php:1700
 msgid "Kun klient (spring server-proxy GA4/Meta dispatch over)"
 msgstr "Client-only (skip server proxy GA4/Meta dispatch)"
 
-#: templates/settings-page.php:1632
+#: templates/settings-page.php:1704
 msgid "Førsteparts-cookie og samtykke-log kører altid uanset tilstand."
 msgstr "First-party cookie and consent logging always run regardless of mode."
 
-#: templates/settings-page.php:1637
+#: templates/settings-page.php:1709
 msgid "Jeg bruger GTM på dette site"
 msgstr "I use GTM on this site"
 
-#: templates/settings-page.php:1641
+#: templates/settings-page.php:1714
 msgid "Vælg automatisk \"Kun server\"-tilstand ovenfor."
 msgstr "Auto-select \"Server-only\" mode above."
 
-#: templates/settings-page.php:1669
+#: templates/settings-page.php:1742
 msgid "Debug"
 msgstr "Debug"
 
-#: templates/settings-page.php:1672
+#: templates/settings-page.php:1745
 msgid "Log til fil"
 msgstr "Log to File"
 
-#: templates/settings-page.php:1679
+#: templates/settings-page.php:1753
 msgid "Skriv tracking-events til WordPress debug-loggen."
 msgstr "Write tracking events to the WordPress debug log."
 
-#: templates/settings-page.php:1684
+#: templates/settings-page.php:1758
 msgid "Konsoloutput"
 msgstr "Console Output"
 
-#: templates/settings-page.php:1691
+#: templates/settings-page.php:1766
 msgid "Send tracking debug-info til browserkonsollen."
 msgstr "Output tracking debug info to the browser console."
 
-#: templates/settings-page.php:1697
+#: templates/settings-page.php:1772
 msgid "Ydelse"
 msgstr "Performance"
 
-#: templates/settings-page.php:1874
+#: templates/settings-page.php:1956
 msgid "Gem avancerede indstillinger"
 msgstr "Save Advanced Settings"
 
-#: includes/class-trackwp-consent-profile.php:826
+#: includes/class-trackwp-consent-profile.php:1151
 msgid "Tilpas valg"
 msgstr "Customize choices"
 
-#: includes/class-trackwp-consent-profile.php:827
+#: includes/class-trackwp-consent-profile.php:1152
 msgid "Gem mine valg"
 msgstr "Save my choices"
 
-#: includes/class-trackwp-consent-profile.php:772
-#: templates/settings-page.php:1218
-#: templates/settings-page.php:1288
-#: templates/settings-page.php:1343
+#: includes/class-trackwp-consent-profile.php:1097
+#: templates/partials/admin-blocker.php:28
+#: templates/settings-page.php:1282
+#: templates/settings-page.php:1352
+#: templates/settings-page.php:1407
 msgid "Statistik"
 msgstr "Statistics"
 
-#: includes/class-trackwp-consent-profile.php:776
-#: templates/settings-page.php:1218
-#: templates/settings-page.php:1289
-#: templates/settings-page.php:1344
+#: includes/class-trackwp-consent-profile.php:1101
+#: templates/partials/admin-blocker.php:29
+#: templates/settings-page.php:1282
+#: templates/settings-page.php:1353
+#: templates/settings-page.php:1408
 msgid "Marketing"
 msgstr "Marketing"
 
@@ -694,9 +700,11 @@ msgid "90 dage"
 msgstr "90 days"
 
 #: includes/class-trackwp-consent-profile.php:213
-#: includes/class-trackwp-consent-profile.php:259
-#: includes/class-trackwp-consent-profile.php:390
-#: includes/class-trackwp-consent-profile.php:454
+#: includes/class-trackwp-consent-profile.php:278
+#: includes/class-trackwp-consent-profile.php:567
+#: includes/class-trackwp-consent-profile.php:669
+#: includes/class-trackwp-consent-profile.php:688
+#: includes/class-trackwp-consent-profile.php:768
 msgid "Styret af udbyderen"
 msgstr "Controlled by the provider"
 
@@ -706,304 +714,301 @@ msgstr "Controlled by the provider"
 msgid "Styret af udbyderen (op til %s)"
 msgstr "Controlled by the provider (up to %s)"
 
-#: includes/class-trackwp-consent-profile.php:257
-#: includes/class-trackwp-consent-profile.php:624
+#: includes/class-trackwp-consent-profile.php:276
+#: includes/class-trackwp-consent-profile.php:949
 #: includes/class-trackwp-cookie-scanner.php:38
 msgid "USA (EU-US Data Privacy Framework)"
 msgstr "USA (EU-US Data Privacy Framework)"
 
-#: includes/class-trackwp-consent-profile.php:258
+#: includes/class-trackwp-consent-profile.php:277
 msgid "Måling af annoncer samt tilpasning og målretning af annoncer"
 msgstr "Measurement of ads as well as ad personalization and targeting"
 
-#: includes/class-trackwp-consent-profile.php:268
+#: includes/class-trackwp-consent-profile.php:288
 msgid "Statistik over, hvordan websitet bruges"
 msgstr "Statistics on how the website is used"
 
 #. translators: %s: "Styret af udbyderen (op til 90 dage)"
-#: includes/class-trackwp-consent-profile.php:282
+#: includes/class-trackwp-consent-profile.php:302
 #, php-format
 msgid "%s. _gcl_ls (lokal lagring): styret af udbyderen"
 msgstr "%s. _gcl_ls (local storage): controlled by the provider"
 
 #. translators: %s: "Styret af udbyderen (op til 90 dage)"
-#: includes/class-trackwp-consent-profile.php:295
+#: includes/class-trackwp-consent-profile.php:315
 #, php-format
 msgid "_fbp: %s. _fbc: styret af udbyderen"
 msgstr "_fbp: %s. _fbc: controlled by the provider"
 
-#: includes/class-trackwp-consent-profile.php:307
+#: includes/class-trackwp-consent-profile.php:327
 #: includes/class-trackwp-cookie-scanner.php:46
 msgid "1 år"
 msgstr "1 year"
 
-#: includes/class-trackwp-consent-profile.php:319
+#: includes/class-trackwp-consent-profile.php:339
 msgid "13 måneder"
 msgstr "13 months"
 
-#: includes/class-trackwp-consent-profile.php:320
+#: includes/class-trackwp-consent-profile.php:340
 msgid "Bl.a. USA, Malaysia og Singapore (EU's standardkontraktbestemmelser, SCC)"
 msgstr "Including the USA, Malaysia and Singapore (EU Standard Contractual Clauses, SCCs)"
 
-#: includes/class-trackwp-consent-profile.php:337
+#: includes/class-trackwp-consent-profile.php:357
 msgid "Contentsquare (tidligere Hotjar)"
 msgstr "Contentsquare (formerly Hotjar)"
 
-#: includes/class-trackwp-consent-profile.php:338
+#: includes/class-trackwp-consent-profile.php:358
 msgid "Content Square SAS, Frankrig (Contentsquare-koncernen, som Hotjar Ltd. er fusioneret ind i)"
 msgstr "Content Square SAS, France (the Contentsquare group, into which Hotjar Ltd. has merged)"
 
-#: includes/class-trackwp-consent-profile.php:342
+#: includes/class-trackwp-consent-profile.php:362
 msgid "Analyse af, hvordan besøgende bruger siderne"
 msgstr "Analysis of how visitors use the pages"
 
-#: includes/class-trackwp-consent-profile.php:343
+#: includes/class-trackwp-consent-profile.php:363
 msgid "365 dage"
 msgstr "365 days"
 
-#: includes/class-trackwp-consent-profile.php:344
+#: includes/class-trackwp-consent-profile.php:364
 msgid "Primært EU. Enkelte oplysninger kan overføres til USA (EU's standardkontraktbestemmelser, SCC)"
 msgstr "Primarily the EU. Some information may be transferred to the USA (EU Standard Contractual Clauses, SCCs)"
 
-#: includes/class-trackwp-consent-profile.php:448
+#: includes/class-trackwp-consent-profile.php:762
 msgid "Tjenester indlæst via Google Tag Manager"
 msgstr "Services loaded via Google Tag Manager"
 
-#: includes/class-trackwp-consent-profile.php:449
+#: includes/class-trackwp-consent-profile.php:763
 msgid "Ikke angivet af webstedets ejer"
 msgstr "Not specified by the website owner"
 
-#: includes/class-trackwp-consent-profile.php:453
+#: includes/class-trackwp-consent-profile.php:767
 msgid "Webstedets ejer har endnu ikke angivet, hvilke tjenester der indlæses via Google Tag Manager."
 msgstr "The website owner has not yet specified which services are loaded via Google Tag Manager."
 
-#: includes/class-trackwp-consent-profile.php:515
+#: includes/class-trackwp-consent-profile.php:411
+#: includes/class-trackwp-consent-profile.php:840
 #: includes/class-trackwp-cookie-scanner.php:37
 msgid "Dette website (førsteparts)"
 msgstr "This website (first-party)"
 
-#: includes/class-trackwp-consent-profile.php:519
+#: includes/class-trackwp-consent-profile.php:844
 #: includes/class-trackwp-cookie-scanner.php:43
 msgid "Cookie-samtykke"
 msgstr "Cookie consent"
 
-#: includes/class-trackwp-consent-profile.php:524
+#: includes/class-trackwp-consent-profile.php:849
 #: includes/class-trackwp-cookie-scanner.php:43
 msgid "Husker dit cookievalg, tidspunktet og dit samtykke-ID"
 msgstr "Remembers your cookie choice, the time, and your consent ID"
 
-#: includes/class-trackwp-consent-profile.php:532
+#: includes/class-trackwp-consent-profile.php:857
 #: includes/class-trackwp-cookie-scanner.php:50
 msgid "Førsteparts-id"
 msgstr "First-party ID"
 
-#: includes/class-trackwp-consent-profile.php:537
+#: includes/class-trackwp-consent-profile.php:862
 #: includes/class-trackwp-cookie-scanner.php:50
 msgid "Genkender din browser ved gentagne besøg, så besøg kan tælles korrekt"
 msgstr "Recognizes your browser on repeat visits, so visits can be counted correctly"
 
-#: includes/class-trackwp-consent-profile.php:546
+#: includes/class-trackwp-consent-profile.php:871
 msgid "Session-id"
 msgstr "Session ID"
 
-#: includes/class-trackwp-consent-profile.php:551
+#: includes/class-trackwp-consent-profile.php:876
 msgid "Samler sidevisninger fra samme besøg i én session"
 msgstr "Groups page views from the same visit into one session"
 
-#: includes/class-trackwp-consent-profile.php:552
+#: includes/class-trackwp-consent-profile.php:877
 msgid "Indtil fanebladet lukkes (TrackWP-konfigureret)"
 msgstr "Until the tab is closed (TrackWP-configured)"
 
-#: includes/class-trackwp-consent-profile.php:560
+#: includes/class-trackwp-consent-profile.php:885
 msgid "Tidspunkt for fornyelse"
 msgstr "Renewal time"
 
-#: includes/class-trackwp-consent-profile.php:565
-msgid "Husker, hvornår målecookies sidst blev fornyet, så det kun sker én gang i døgnet"
-msgstr "Remembers when measurement cookies were last renewed, so it only happens once a day"
-
-#: includes/class-trackwp-consent-profile.php:566
-#: includes/class-trackwp-consent-profile.php:580
+#: includes/class-trackwp-consent-profile.php:891
+#: includes/class-trackwp-consent-profile.php:905
 msgid "Indtil du sletter browserdata (TrackWP-konfigureret)"
 msgstr "Until you clear your browser data (TrackWP-configured)"
 
-#: includes/class-trackwp-consent-profile.php:574
+#: includes/class-trackwp-consent-profile.php:899
 msgid "Registrerede køb"
 msgstr "Recorded purchases"
 
-#: includes/class-trackwp-consent-profile.php:579
+#: includes/class-trackwp-consent-profile.php:904
 msgid "Husker op til 20 ordrenumre, så det samme køb ikke tælles to gange"
 msgstr "Remembers up to 20 order numbers, so the same purchase is not counted twice"
 
-#: includes/class-trackwp-consent-profile.php:588
+#: includes/class-trackwp-consent-profile.php:913
 #: includes/class-trackwp-cookie-scanner.php:51
 msgid "Annonceklik"
 msgstr "Ad click"
 
-#: includes/class-trackwp-consent-profile.php:593
+#: includes/class-trackwp-consent-profile.php:918
 #: includes/class-trackwp-cookie-scanner.php:51
 msgid "Gemmer klik-id fra Google-annoncer (gclid, gbraid, wbraid), så et køb kan knyttes til annoncen"
 msgstr "Stores the click ID from Google ads (gclid, gbraid, wbraid), so a purchase can be linked to the ad"
 
-#: includes/class-trackwp-consent-profile.php:602
+#: includes/class-trackwp-consent-profile.php:927
 #: includes/class-trackwp-cookie-scanner.php:60
 msgid "Meta-annonceklik"
 msgstr "Meta ad click"
 
-#: includes/class-trackwp-consent-profile.php:607
+#: includes/class-trackwp-consent-profile.php:932
 #: includes/class-trackwp-cookie-scanner.php:60
 msgid "Gemmer klik-id fra Meta-annoncer (fbclid), så et køb kan knyttes til annoncen"
 msgstr "Stores the click ID from Meta ads (fbclid), so a purchase can be linked to the ad"
 
-#: includes/class-trackwp-consent-profile.php:621
+#: includes/class-trackwp-consent-profile.php:946
 #: includes/class-trackwp-cookie-scanner.php:55
 msgid "Google Analytics-cookie fundet på enheden (ikke dokumenteret af Google som GA4-standardcookie)"
 msgstr "Google Analytics cookie found on the device (not documented by Google as a standard GA4 cookie)"
 
 #. translators: 1: comma separated list, 2: last item
-#: includes/class-trackwp-consent-profile.php:739
+#: includes/class-trackwp-consent-profile.php:1064
 #, php-format
 msgid "%1$s og %2$s"
 msgstr "%1$s and %2$s"
 
-#: includes/class-trackwp-consent-profile.php:768
-#: templates/settings-page.php:1287
+#: includes/class-trackwp-consent-profile.php:1093
+#: templates/settings-page.php:1351
 msgid "Nødvendige"
 msgstr "Necessary"
 
-#: includes/class-trackwp-consent-profile.php:769
+#: includes/class-trackwp-consent-profile.php:1094
 msgid "Nødvendige for, at websitet fungerer, og for at huske dit cookievalg. Kan ikke fravælges."
 msgstr "Necessary for the website to function and to remember your cookie choice. Cannot be opted out of."
 
-#: includes/class-trackwp-consent-profile.php:773
+#: includes/class-trackwp-consent-profile.php:1098
 msgid "Måler, hvordan websitet bruges, så vi kan forbedre det."
 msgstr "Measures how the website is used so we can improve it."
 
-#: includes/class-trackwp-consent-profile.php:778
+#: includes/class-trackwp-consent-profile.php:1103
 msgid "Måler, hvordan vores annoncer virker, og bruges til tilpasning og målretning af annoncer."
 msgstr "Measures how our ads perform and is used for ad personalization and targeting."
 
-#: includes/class-trackwp-consent-profile.php:779
+#: includes/class-trackwp-consent-profile.php:1104
 msgid "Bruges til markedsføring."
 msgstr "Used for marketing."
 
-#: includes/class-trackwp-consent-profile.php:782
+#: includes/class-trackwp-consent-profile.php:1107
 msgid "Funktionalitet og præferencer"
 msgstr "Functionality and preferences"
 
-#: includes/class-trackwp-consent-profile.php:783
+#: includes/class-trackwp-consent-profile.php:1108
 msgid "Husker dine præferencer, fx sprog og region."
 msgstr "Remembers your preferences, e.g. language and region."
 
-#: includes/class-trackwp-consent-profile.php:786
+#: includes/class-trackwp-consent-profile.php:1111
 msgid "Uklassificerede"
 msgstr "Unclassified"
 
-#: includes/class-trackwp-consent-profile.php:787
+#: includes/class-trackwp-consent-profile.php:1112
 msgid "Cookies fundet på din enhed, som endnu ikke er klassificeret."
 msgstr "Cookies found on your device that have not yet been classified."
 
-#: includes/class-trackwp-consent-profile.php:825
-#: trackwp.php:270
-#: trackwp.php:599
-#: trackwp.php:1407
+#: includes/class-trackwp-consent-profile.php:1150
+#: trackwp.php:279
+#: trackwp.php:612
+#: trackwp.php:1537
 msgid "Afvis valgfrie"
 msgstr "Reject optional"
 
-#: includes/class-trackwp-consent-profile.php:828
+#: includes/class-trackwp-consent-profile.php:1153
 msgid "Træk samtykke tilbage"
 msgstr "Withdraw consent"
 
-#: includes/class-trackwp-consent-profile.php:829
+#: includes/class-trackwp-consent-profile.php:1154
 msgid "Luk"
 msgstr "Close"
 
-#: includes/class-trackwp-consent-profile.php:830
+#: includes/class-trackwp-consent-profile.php:1155
 msgid "Cookies på dette website"
 msgstr "Cookies on this website"
 
 #. translators: %s: data controller name
-#: includes/class-trackwp-consent-profile.php:833
+#: includes/class-trackwp-consent-profile.php:1158
 #, php-format
 msgid "%s bruger kun cookies og lignende teknologier, som er nødvendige for, at websitet fungerer. Derfor beder vi ikke om dit samtykke. Du kan se dem herunder."
 msgstr "%s only uses cookies and similar technologies that are necessary for the website to function. That's why we don't ask for your consent. You can see them below."
 
 #. translators: %s: data controller name
-#: includes/class-trackwp-consent-profile.php:840
+#: includes/class-trackwp-consent-profile.php:1165
 #, php-format
 msgid "%s er dataansvarlig for behandlingen af dine oplysninger på dette website."
 msgstr "%s is the data controller for the processing of your information on this website."
 
-#: includes/class-trackwp-consent-profile.php:846
+#: includes/class-trackwp-consent-profile.php:1171
 msgid "statistik over, hvordan websitet bruges"
 msgstr "statistics on how the website is used"
 
-#: includes/class-trackwp-consent-profile.php:850
+#: includes/class-trackwp-consent-profile.php:1175
 msgid "måling af, hvordan vores annoncer virker, samt tilpasning og målretning af annoncer"
 msgstr "measurement of how our ads perform, as well as ad personalization and targeting"
 
-#: includes/class-trackwp-consent-profile.php:851
+#: includes/class-trackwp-consent-profile.php:1176
 msgid "markedsføring"
 msgstr "marketing"
 
-#: includes/class-trackwp-consent-profile.php:854
+#: includes/class-trackwp-consent-profile.php:1179
 msgid "at huske dine præferencer"
 msgstr "remembering your preferences"
 
 #. translators: %s: list of purposes
-#: includes/class-trackwp-consent-profile.php:858
+#: includes/class-trackwp-consent-profile.php:1183
 #, php-format
 msgid "Med dit samtykke bruger vi cookies og lignende teknologier til %s."
 msgstr "With your consent, we use cookies and similar technologies for %s."
 
-#: includes/class-trackwp-consent-profile.php:864
+#: includes/class-trackwp-consent-profile.php:1189
 msgid "online-id'er fra cookies"
 msgstr "online identifiers from cookies"
 
-#: includes/class-trackwp-consent-profile.php:865
+#: includes/class-trackwp-consent-profile.php:1190
 msgid "IP-adresse"
 msgstr "IP address"
 
-#: includes/class-trackwp-consent-profile.php:866
+#: includes/class-trackwp-consent-profile.php:1191
 msgid "hvilke sider du besøger"
 msgstr "which pages you visit"
 
-#: includes/class-trackwp-consent-profile.php:867
+#: includes/class-trackwp-consent-profile.php:1192
 msgid "oplysninger om din browser og enhed"
 msgstr "information about your browser and device"
 
-#: includes/class-trackwp-consent-profile.php:869
+#: includes/class-trackwp-consent-profile.php:1194
 msgid "handlinger som klik, formularindsendelser og køb"
 msgstr "actions such as clicks, form submissions and purchases"
 
-#: includes/class-trackwp-consent-profile.php:870
+#: includes/class-trackwp-consent-profile.php:1195
 msgid "handlinger som klik og formularindsendelser"
 msgstr "actions such as clicks and form submissions"
 
-#: includes/class-trackwp-consent-profile.php:873
+#: includes/class-trackwp-consent-profile.php:1198
 msgid "hvilken annonce du kom fra"
 msgstr "which ad you came from"
 
 #. translators: %s: list of data types
-#: includes/class-trackwp-consent-profile.php:876
+#: includes/class-trackwp-consent-profile.php:1201
 #, php-format
 msgid "Det drejer sig om oplysninger som %s."
 msgstr "This concerns information such as %s."
 
 #. translators: %s: recipients, e.g. "Google og Meta"
-#: includes/class-trackwp-consent-profile.php:888
+#: includes/class-trackwp-consent-profile.php:1213
 #, php-format
 msgid "Indtaster du e-mail eller telefonnummer i en formular eller ved et køb, kan de sendes til %s i kodet form, som stadig gør det muligt for modtageren at genkende dig."
 msgstr "If you enter an email address or phone number in a form or at checkout, it may be sent to %s in encoded (hashed) form, which still allows the recipient to recognize you."
 
 #. translators: %s: label of the customize button
-#: includes/class-trackwp-consent-profile.php:915
+#: includes/class-trackwp-consent-profile.php:1240
 #, php-format
 msgid "Du kan se alle samarbejdspartnere og cookies under »%s«."
 msgstr "You can see all partners and cookies under \"%s\"."
 
 #. translators: %s: recipient name or list of recipients
-#: includes/class-trackwp-consent-profile.php:921
+#: includes/class-trackwp-consent-profile.php:1246
 #, php-format
 msgid "Oplysningerne deles med vores samarbejdspartner %s."
 msgid_plural "Oplysningerne deles med vores samarbejdspartnere %s."
@@ -1011,7 +1016,7 @@ msgstr[0] "The information is shared with our partner %s."
 msgstr[1] "The information is shared with our partners %s."
 
 #. translators: %s: recipient name or list of recipients
-#: includes/class-trackwp-consent-profile.php:927
+#: includes/class-trackwp-consent-profile.php:1252
 #, php-format
 msgid "Oplysningerne deles med vores samarbejdspartner %s, som kan behandle dem i USA under EU-US Data Privacy Framework."
 msgid_plural "Oplysningerne deles med vores samarbejdspartnere %s, som kan behandle dem i USA under EU-US Data Privacy Framework."
@@ -1019,46 +1024,46 @@ msgstr[0] "The information is shared with our partner %s, who may process it in 
 msgstr[1] "The information is shared with our partners %s, who may process it in the USA under the EU-US Data Privacy Framework."
 
 #. translators: 1: recipient name, 2: label of the customize button
-#: includes/class-trackwp-consent-profile.php:934
+#: includes/class-trackwp-consent-profile.php:1259
 #, php-format
 msgid "Oplysningerne deles med vores samarbejdspartner %1$s, som kan behandle dem uden for EU/EØS. Se grundlaget for overførslen under »%2$s«."
 msgstr "The information is shared with our partner %1$s, who may process it outside the EU/EEA. See the basis for the transfer under \"%2$s\"."
 
 #. translators: 1: list of recipients, 2: label of the customize button
-#: includes/class-trackwp-consent-profile.php:942
+#: includes/class-trackwp-consent-profile.php:1267
 #, php-format
 msgid "Oplysningerne deles med vores samarbejdspartnere %1$s. Nogle af dem kan behandle oplysningerne uden for EU/EØS. Se grundlaget for hver samarbejdspartner under »%2$s«."
 msgstr "The information is shared with our partners %1$s. Some of them may process the information outside the EU/EEA. See the basis for each partner under \"%2$s\"."
 
-#: includes/class-trackwp-consent-profile.php:948
+#: includes/class-trackwp-consent-profile.php:1273
 msgid "Oplysningerne kan deles med tjenester, som indlæses via Google Tag Manager."
 msgstr "The information may be shared with services loaded via Google Tag Manager."
 
-#: includes/class-trackwp-consent-profile.php:956
+#: includes/class-trackwp-consent-profile.php:1281
 msgid "Du kan til enhver tid ændre dit valg eller trække dit samtykke tilbage under Cookie-indstillinger. Det påvirker ikke lovligheden af den behandling, der er sket, før du trak samtykket tilbage."
 msgstr "You can change your choice or withdraw your consent at any time under Cookie settings. This does not affect the lawfulness of processing carried out before you withdrew your consent."
 
-#: includes/class-trackwp-consent.php:46
+#: includes/class-trackwp-consent.php:49
 #: templates/partials/consent-tabs.php:22
 msgid "Cookie-indstillinger"
 msgstr "Cookie settings"
 
-#: includes/class-trackwp-consent.php:61
+#: includes/class-trackwp-consent.php:64
 msgid "Skift cookie-indstillinger"
 msgstr "Change cookie settings"
 
 #: includes/class-trackwp-cookie-scanner.php:39
-#: includes/class-trackwp-cookie-scanner.php:161
+#: includes/class-trackwp-cookie-scanner.php:186
 msgid "Session"
 msgstr "Session"
 
 #: includes/class-trackwp-cookie-scanner.php:42
-#: includes/class-trackwp-cookie-scanner.php:158
+#: includes/class-trackwp-cookie-scanner.php:183
 msgid "Webserver (PHP)"
 msgstr "Web server (PHP)"
 
 #: includes/class-trackwp-cookie-scanner.php:42
-#: includes/class-trackwp-cookie-scanner.php:160
+#: includes/class-trackwp-cookie-scanner.php:185
 msgid "Bevarer session-tilstand mellem sidevisninger"
 msgstr "Preserves session state between page views"
 
@@ -1138,21 +1143,21 @@ msgstr "Conversion measurement"
 msgid "Konverteringsmåling samt tilpasning og målretning af annoncer"
 msgstr "Conversion measurement, as well as ad personalization and targeting"
 
-#: includes/class-trackwp-cookie-scanner.php:102
+#: includes/class-trackwp-cookie-scanner.php:127
 msgid "Ukendt"
 msgstr "Unknown"
 
-#: includes/class-trackwp-cookie-scanner.php:102
+#: includes/class-trackwp-cookie-scanner.php:127
 msgid "Ikke klassificeret endnu"
 msgstr "Not yet classified"
 
 #. translators: %s: comma-separated list of reserved event names
-#: includes/class-trackwp-events.php:181
+#: includes/class-trackwp-events.php:187
 #, php-format
 msgid "Begivenhedsnavnet er reserveret af Google Analytics og kan ikke bruges: %s."
 msgstr "The event name is reserved by Google Analytics and cannot be used: %s."
 
-#: includes/class-trackwp-events.php:269
+#: includes/class-trackwp-events.php:275
 msgid "WooCommerce (styres på WooCommerce-fanen)"
 msgstr "WooCommerce (managed on the WooCommerce tab)"
 
@@ -1170,129 +1175,129 @@ msgstr "The request is too large."
 msgid "Ukendt måle-id."
 msgstr "Unknown measurement ID."
 
-#: includes/class-trackwp-proxy.php:615
+#: includes/class-trackwp-proxy.php:593
 msgid "Begivenhedsnavnet er reserveret af Google Analytics."
 msgstr "The event name is reserved by Google Analytics."
 
 #. translators: %d: retention in days
-#: includes/class-trackwp-proxy.php:1189
+#: includes/class-trackwp-proxy.php:1162
 #, php-format
 msgid "Tracking-events forwardes til Google/Meta. Der gemmes server-side udelukkende teknisk leveringsinformation i %d dage — begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform og leveringsstatus. Der gemmes hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer eller dit client_id, og posterne kan derfor ikke knyttes til dig."
 msgstr "Tracking events are forwarded to Google/Meta. Only technical delivery information is stored server-side for %d days — event name, a random event ID, time rounded to the minute, destination platform and delivery status. No IP address, browser information, page URL, form content, email, phone number or your client_id is stored, so the records cannot be linked to you."
 
-#: includes/class-trackwp-proxy.php:1193
+#: includes/class-trackwp-proxy.php:1166
 msgid "Tracking-events forwardes til Google/Meta og gemmes ikke server-side. Førsteparts-cookien indeholder kun et tilfældigt client_id."
 msgstr "Tracking events are forwarded to Google/Meta and are not stored server-side. The first-party cookie contains only a random client_id."
 
-#: includes/class-trackwp-proxy.php:1200
+#: includes/class-trackwp-proxy.php:1173
 msgid "Ved samtykke-afgivelse gemmes en revisionspost server-side med pseudonymiseret IP (envejshash), user-agent og tidspunkt — den kan ikke slås op via dette endpoint, da den ikke er knyttet til dit client_id."
 msgstr "When consent is given, an audit record is stored server-side with a pseudonymized IP address (one-way hash), user agent and timestamp — it cannot be looked up via this endpoint, as it is not linked to your client_id."
 
-#: includes/class-trackwp-proxy.php:1201
+#: includes/class-trackwp-proxy.php:1174
 msgid "For at slette dit client_id: ryd cookies for dette site i din browser, eller kald DELETE /wp-json/trackwp/v1/my-data."
 msgstr "To delete your client_id: clear cookies for this site in your browser, or call DELETE /wp-json/trackwp/v1/my-data."
 
-#: includes/class-trackwp-proxy.php:1220
+#: includes/class-trackwp-proxy.php:1193
 msgid "Dine cookies er slettet. Genindlæs siden for at fortsætte uden tracking."
 msgstr "Your cookies have been deleted. Reload the page to continue without tracking."
 
 #. translators: %s: the entered ID
-#: includes/class-trackwp-settings.php:207
+#: includes/class-trackwp-settings.php:223
 #, php-format
 msgid "GA4 Measurement ID \"%s\" er ikke i G-format. Server-side MP vil ikke virke."
 msgstr "GA4 Measurement ID \"%s\" is not in G-format. Server-side MP will not work."
 
-#: includes/class-trackwp-settings.php:357
+#: includes/class-trackwp-settings.php:387
 msgid "Begivenhederne kunne ikke læses (ugyldig JSON). Ingen ændringer blev gemt."
 msgstr "The events could not be read (invalid JSON). No changes were saved."
 
-#: includes/class-trackwp-settings.php:369
+#: includes/class-trackwp-settings.php:399
 msgid "Uventet dataformat for begivenheder. Ingen ændringer blev gemt."
 msgstr "Unexpected data format for events. No changes were saved."
 
 #. translators: 1: row number, 2: validation error message
-#: includes/class-trackwp-settings.php:390
+#: includes/class-trackwp-settings.php:420
 #, php-format
 msgid "Begivenhed #%1$d blev ikke gemt: %2$s"
 msgstr "Event #%1$d was not saved: %2$s"
 
 #. translators: %s: event name
-#: includes/class-trackwp-settings.php:406
+#: includes/class-trackwp-settings.php:436
 #, php-format
 msgid "Begivenhed \"%s\" findes mere end én gang — kun den første blev gemt."
 msgstr "Event \"%s\" exists more than once — only the first was saved."
 
-#: includes/class-trackwp-settings.php:423
+#: includes/class-trackwp-settings.php:453
 msgid "Ingen af begivenhederne kunne valideres — den tidligere liste er bevaret."
 msgstr "None of the events could be validated — the previous list has been kept."
 
-#: includes/class-trackwp-settings.php:787
+#: includes/class-trackwp-settings.php:814
 msgid "Cookie-deklarationerne kunne ikke læses (ugyldig JSON). Ingen ændringer blev gemt."
 msgstr "The cookie declarations could not be read (invalid JSON). No changes were saved."
 
-#: includes/class-trackwp-settings.php:1200
+#: includes/class-trackwp-settings.php:1229
 msgid "Ugyldig import-fil — manglende felter."
 msgstr "Invalid import file — missing fields."
 
 #. translators: %s: link to acknowledge the change
-#: includes/class-trackwp-settings.php:1326
+#: includes/class-trackwp-settings.php:1915
 #, php-format
 msgid "De platforme/vendors der er dækket af samtykke-banneret er ændret siden sidst. Overvej at forny samtykket (bump version under fanen Samtykke) og tøm cache/CDN, så besøgende ser den opdaterede erklæring. %s"
 msgstr "The platforms/vendors covered by the consent banner have changed since last time. Consider renewing consent (bump the version under the Consent tab) and clearing cache/CDN so visitors see the updated statement. %s"
 
-#: includes/class-trackwp-settings.php:1327
+#: includes/class-trackwp-settings.php:1916
 msgid "Marker som håndteret"
 msgstr "Mark as handled"
 
-#: includes/class-trackwp-settings.php:1334
+#: includes/class-trackwp-settings.php:1923
 msgid "Den dataansvarlige (controller_name) er ikke udfyldt under Samtykke. Samtykke-banneret skal navngive sitets ejer, aldrig TrackWP selv."
 msgstr "The data controller (controller_name) is not filled in under Consent. The consent banner must name the site owner, never TrackWP itself."
 
-#: includes/class-trackwp-settings.php:1346
+#: includes/class-trackwp-settings.php:1935
 msgid "Google Tag Manager er aktiv, men ingen vendors er angivet under Samtykke. TrackWP kan ikke se hvad der ligger i din GTM-container, så deklarationen og samtykke-kravene bliver ufuldstændige, indtil du vælger eller tilføjer dem manuelt."
 msgstr "Google Tag Manager is active, but no vendors are specified under Consent. TrackWP cannot see what is inside your GTM container, so the declaration and consent requirements remain incomplete until you select or add them manually."
 
 #. translators: %s: detected host
-#: includes/class-trackwp-settings.php:1364
+#: includes/class-trackwp-settings.php:1953
 #, php-format
 msgid "Dit domæne (%s) bruger en flerdelt endelse (fx co.uk). Uden et eksplicit cookie-domæne under Avanceret kan cookien blive sat forkert (fx til hele \"co.uk\"). Angiv domænet manuelt."
 msgstr "Your domain (%s) uses a multi-part suffix (e.g. co.uk). Without an explicit cookie domain under Advanced, the cookie could be set incorrectly (e.g. to the whole of \"co.uk\"). Specify the domain manually."
 
-#: includes/class-trackwp-settings.php:1405
+#: includes/class-trackwp-settings.php:1991
 msgid "Filteret trackwp_show_consent_trigger returnerer false, og der findes ingen [trackwp_consent_link]-shortcode på nogen udgivet side. Besøgende kan derfor ikke genåbne samtykke-dialogen for at trække samtykket tilbage eller ændre det."
 msgstr "The filter trackwp_show_consent_trigger returns false, and there is no [trackwp_consent_link] shortcode on any published page. Visitors therefore cannot reopen the consent dialog to withdraw or change their consent."
 
 #. translators: %s: event name
-#: includes/class-trackwp-settings.php:1424
+#: includes/class-trackwp-settings.php:2010
 #, php-format
 msgid "Mangler Ads-label: begivenheden \"%s\" er sendt til Google Ads, men har ingen Google Ads Label. Konverteringen kan ikke matches til en konverteringshandling uden den."
 msgstr "Missing Ads label: the event \"%s\" is sent to Google Ads but has no Google Ads Label. The conversion cannot be matched to a conversion action without it."
 
-#: includes/class-trackwp-settings.php:1442
+#: includes/class-trackwp-settings.php:2028
 msgid "GA4-import til Google Ads er slået til, OG der er konfigureret en direkte Google Ads-konverteringshandling. Bruges begge til det samme mål, tælles konverteringen dobbelt. Brug kun én kilde pr. mål."
 msgstr "GA4 import to Google Ads is enabled, AND a direct Google Ads conversion action is configured. If both are used for the same goal, the conversion is counted twice. Use only one source per goal."
 
-#: includes/class-trackwp-settings.php:1450
-#: templates/settings-page.php:1306
+#: includes/class-trackwp-settings.php:2036
+#: templates/settings-page.php:1370
 msgid "Samtykkelog"
 msgstr "Consent Log"
 
-#: includes/class-trackwp-settings.php:1455
+#: includes/class-trackwp-settings.php:2041
 msgid "Ordreclaims (køb)"
 msgstr "Order claims (purchases)"
 
-#: includes/class-trackwp-settings.php:1460
-#: templates/settings-page.php:1813
+#: includes/class-trackwp-settings.php:2046
+#: templates/settings-page.php:1893
 msgid "Leveringslog"
 msgstr "Delivery Log"
 
 #. translators: 1: feature label, 2: table name
-#: includes/class-trackwp-settings.php:1470
+#: includes/class-trackwp-settings.php:2056
 #, php-format
 msgid "Tabel kunne ikke oprettes: \"%1$s\" mangler sin tabel (%2$s). Deaktivér og genaktivér pluginet, eller kontakt din hosting-udbyder — funktionen virker ikke uden tabellen."
 msgstr "Table could not be created: \"%1$s\" is missing its table (%2$s). Deactivate and reactivate the plugin, or contact your hosting provider — the feature does not work without the table."
 
-#: includes/class-trackwp-settings.php:1495
+#: includes/class-trackwp-settings.php:2100
 msgid "Samtykkeloggen er ikke tilgængelig endnu."
 msgstr "The consent log is not available yet."
 
@@ -1344,8 +1349,9 @@ msgstr "Transfer:"
 msgid "Dit nuværende samtykke"
 msgstr "Your current consent"
 
+#: templates/partials/admin-blocker.php:267
 #: templates/partials/consent-status.php:16
-#: templates/settings-page.php:1977
+#: templates/settings-page.php:2059
 msgid "Status"
 msgstr "Status"
 
@@ -1358,7 +1364,7 @@ msgid "Samtykke-ID"
 msgstr "Consent ID"
 
 #: templates/partials/consent-tabs.php:18
-#: templates/settings-page.php:1281
+#: templates/settings-page.php:1345
 msgid "Detaljer"
 msgstr "Details"
 
@@ -1371,914 +1377,1458 @@ msgid "Cookies er små tekstfiler, som websites gemmer på din enhed. Lignende t
 msgstr "Cookies are small text files that websites store on your device. Similar technologies such as local storage in the browser work the same way. Necessary cookies do not require consent. All others are only used if you say yes."
 
 #: templates/settings-page.php:43
-#: templates/settings-page.php:144
+#: templates/settings-page.php:147
 msgid "Dashboard"
 msgstr "Dashboard"
 
-#: templates/settings-page.php:119
+#: templates/settings-page.php:122
 msgid "Ingen tidligere data"
 msgstr "No previous data"
 
 #. translators: 1: arrow, 2: percent, 3: window days
-#: templates/settings-page.php:132
+#: templates/settings-page.php:135
 #, php-format
 msgid "%1$s %2$s%% vs. forrige %3$d dage"
 msgstr "%1$s %2$s%% vs. previous %3$d days"
 
-#: templates/settings-page.php:139
+#: templates/settings-page.php:142
 msgid "Statistik nulstillet."
 msgstr "Statistics reset."
 
 #. translators: %d: number of days
-#: templates/settings-page.php:148
+#: templates/settings-page.php:151
 #, php-format
 msgid "Aktivitet de sidste %d dage"
 msgstr "Activity over the last %d days"
 
-#: templates/settings-page.php:153
+#: templates/settings-page.php:156
 msgid "Periode"
 msgstr "Period"
 
-#: templates/settings-page.php:155
+#: templates/settings-page.php:158
 msgid "7 dage"
 msgstr "7 days"
 
-#: templates/settings-page.php:158
+#: templates/settings-page.php:161
 msgid "30 dage"
 msgstr "30 days"
 
-#: templates/settings-page.php:161
+#: templates/settings-page.php:164
 msgid "Nulstil al statistik?"
 msgstr "Reset all statistics?"
 
-#: templates/settings-page.php:164
+#: templates/settings-page.php:167
 msgid "Nulstil statistik"
 msgstr "Reset Statistics"
 
-#: templates/settings-page.php:166
+#: templates/settings-page.php:169
 msgid "Nulstil"
 msgstr "Reset"
 
-#: templates/settings-page.php:179
+#: templates/settings-page.php:182
 msgid "Events i alt"
 msgstr "Total Events"
 
-#: templates/settings-page.php:195
+#: templates/settings-page.php:198
 msgid "Ingen data"
 msgstr "No data"
 
-#: templates/settings-page.php:208
+#: templates/settings-page.php:211
 msgid "Samtykke-rate"
 msgstr "Consent Rate"
 
 #. translators: 1: accept count, 2: reject count
-#: templates/settings-page.php:212
+#: templates/settings-page.php:215
 #, php-format
 msgid "%1$s ja · %2$s nej"
 msgstr "%1$s yes · %2$s no"
 
-#: templates/settings-page.php:223
+#: templates/settings-page.php:226
 msgid "Bots filtreret"
 msgstr "Bots Filtered"
 
-#: templates/settings-page.php:233
-#: templates/settings-page.php:1938
+#: templates/settings-page.php:236
+#: templates/settings-page.php:2020
 msgid "Videresendt"
 msgstr "Forwarded"
 
-#: templates/settings-page.php:243
+#: templates/settings-page.php:246
 msgid "Aktive platforme"
 msgstr "Active Platforms"
 
-#: templates/settings-page.php:250
+#: templates/settings-page.php:253
 msgid "Ingen aktive"
 msgstr "None active"
 
-#: templates/settings-page.php:259
+#: templates/settings-page.php:262
 msgid "Events per dag"
 msgstr "Events per Day"
 
 #. translators: %s: highest count
-#: templates/settings-page.php:262
+#: templates/settings-page.php:265
 #, php-format
 msgid "Højeste dag: %s events"
 msgstr "Highest day: %s events"
 
-#: templates/settings-page.php:281
+#: templates/settings-page.php:284
 msgid "Ingen events registreret endnu"
 msgstr "No events recorded yet"
 
-#: templates/settings-page.php:282
+#: templates/settings-page.php:285
 msgid "Statistik vises her efter de første hits."
 msgstr "Statistics will appear here after the first hits."
 
-#: templates/settings-page.php:290
+#: templates/settings-page.php:293
 msgid "Top events"
 msgstr "Top Events"
 
 #. translators: %s: total count
-#: templates/settings-page.php:295
+#: templates/settings-page.php:298
 #, php-format
 msgid "I alt: %s"
 msgstr "Total: %s"
 
-#: templates/settings-page.php:302
+#: templates/settings-page.php:305
 msgid "Ingen events endnu"
 msgstr "No events yet"
 
 #. translators: %d: number of days
-#: templates/settings-page.php:333
+#: templates/settings-page.php:336
 #, php-format
 msgid "Statistik gemmes lokalt i %d dage. Ingen persondata indsamles."
 msgstr "Statistics are stored locally for %d days. No personal data is collected."
 
-#: templates/settings-page.php:373
+#: templates/settings-page.php:377
 msgid "Bemaerk:"
 msgstr "Note:"
 
-#: templates/settings-page.php:403
+#: templates/settings-page.php:407
 msgid "Indlæs gtag.js"
 msgstr "Load gtag.js"
 
-#: templates/settings-page.php:411
+#: templates/settings-page.php:416
 msgid "Indlæs Googles gtag.js og send sidevisninger/sessions til GA4."
 msgstr "Load Google's gtag.js and send page views/sessions to GA4."
 
-#: templates/settings-page.php:414
+#: templates/settings-page.php:419
 msgid "Anbefales. Slå kun fra hvis GA4 allerede indlæses via GTM eller dit tema. Uden gtag.js får GA4 ingen sidevisninger — kun server-events."
 msgstr "Recommended. Only disable if GA4 is already loaded via GTM or your theme. Without gtag.js, GA4 receives no page views — only server events."
 
-#: templates/settings-page.php:452
+#: templates/settings-page.php:458
 msgid "Customer ID"
 msgstr "Customer ID"
 
-#: templates/settings-page.php:462
+#: templates/settings-page.php:468
 msgid "Format: 123-456-7890 eller 10 cifre. Findes øverst til højre i Google Ads UI."
 msgstr "Format: 123-456-7890 or 10 digits. Found in the top right of the Google Ads UI."
 
-#: templates/settings-page.php:468
+#: templates/settings-page.php:474
 msgid "Conversion Action ID"
 msgstr "Conversion Action ID"
 
-#: templates/settings-page.php:479
+#: templates/settings-page.php:485
 msgid "Numerisk ID for konverteringshandlingen (kun cifre). Bruges til Google Ads API uploads."
 msgstr "Numeric ID for the conversion action (digits only). Used for Google Ads API uploads."
 
-#: templates/settings-page.php:482
+#: templates/settings-page.php:488
 msgid "Forbedrede konverteringer:"
 msgstr "Enhanced conversions:"
 
-#: templates/settings-page.php:483
+#: templates/settings-page.php:489
 msgid "Slå \"Enhanced conversions\" til på selve konverteringshandlingen i Google Ads (Tools > Conversions > din konverteringshandling). Uden det bruger Google ikke de hashede kundedata TrackWP sender."
 msgstr "Turn on \"Enhanced conversions\" on the conversion action itself in Google Ads (Tools > Conversions > your conversion action). Without it, Google will not use the hashed customer data TrackWP sends."
 
-#: templates/settings-page.php:486
+#: templates/settings-page.php:492
 msgid "Optællingsindstilling:"
 msgstr "Count setting:"
 
-#: templates/settings-page.php:487
+#: templates/settings-page.php:493
 msgid "Sæt konverteringshandlingens \"Count\" til \"Every\" (\"Hver\"), ikke \"One\" (\"Én pr. klik\"). gbraid/wbraid (iOS-app-klik) afvises af Google med fejlen ONE_PER_CLICK_CONVERSION_ACTION_NOT_PERMITTED_WITH_BRAID, hvis handlingen tæller \"Én pr. klik\" — det gælder typisk for køb."
 msgstr "Set the conversion action's \"Count\" to \"Every\", not \"One\". gbraid/wbraid (iOS app clicks) are rejected by Google with the error ONE_PER_CLICK_CONVERSION_ACTION_NOT_PERMITTED_WITH_BRAID if the action counts \"One\" — this typically applies to purchases."
 
-#: templates/settings-page.php:492
+#: templates/settings-page.php:498
 msgid "GA4-import til Google Ads"
 msgstr "GA4 Import to Google Ads"
 
-#: templates/settings-page.php:499
+#: templates/settings-page.php:506
 msgid "Jeg har importeret GA4-konverteringer til Google Ads som konverteringsmål."
 msgstr "I have imported GA4 conversions into Google Ads as conversion goals."
 
-#: templates/settings-page.php:502
+#: templates/settings-page.php:509
 msgid "Bruges GA4-importen OG en direkte Google Ads-konverteringshandling til samme mål, tælles konverteringen dobbelt. Brug kun én kilde pr. mål."
 msgstr "If the GA4 import AND a direct Google Ads conversion action are used for the same goal, the conversion is counted twice. Use only one source per goal."
 
-#: templates/settings-page.php:508
+#: templates/settings-page.php:515
 msgid "Developer Token"
 msgstr "Developer Token"
 
-#: templates/settings-page.php:525
+#: templates/settings-page.php:532
 msgid "Google Ads API Center > API Access > Developer Token. Krævet til server-side API-kald."
 msgstr "Google Ads API Center > API Access > Developer Token. Required for server-side API calls."
 
-#: templates/settings-page.php:531
+#: templates/settings-page.php:538
 msgid "OAuth Client ID"
 msgstr "OAuth Client ID"
 
-#: templates/settings-page.php:540
-#: templates/settings-page.php:563
+#: templates/settings-page.php:547
+#: templates/settings-page.php:570
 msgid "Fra Google Cloud Console > APIs & Services > Credentials (OAuth 2.0 Client ID)."
 msgstr "From Google Cloud Console > APIs & Services > Credentials (OAuth 2.0 Client ID)."
 
-#: templates/settings-page.php:546
+#: templates/settings-page.php:553
 msgid "OAuth Client Secret"
 msgstr "OAuth Client Secret"
 
-#: templates/settings-page.php:569
+#: templates/settings-page.php:576
 msgid "OAuth Refresh Token"
 msgstr "OAuth Refresh Token"
 
-#: templates/settings-page.php:586
+#: templates/settings-page.php:593
 msgid "Genereres een gang med OAuth Playground eller et script — bruges til automatisk token-fornyelse. Kraever scope https://www.googleapis.com/auth/adwords."
 msgstr "Generated once using OAuth Playground or a script — used for automatic token renewal. Requires the scope https://www.googleapis.com/auth/adwords."
 
-#: templates/settings-page.php:589
+#: templates/settings-page.php:596
 msgid "Bemaerk: Google lukker UploadClickConversions for NYE developer tokens fra 15. juni 2026 (Data Manager API er afloeseren). Eksisterende tokens fortsaetter."
 msgstr "Note: Google is closing UploadClickConversions for NEW developer tokens from June 15, 2026 (the Data Manager API is the successor). Existing tokens continue to work."
 
-#: templates/settings-page.php:627
+#: includes/class-trackwp-settings.php:1839
+#: templates/settings-page.php:635
 msgid "Klient-side Pixel"
 msgstr "Client-Side Pixel"
 
-#: templates/settings-page.php:635
+#: templates/settings-page.php:644
 msgid "Indlæs Meta Pixel i browseren (kræver marketing-samtykke)."
 msgstr "Load Meta Pixel in the browser (requires marketing consent)."
 
-#: templates/settings-page.php:638
+#: templates/settings-page.php:647
 msgid "Anbefales. Pixel + Conversions API med samme event_id giver bedre match quality — Meta dedupliker selv. Slå fra hvis Pixel allerede indlæses via GTM eller andet plugin."
 msgstr "Recommended. Pixel + Conversions API with the same event_id gives better match quality — Meta deduplicates automatically. Disable if Pixel is already loaded via GTM or another plugin."
 
-#: templates/settings-page.php:667
+#: templates/settings-page.php:712
 msgid "Test Event Code"
 msgstr "Test Event Code"
 
-#: templates/settings-page.php:678
+#: templates/settings-page.php:723
 msgid "Valgfri. Format: TEST efterfulgt af cifre (fx TEST12345). Bruges til at validere events i Meta Events Manager > Test Events."
 msgstr "Optional. Format: TEST followed by digits (e.g. TEST12345). Used to validate events in Meta Events Manager > Test Events."
 
-#: templates/settings-page.php:684
+#: templates/settings-page.php:729
 msgid "Graph API version"
 msgstr "Graph API Version"
 
-#: templates/settings-page.php:696
-msgid "Meta Graph API-version til Conversions API-kald. Standard: v21.0."
-msgstr "Meta Graph API version for Conversions API calls. Default: v21.0."
-
-#: templates/settings-page.php:793
+#: templates/settings-page.php:851
 msgid "Shop-tracking"
 msgstr "Shop Tracking"
 
-#: templates/settings-page.php:803
+#: templates/settings-page.php:862
 msgid "Send WooCommerce-begivenheder"
 msgstr "Send WooCommerce Events"
 
-#: templates/settings-page.php:806
+#: templates/settings-page.php:865
 msgid "Slået fra som standard: det ændrer hvad der sendes til Google og Meta, så det skal være et bevidst valg. Når du slår det til, oprettes de valgte begivenheder automatisk på fanen Begivenheder, hvor du styrer platform-routing, Meta-event og Google Ads-label."
 msgstr "Disabled by default: it changes what is sent to Google and Meta, so it should be a deliberate choice. When you enable it, the selected events are created automatically on the Events tab, where you control platform routing, Meta event and Google Ads label."
 
-#: templates/settings-page.php:817
+#: templates/settings-page.php:876
 msgid "Produktside vist"
 msgstr "Product Page Viewed"
 
-#: templates/settings-page.php:818
+#: templates/settings-page.php:877
 msgid "Sendes ved visning af en enkelt produktside. Værdi: produktets pris."
 msgstr "Sent when a single product page is viewed. Value: the product's price."
 
-#: templates/settings-page.php:821
+#: templates/settings-page.php:880
 msgid "Tilføj til kurv"
 msgstr "Add to Cart"
 
-#: templates/settings-page.php:822
+#: templates/settings-page.php:881
 msgid "Dækker både klassisk WooCommerce (med og uden AJAX) og Cart/Checkout-blokkene."
 msgstr "Covers both classic WooCommerce (with and without AJAX) and the Cart/Checkout blocks."
 
-#: templates/settings-page.php:825
+#: templates/settings-page.php:884
 msgid "Checkout påbegyndt"
 msgstr "Checkout Started"
 
-#: templates/settings-page.php:826
+#: templates/settings-page.php:885
 msgid "Sendes ved visning af checkout-siden. Værdi: kurvens beløb."
 msgstr "Sent when the checkout page is viewed. Value: the cart total."
 
-#: templates/settings-page.php:829
+#: templates/settings-page.php:888
 msgid "Ordre gennemført"
 msgstr "Order Completed"
 
-#: templates/settings-page.php:830
+#: templates/settings-page.php:889
 msgid "Sendes på ordrebekræftelsessiden, én gang pr. ordre. Ordrenummeret bruges som transaction_id, så GA4 og Google Ads ikke tæller samme ordre to gange."
 msgstr "Sent on the order confirmation page, once per order. The order number is used as transaction_id, so GA4 and Google Ads don't count the same order twice."
 
-#: templates/settings-page.php:852
+#: templates/settings-page.php:912
 msgid "Værdi og produktdata"
 msgstr "Value and Product Data"
 
-#: templates/settings-page.php:856
+#: templates/settings-page.php:916
 msgid "Konverteringsværdi"
 msgstr "Conversion Value"
 
-#: templates/settings-page.php:861
+#: templates/settings-page.php:921
 msgid "Ordreværdi inkl. moms og fragt"
 msgstr "Order value incl. tax and shipping"
 
-#: templates/settings-page.php:862
+#: templates/settings-page.php:922
 msgid "Ordreværdi uden moms"
 msgstr "Order value excl. tax"
 
-#: templates/settings-page.php:863
+#: templates/settings-page.php:923
 msgid "Ordreværdi uden fragt"
 msgstr "Order value excl. shipping"
 
-#: templates/settings-page.php:864
+#: templates/settings-page.php:924
 msgid "Ordreværdi uden moms og fragt"
 msgstr "Order value excl. tax and shipping"
 
-#: templates/settings-page.php:867
+#: templates/settings-page.php:927
 msgid "Gælder både ordre- og kurvværdi, og bestemmer også om produktpriserne sendes med eller uden moms. Vælg det samme grundlag som dine budkampagner optimerer på."
 msgstr "Applies to both order and cart value, and also determines whether product prices are sent with or without tax. Choose the same basis your bidding campaigns optimize for."
 
-#: templates/settings-page.php:873
+#: templates/settings-page.php:933
 msgid "Produkt-ID"
 msgstr "Product ID"
 
-#: templates/settings-page.php:878
+#: templates/settings-page.php:938
 msgid "WooCommerce produkt-ID"
 msgstr "WooCommerce product ID"
 
-#: templates/settings-page.php:879
+#: templates/settings-page.php:939
 msgid "SKU (falder tilbage til produkt-ID hvis tom)"
 msgstr "SKU (falls back to product ID if empty)"
 
-#: templates/settings-page.php:882
+#: templates/settings-page.php:942
 msgid "Skal matche det ID dit Merchant Center-feed bruger, ellers kan Google ikke koble konverteringer til produkterne."
 msgstr "Must match the ID your Merchant Center feed uses, otherwise Google cannot link conversions to the products."
 
-#: templates/settings-page.php:887
+#: templates/settings-page.php:947
 msgid "Kategorier"
 msgstr "Categories"
 
-#: templates/settings-page.php:894
+#: templates/settings-page.php:955
 msgid "Send produktkategori med"
 msgstr "Send Product Category"
 
-#: templates/settings-page.php:897
+#: templates/settings-page.php:958
 msgid "Sendes som item_category til item_category5. Kurv-blokken leverer ikke kategorier, så de mangler på begivenheder der udelukkende kommer derfra."
 msgstr "Sent as item_category through item_category5. The cart block does not provide categories, so they are missing on events that come exclusively from there."
 
-#: templates/settings-page.php:905
+#: templates/settings-page.php:966
 msgid "purchase sendes fra browseren på ordrebekræftelsessiden. Det giver den rigtige attribution, fordi klient-ID, session og annonce-cookies stadig findes der. Prisen er ordrer hvor kunden aldrig når siden, fx ved nogle betalingsgateways."
 msgstr "purchase is sent from the browser on the order confirmation page. This gives correct attribution, because the client ID, session and ad cookies still exist there. The cost is orders where the customer never reaches the page, e.g. with some payment gateways."
 
-#: templates/settings-page.php:930
+#: templates/settings-page.php:991
 msgid "Cookiebot-stil (modal med faner og toggles)"
 msgstr "Cookiebot style (modal with tabs and toggles)"
 
-#: templates/settings-page.php:931
+#: templates/settings-page.php:992
 msgid "Centreret dialog (standard)"
 msgstr "Centered dialog (default)"
 
-#: templates/settings-page.php:932
+#: templates/settings-page.php:993
 msgid "Bjaelke i bunden (minimal)"
 msgstr "Bottom bar (minimal)"
 
-#: templates/settings-page.php:935
+#: templates/settings-page.php:996
 msgid "Cookiebot-stil: Stor centreret modal med faner — bedst til ny-besoegende. Dialog: Kompakt centreret popup. Bjaelke: Slim bar nederst — mindre indtraengende."
 msgstr "Cookiebot style: large centered modal with tabs — best for new visitors. Dialog: compact centered popup. Bottom bar: slim bar at the bottom — less intrusive."
 
-#: templates/settings-page.php:1088
+#: templates/settings-page.php:1149
 msgid "\"Afvis valgfrie\" vises altid på banneret med samme fremtrædenhed som accept-knappen — det kan ikke slås fra (BESLUTNINGER §4). Teksten redigeres under \"Tekst\" ovenfor."
 msgstr "\"Reject optional\" is always shown on the banner with the same prominence as the accept button — it cannot be turned off (BESLUTNINGER §4). The text is edited under \"Text\" above."
 
-#: templates/settings-page.php:1139
+#: templates/settings-page.php:1203
 msgid "Maks. 12 måneder (K7)."
 msgstr "Max. 12 months (K7)."
 
-#: templates/settings-page.php:1144
+#: templates/settings-page.php:1208
 msgid "Beskrivelsestekst"
 msgstr "Description Text"
 
-#: templates/settings-page.php:1149
+#: templates/settings-page.php:1213
 msgid "Dynamisk (genereres ud fra aktive platforme og dataansvarlig)"
 msgstr "Dynamic (generated from active platforms and data controller)"
 
-#: templates/settings-page.php:1150
+#: templates/settings-page.php:1214
 msgid "Fast tekst (brug feltet \"Beskrivelse\" ovenfor)"
 msgstr "Fixed text (use the \"Description\" field above)"
 
-#: templates/settings-page.php:1152
+#: templates/settings-page.php:1216
 msgid "Dynamisk tekst opdaterer sig selv når platforme ændres og indeholder ACM-sætningen, formål, deling og tilbagetrækning."
 msgstr "Dynamic text updates itself when platforms change and includes the ACM sentence, purpose, sharing and withdrawal."
 
-#: templates/settings-page.php:1157
+#: templates/settings-page.php:1221
 msgid "Dataansvarlig"
 msgstr "Data Controller"
 
-#: templates/settings-page.php:1166
+#: templates/settings-page.php:1230
 msgid "Sitets ejer — vises i banneret som den dataansvarlige. Aldrig TrackWP."
 msgstr "The site owner — shown in the banner as the data controller. Never TrackWP."
 
-#: templates/settings-page.php:1170
+#: templates/settings-page.php:1234
 msgid "GTM-vendors"
 msgstr "GTM Vendors"
 
-#: templates/settings-page.php:1191
+#: templates/settings-page.php:1255
 msgid "Vendor-kataloget er ikke tilgængeligt endnu (kommer i denne opgradering)."
 msgstr "The vendor catalog is not available yet (coming in this upgrade)."
 
-#: templates/settings-page.php:1195
+#: templates/settings-page.php:1259
 msgid "Øvrige vendors"
 msgstr "Other Vendors"
 
-#: templates/settings-page.php:1198
-#: templates/settings-page.php:1401
+#: templates/partials/admin-blocker.php:453
+#: templates/partials/admin-blocker.php:476
+#: templates/settings-page.php:1262
+#: templates/settings-page.php:1465
 msgid "Navn"
 msgstr "Name"
 
-#: templates/settings-page.php:1199
-#: templates/settings-page.php:1380
-#: templates/settings-page.php:1402
+#: templates/partials/admin-blocker.php:454
+#: templates/partials/admin-blocker.php:478
+#: templates/settings-page.php:1263
+#: templates/settings-page.php:1444
+#: templates/settings-page.php:1466
 msgid "Udbyder"
 msgstr "Provider"
 
-#: templates/settings-page.php:1200
-#: templates/settings-page.php:1379
-#: templates/settings-page.php:1400
+#: templates/partials/admin-blocker.php:264
+#: templates/partials/admin-blocker.php:334
+#: templates/partials/admin-blocker.php:433
+#: templates/partials/admin-blocker.php:455
+#: templates/partials/admin-blocker.php:480
+#: templates/settings-page.php:1264
+#: templates/settings-page.php:1443
+#: templates/settings-page.php:1464
 msgid "Kategori"
 msgstr "Category"
 
-#: templates/settings-page.php:1201
-#: templates/settings-page.php:1403
+#: templates/partials/admin-blocker.php:456
+#: templates/partials/admin-blocker.php:488
+#: templates/settings-page.php:1265
+#: templates/settings-page.php:1467
 msgid "Cookies"
 msgstr "Cookies"
 
-#: templates/settings-page.php:1202
-#: templates/settings-page.php:1404
+#: templates/partials/admin-blocker.php:457
+#: templates/partials/admin-blocker.php:489
+#: templates/settings-page.php:1266
+#: templates/settings-page.php:1468
 msgid "Formål"
 msgstr "Purpose"
 
-#: templates/settings-page.php:1203
-#: templates/settings-page.php:1381
-#: templates/settings-page.php:1405
+#: templates/settings-page.php:1267
+#: templates/settings-page.php:1445
+#: templates/settings-page.php:1469
 msgid "Levetid"
 msgstr "Lifetime"
 
-#: templates/settings-page.php:1204
-#: templates/settings-page.php:1406
+#: templates/settings-page.php:1268
+#: templates/settings-page.php:1470
 msgid "Dataoverførsel"
 msgstr "Data Transfer"
 
-#: templates/settings-page.php:1209
+#: templates/settings-page.php:1273
 msgid "Tilføj vendor"
 msgstr "Add Vendor"
 
-#: templates/settings-page.php:1218
+#: templates/settings-page.php:1282
 msgid "Funktionalitet"
 msgstr "Functionality"
 
-#: templates/settings-page.php:1255
+#: templates/settings-page.php:1319
 msgid "GTM-indholdet kan ikke ses udefra — hvis GTM er aktiv, skal vendors angives manuelt, ellers vises en advarsel og deklarationen bliver ufuldstændig."
 msgstr "GTM content cannot be seen from outside — if GTM is active, vendors must be specified manually, otherwise a warning is shown and the declaration becomes incomplete."
 
-#: templates/settings-page.php:1260
+#: templates/settings-page.php:1324
 msgid "Samtykkelog: opbevaring (måneder)"
 msgstr "Consent Log: Retention (months)"
 
-#: templates/settings-page.php:1270
+#: templates/settings-page.php:1334
 msgid "6-60 måneder, standard 24. Ældre logposter slettes automatisk."
 msgstr "6-60 months, default 24. Older log entries are deleted automatically."
 
-#: templates/settings-page.php:1282
+#: templates/settings-page.php:1346
 msgid "Om"
 msgstr "About"
 
-#: templates/settings-page.php:1290
-#: templates/settings-page.php:1345
+#: templates/partials/admin-blocker.php:30
+#: templates/settings-page.php:1354
+#: templates/settings-page.php:1409
 msgid "Præferencer"
 msgstr "Preferences"
 
-#: templates/settings-page.php:1308
+#: templates/settings-page.php:1372
 msgid "Samtykkeloggen er ikke tilgængelig endnu (kommer i denne opgradering)."
 msgstr "The consent log is not available yet (coming in this upgrade)."
 
 #. translators: %s: number of logged rows
-#: templates/settings-page.php:1316
+#: templates/settings-page.php:1380
 #, php-format
 msgid "%s logposter gemt."
 msgstr "%s log entries saved."
 
-#: templates/settings-page.php:1323
+#: templates/settings-page.php:1387
 msgid "Eksportér som CSV"
 msgstr "Export as CSV"
 
-#: templates/settings-page.php:1327
+#: templates/settings-page.php:1391
 msgid "Slå et samtykke-ID op"
 msgstr "Look up a consent ID"
 
-#: templates/settings-page.php:1330
+#: templates/settings-page.php:1394
 msgid "consent_id (uuid4)"
 msgstr "consent_id (uuid4)"
 
-#: templates/settings-page.php:1331
+#: templates/settings-page.php:1395
 msgid "Slå op"
 msgstr "Look up"
 
-#: templates/settings-page.php:1341
+#: templates/settings-page.php:1405
 msgid "Tidspunkt"
 msgstr "Time"
 
-#: templates/settings-page.php:1342
+#: templates/settings-page.php:1406
 msgid "Handling"
 msgstr "Action"
 
-#: templates/settings-page.php:1346
+#: templates/settings-page.php:1410
 msgid "Version"
 msgstr "Version"
 
-#: templates/settings-page.php:1347
+#: templates/partials/admin-blocker.php:265
+#: templates/settings-page.php:1411
 msgid "Kilde"
 msgstr "Source"
 
-#: templates/settings-page.php:1354
-#: templates/settings-page.php:1355
-#: templates/settings-page.php:1356
+#: templates/partials/admin-blocker.php:354
+#: templates/settings-page.php:1418
+#: templates/settings-page.php:1419
+#: templates/settings-page.php:1420
 msgid "Ja"
 msgstr "Yes"
 
-#: templates/settings-page.php:1354
-#: templates/settings-page.php:1355
-#: templates/settings-page.php:1356
+#: templates/partials/admin-blocker.php:354
+#: templates/settings-page.php:1418
+#: templates/settings-page.php:1419
+#: templates/settings-page.php:1420
 msgid "Nej"
 msgstr "No"
 
-#: templates/settings-page.php:1364
+#: templates/settings-page.php:1428
 msgid "Intet fundet for dette samtykke-ID."
 msgstr "Nothing found for this consent ID."
 
-#: templates/settings-page.php:1372
+#: templates/settings-page.php:1436
 msgid "Cookie-deklaration"
 msgstr "Cookie Declaration"
 
-#: templates/settings-page.php:1373
+#: templates/settings-page.php:1437
 msgid "TrackWP registrerer automatisk kendte cookies (Google, Meta, WordPress, WooCommerce, PHPSESSID, Breakdance m.fl.) og viser dem i banneret under \"Detaljer\". Tilføj selv cookies fra andre plugins her."
 msgstr "TrackWP automatically detects known cookies (Google, Meta, WordPress, WooCommerce, PHPSESSID, Breakdance and others) and shows them in the banner under \"Details\". Add cookies from other plugins yourself here."
 
-#: templates/settings-page.php:1375
+#: templates/settings-page.php:1439
 msgid "Registreres automatisk"
 msgstr "Detected Automatically"
 
-#: templates/settings-page.php:1378
+#: templates/settings-page.php:1442
 msgid "Cookie / mønster"
 msgstr "Cookie / Pattern"
 
-#: templates/settings-page.php:1397
+#: templates/settings-page.php:1461
 msgid "Egne cookie-deklarationer"
 msgstr "Custom Cookie Declarations"
 
-#: templates/settings-page.php:1411
+#: templates/settings-page.php:1475
 msgid "Tilføj række"
 msgstr "Add Row"
 
-#: templates/settings-page.php:1413
+#: templates/settings-page.php:1477
 msgid "Gem cookie-deklarationer"
 msgstr "Save Cookie Declarations"
 
-#: templates/settings-page.php:1567
+#: templates/settings-page.php:1637
 msgid "Cookie-domæne"
 msgstr "Cookie Domain"
 
-#: templates/settings-page.php:1577
+#: templates/settings-page.php:1647
 msgid "Kun nødvendigt hvis dit domæne har en flerdelt endelse (fx co.uk, com.au). Bruges til at afgøre det registrerbare domæne for cookies (K7). Lad stå tomt ellers."
 msgstr "Only necessary if your domain has a multi-part suffix (e.g. co.uk, com.au). Used to determine the registrable domain for cookies (K7). Leave empty otherwise."
 
-#: templates/settings-page.php:1593
+#: templates/settings-page.php:1664
 msgid "Indlæs Google-tags før samtykke med denied-defaults, så gtag kan sende cookieløse pings (Consent Mode advanced — hjælper konverteringsmodellering). Slå fra for først at indlæse Google-tags efter samtykke (basic mode)."
 msgstr "Load Google tags before consent with denied defaults, so gtag can send cookieless pings (Consent Mode advanced — helps conversion modeling). Disable to load Google tags only after consent (basic mode)."
 
-#: templates/settings-page.php:1700
+#: templates/settings-page.php:1775
 msgid "Batching"
 msgstr "Batching"
 
-#: templates/settings-page.php:1707
+#: templates/settings-page.php:1783
 msgid "Saml flere events og send dem i en samlet request for at reducere netværksbelastning."
 msgstr "Collect multiple events and send them in a single request to reduce network load."
 
-#: templates/settings-page.php:1712
+#: templates/settings-page.php:1788
 msgid "Førsteparts-loader"
 msgstr "First-Party Loader"
 
-#: templates/settings-page.php:1719
+#: templates/settings-page.php:1796
 msgid "Server-side proxy af tracking-scripts via dit eget domæne (omgår script-blockers)."
 msgstr "Server-side proxying of tracking scripts via your own domain (bypasses script blockers)."
 
-#: templates/settings-page.php:1725
+#: templates/settings-page.php:1802
 msgid "Identifikation"
 msgstr "Identification"
 
-#: templates/settings-page.php:1728
+#: templates/settings-page.php:1805
 msgid "GA4 User ID"
 msgstr "GA4 User ID"
 
-#: templates/settings-page.php:1735
+#: templates/settings-page.php:1813
 msgid "Send User ID til GA4 når en bruger er logget ind (forbedrer cross-device tracking)."
 msgstr "Send User ID to GA4 when a user is logged in (improves cross-device tracking)."
 
-#: templates/settings-page.php:1741
+#: templates/settings-page.php:1819
 msgid "Standard-landekode for telefon"
 msgstr "Default Country Code for Phone"
 
-#: templates/settings-page.php:1753
+#: templates/settings-page.php:1831
 msgid "ISO-2 landekode (fx DK, SE, DE). Bruges til at normalisere telefonnumre uden internationalt præfiks til Googles forbedrede konverteringer. Tom betyder: brug WooCommerce-basislandet, ellers DK."
 msgstr "ISO-2 country code (e.g. DK, SE, DE). Used to normalize phone numbers without an international prefix for Google's enhanced conversions. Empty means: use the WooCommerce base country, otherwise DK."
 
-#: templates/settings-page.php:1759
+#: templates/settings-page.php:1837
 msgid "Kundedata (EC/AM)"
 msgstr "Customer Data (EC/AM)"
 
-#: templates/settings-page.php:1762
+#: templates/settings-page.php:1840
 msgid "Del kundedata"
 msgstr "Share Customer Data"
 
-#: templates/settings-page.php:1769
+#: templates/settings-page.php:1848
 msgid "Send hashede kundedata (e-mail, telefon, navn, adresse) til Googles forbedrede konverteringer og Metas Advanced Matching."
 msgstr "Send hashed customer data (email, phone, name, address) to Google's enhanced conversions and Meta's Advanced Matching."
 
-#: templates/settings-page.php:1772
+#: templates/settings-page.php:1851
 msgid "Slået til som standard. Slå fra hvis sitet opererer i en følsom branche (sundhed, økonomi/kredit, seksualitet, religion, politik m.fl.) — Googles kundedatapolitik forbyder forbedrede konverteringer på følsomme områder."
 msgstr "Enabled by default. Disable if the site operates in a sensitive industry (health, finance/credit, sexuality, religion, politics, etc.) — Google's customer data policy prohibits enhanced conversions in sensitive areas."
 
-#: templates/settings-page.php:1773
+#: templates/settings-page.php:1852
 msgid "Læs Googles kundedatapolitik"
 msgstr "Read Google's customer data policy"
 
-#: templates/settings-page.php:1779
+#: templates/settings-page.php:1858
 msgid "Betroede proxyer"
 msgstr "Trusted Proxies"
 
-#: templates/settings-page.php:1783
+#: templates/settings-page.php:1862
 msgid "CIDR-liste"
 msgstr "CIDR List"
 
-#: templates/settings-page.php:1792
+#: templates/settings-page.php:1871
 msgid "Én CIDR-blok pr. linje (IPv4 eller IPv6). Kun IP-adresser i denne liste (eller Cloudflares, se nedenfor) har lov til at sætte CF-Connecting-IP/X-Forwarded-For — ellers bruges REMOTE_ADDR direkte."
 msgstr "One CIDR block per line (IPv4 or IPv6). Only IP addresses in this list (or Cloudflare's, see below) are allowed to set CF-Connecting-IP/X-Forwarded-For — otherwise REMOTE_ADDR is used directly."
 
-#: templates/settings-page.php:1797
+#: templates/settings-page.php:1876
 msgid "Cloudflare"
 msgstr "Cloudflare"
 
-#: templates/settings-page.php:1804
+#: templates/settings-page.php:1884
 msgid "Stol på Cloudflares publicerede IP-ranges (bruges kun hvis sitet reelt ligger bag Cloudflare)."
 msgstr "Trust Cloudflare's published IP ranges (only use if the site actually sits behind Cloudflare)."
 
-#: templates/settings-page.php:1807
+#: templates/settings-page.php:1887
 msgid "Kilde: https://www.cloudflare.com/ips/"
 msgstr "Source: https://www.cloudflare.com/ips/"
 
-#: templates/settings-page.php:1816
+#: templates/settings-page.php:1896
 msgid "Gem leveringsstatus"
 msgstr "Save Delivery Status"
 
-#: templates/settings-page.php:1823
+#: templates/settings-page.php:1904
 msgid "Gem hvilke begivenheder der blev sendt til hver platform, og om de kom frem."
 msgstr "Store which events were sent to each platform, and whether they arrived."
 
-#: templates/settings-page.php:1826
+#: templates/settings-page.php:1907
 msgid "Gemmer KUN teknisk leveringsinformation: begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform, leveringsstatus og samtykketilstand. Der gemmes hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer, client_id, gclid eller Facebook-cookies — loggen kan derfor ikke knyttes til en bestemt besøgende."
 msgstr "Stores ONLY technical delivery information: event name, a random event ID, time rounded to the minute, destination platform, delivery status and consent state. No IP address, browser information, page URL, form content, email, phone number, client_id, gclid or Facebook cookies are stored — the log therefore cannot be linked to a specific visitor."
 
-#: templates/settings-page.php:1829
+#: templates/settings-page.php:1910
 msgid "Brug den til at bevise at events faktisk når frem, og til at opdage dobbelttælling. Den er ikke et analyseværktøj og forbedrer ikke genkendelsen af tilbagevendende besøgende — det gør førsteparts-cookien."
 msgstr "Use it to prove that events actually arrive, and to detect double counting. It is not an analytics tool and does not improve recognition of returning visitors — that's what the first-party cookie does."
 
-#: templates/settings-page.php:1835
+#: templates/settings-page.php:1916
 msgid "Slet efter (dage)"
 msgstr "Delete After (days)"
 
 #. translators: %d: maximum retention in days
-#: templates/settings-page.php:1849
+#: templates/settings-page.php:1930
 #, php-format
 msgid "Ældre poster slettes automatisk hver dag. Maks. %d dage — loggen er et diagnoseværktøj, ikke et arkiv."
 msgstr "Older entries are deleted automatically every day. Max. %d days — the log is a diagnostic tool, not an archive."
 
-#: templates/settings-page.php:1858
+#: templates/settings-page.php:1939
 msgid "Conversions API debug"
 msgstr "Conversions API Debug"
 
-#: templates/settings-page.php:1861
+#: templates/settings-page.php:1942
 msgid "CAPI debug-logging"
 msgstr "CAPI Debug Logging"
 
-#: templates/settings-page.php:1868
+#: templates/settings-page.php:1950
 msgid "Log fulde request/response-payloads for Meta CAPI og Google Ads API. Kun til fejlsøgning."
 msgstr "Log full request/response payloads for Meta CAPI and Google Ads API. For troubleshooting only."
 
-#: templates/settings-page.php:1880
+#: templates/settings-page.php:1962
 msgid "Leveringslog — seneste"
 msgstr "Delivery Log — Recent"
 
-#: templates/settings-page.php:1883
+#: templates/settings-page.php:1965
 msgid "Leveringsloggen er tømt."
 msgstr "The delivery log has been cleared."
 
-#: templates/settings-page.php:1902
+#: templates/settings-page.php:1984
 msgid "Mulig dobbelttælling opdaget"
 msgstr "Possible Double Counting Detected"
 
-#: templates/settings-page.php:1903
+#: templates/settings-page.php:1985
 msgid "Samme begivenhed er sendt flere gange til samme platform inden for det samme minut, med forskellige begivenheds-id'er:"
 msgstr "The same event was sent multiple times to the same platform within the same minute, with different event IDs:"
 
-#: templates/settings-page.php:1906
+#: templates/settings-page.php:1988
 #, php-format
 msgid "%1$d gange kl. %2$s"
 msgstr "%1$d times at %2$s"
 
 #. translators: 1: number of days, 2: number of rows
-#: templates/settings-page.php:1916
+#: templates/settings-page.php:1998
 #, php-format
 msgid "Viser de seneste %1$d dage (%2$s poster). Tidspunkter er UTC og afrundet til minut."
 msgstr "Showing the last %1$d days (%2$s entries). Times are UTC and rounded to the minute."
 
-#: templates/settings-page.php:1933
+#: templates/settings-page.php:2015
 msgid "Sendte begivenheder"
 msgstr "Sent Events"
 
-#: templates/settings-page.php:1936
-#: templates/settings-page.php:1975
+#: templates/settings-page.php:2018
+#: templates/settings-page.php:2057
 msgid "Begivenhed"
 msgstr "Event"
 
-#: templates/settings-page.php:1937
+#: templates/settings-page.php:2019
 msgid "Udløst"
 msgstr "Triggered"
 
-#: templates/settings-page.php:1939
+#: templates/settings-page.php:2021
 msgid "Senest"
 msgstr "Latest"
 
-#: templates/settings-page.php:1948
+#: templates/settings-page.php:2030
 msgid "Ingen platform modtog denne begivenhed"
 msgstr "No platform received this event"
 
-#: templates/settings-page.php:1954
+#: templates/settings-page.php:2036
 #, php-format
 msgid "%s leveret"
 msgstr "%s delivered"
 
-#: templates/settings-page.php:1955
+#: templates/settings-page.php:2037
 #, php-format
 msgid "%s fejlet"
 msgstr "%s failed"
 
-#: templates/settings-page.php:1956
+#: templates/settings-page.php:2038
 #, php-format
 msgid "%s sprunget over"
 msgstr "%s skipped"
 
-#: templates/settings-page.php:1971
+#: templates/settings-page.php:2053
 msgid "Seneste afsendelser"
 msgstr "Recent Deliveries"
 
-#: templates/settings-page.php:1974
+#: templates/settings-page.php:2056
 msgid "Tidspunkt (UTC)"
 msgstr "Time (UTC)"
 
-#: templates/settings-page.php:1976
+#: templates/settings-page.php:2058
 msgid "Platform"
 msgstr "Platform"
 
-#: templates/settings-page.php:1979
+#: templates/settings-page.php:2061
 msgid "Begivenheds-id"
 msgstr "Event ID"
 
-#: templates/settings-page.php:2000
+#: templates/settings-page.php:2082
 msgid "Ingen poster endnu."
 msgstr "No entries yet."
 
-#: templates/settings-page.php:2003
+#: templates/settings-page.php:2085
 msgid "Tøm leveringsloggen?"
 msgstr "Clear the delivery log?"
 
-#: templates/settings-page.php:2006
+#: templates/settings-page.php:2088
 msgid "Tøm leveringslog"
 msgstr "Clear Delivery Log"
 
-#: templates/settings-page.php:2012
+#: templates/settings-page.php:2094
 msgid "Import / eksport"
 msgstr "Import / Export"
 
-#: templates/settings-page.php:2019
+#: templates/settings-page.php:2101
 msgid "Indstillinger importeret."
 msgstr "Settings imported."
 
-#: templates/settings-page.php:2020
+#: templates/settings-page.php:2102
 msgid "Ingen fil valgt."
 msgstr "No file selected."
 
-#: templates/settings-page.php:2021
+#: templates/settings-page.php:2103
 msgid "Filen er ikke gyldig JSON."
 msgstr "The file is not valid JSON."
 
-#: templates/settings-page.php:2022
+#: templates/settings-page.php:2104
 msgid "Import fejlede — kontroller filformat."
 msgstr "Import failed — check the file format."
 
-#: templates/settings-page.php:2033
+#: templates/settings-page.php:2115
 msgid "Eksport"
 msgstr "Export"
 
-#: templates/settings-page.php:2040
+#: templates/settings-page.php:2123
 msgid "Inkludér API secrets (base64) — fjern hvis du deler filen"
 msgstr "Include API secrets (base64) — remove if you share the file"
 
-#: templates/settings-page.php:2042
+#: templates/settings-page.php:2125
 msgid "Download JSON"
 msgstr "Download JSON"
 
-#: templates/settings-page.php:2045
+#: templates/settings-page.php:2128
 msgid "Eksporterer alle TrackWP-indstillinger som JSON-fil. Nyttigt for backup eller deployment til andre sites."
 msgstr "Exports all TrackWP settings as a JSON file. Useful for backup or deployment to other sites."
 
-#: templates/settings-page.php:2050
+#: templates/settings-page.php:2133
 msgid "Import"
 msgstr "Import"
 
-#: templates/settings-page.php:2056
+#: templates/settings-page.php:2139
 msgid "Importér indstillinger"
 msgstr "Import Settings"
 
-#: templates/settings-page.php:2059
+#: templates/settings-page.php:2142
 msgid "Overskriver ALLE eksisterende TrackWP-indstillinger med fil-indholdet. Tag backup først."
 msgstr "Overwrites ALL existing TrackWP settings with the file contents. Take a backup first."
 
-#: trackwp.php:596
+#: trackwp.php:609
 msgid "Kun nødvendige"
 msgstr "Necessary only"
 
-#: trackwp.php:691
+#: trackwp.php:745
 msgid "Samtykkebanneret og tracking-scriptet er opdateret. Kendte cache-plugins er forsøgt tømt automatisk, men en CDN (fx Cloudflare) eller en servercache hos dit webhotel skal du tømme manuelt. Ellers kan besøgende få den gamle version, indtil cachen udløber."
 msgstr "The consent banner and tracking script have been updated. Known cache plugins have been automatically purged where possible, but a CDN (e.g. Cloudflare) or a server cache at your host must be cleared manually. Otherwise visitors may get the old version until the cache expires."
 
-#: trackwp.php:692
+#: trackwp.php:746
 msgid "Jeg har tømt cachen"
 msgstr "I have cleared the cache"
 
-#: trackwp.php:734
+#: trackwp.php:788
 msgid "TrackWP debug (slået fra)"
 msgstr "TrackWP debug (disabled)"
 
-#: trackwp.php:742
+#: trackwp.php:796
 msgid "TrackWP debug: slå fra"
 msgstr "TrackWP debug: turn off"
 
-#: trackwp.php:742
+#: trackwp.php:796
 msgid "TrackWP debug: slå til"
 msgstr "TrackWP debug: turn on"
 
-#: trackwp.php:1284
+#: trackwp.php:1360
 msgid "Trigger"
 msgstr "Trigger"
 
-#: trackwp.php:1285
+#: trackwp.php:1361
 msgid "Tilføj alternativ trigger"
 msgstr "Add Alternative Trigger"
 
-#: trackwp.php:1286
+#: trackwp.php:1362
 msgid "Fjern trigger"
 msgstr "Remove Trigger"
 
-#: trackwp.php:1287
+#: trackwp.php:1363
 msgid "Tilføj betingelse"
 msgstr "Add Condition"
 
-#: trackwp.php:1288
+#: trackwp.php:1364
 msgid "Begivenheden sendes når EN AF disse triggere matcher."
 msgstr "The event fires when ANY of these triggers match."
 
-#: trackwp.php:1289
+#: trackwp.php:1365
 msgid "Udløs kun når ALLE disse betingelser er sande:"
 msgstr "Only fire when ALL of these conditions are true:"
 
-#: trackwp.php:1290
+#: trackwp.php:1366
 msgid "Ingen betingelser — triggeren matcher altid."
 msgstr "No conditions — the trigger always matches."
 
-#: trackwp.php:1291
+#: trackwp.php:1367
 msgid "flere"
 msgstr "more"
 
-#: trackwp.php:1292
+#: trackwp.php:1368
 msgid "betingelser"
 msgstr "conditions"
 
-#: trackwp.php:1293
+#: trackwp.php:1369
 msgid "Send til"
 msgstr "Send To"
 
-#: trackwp.php:1294
+#: trackwp.php:1370
 msgid "CSS-selector"
 msgstr "CSS Selector"
 
-#: trackwp.php:1295
+#: trackwp.php:1371
 msgid "URL indeholder"
 msgstr "URL Contains"
 
-#: trackwp.php:1296
+#: trackwp.php:1372
 msgid "Scrolldybde (%)"
 msgstr "Scroll Depth (%)"
 
-#: trackwp.php:1297
+#: trackwp.php:1373
 msgid "Sekunder"
 msgstr "Seconds"
 
-#: trackwp.php:1298
+#: trackwp.php:1374
 msgid "JavaScript-eventnavn"
 msgstr "JavaScript Event Name"
+
+#: includes/class-trackwp-blocker-scanner.php:84
+msgid "En scanning kører allerede. Prøv igen om lidt."
+msgstr "A scan is already running. Try again shortly."
+
+#: includes/class-trackwp-blocker-scanner.php:106
+msgid "Blokeringens regelmotor mangler."
+msgstr "The blocking rule engine is missing."
+
+#: includes/class-trackwp-blocker-scanner.php:109
+msgid "Scanningen kræver WordPress 6.5 eller nyere."
+msgstr "Scanning requires WordPress 6.5 or later."
+
+#: includes/class-trackwp-blocker-scanner.php:158
+msgid "Serverhentning mislykkedes."
+msgstr "Server fetch failed."
+
+#: includes/class-trackwp-consent-profile.php:375
+msgid "Identifikation af virksomheder, der besøger websitet (B2B-leadgenerering)"
+msgstr "Identification of companies visiting the website (B2B lead generation)"
+
+#: includes/class-trackwp-consent-profile.php:388
+msgid "E-mailmarkedsføring, tilmeldingsformularer og målretning"
+msgstr "Email marketing, sign-up forms and targeting"
+
+#: includes/class-trackwp-consent-profile.php:392
+msgid "Klaviyo-pluginet kan sende oplysninger direkte fra serveren til Klaviyo. Det kan ikke blokeres i browseren."
+msgstr "The Klaviyo plugin can send data directly from the server to Klaviyo. This cannot be blocked in the browser."
+
+#: includes/class-trackwp-consent-profile.php:396
+msgid "Jetpack Stats og WooCommerce Analytics"
+msgstr "Jetpack Stats and WooCommerce Analytics"
+
+#: includes/class-trackwp-consent-profile.php:401
+msgid "Statistik over besøg og butikshændelser"
+msgstr "Statistics on visits and store events"
+
+#: includes/class-trackwp-consent-profile.php:406
+msgid "WooCommerce Analytics kan sende hændelser fra serveren. Det kan ikke blokeres i browseren."
+msgstr "WooCommerce Analytics can send events from the server. This cannot be blocked in the browser."
+
+#: includes/class-trackwp-consent-profile.php:410
+msgid "WooCommerce ordreattribution"
+msgstr "WooCommerce order attribution"
+
+#: includes/class-trackwp-consent-profile.php:416
+msgid "Registrerer, hvor besøget kom fra (fx en kampagne eller en henvisning), så en ordre kan knyttes til kilden"
+msgstr "Records where the visit came from (e.g. a campaign or a referral) so an order can be attributed to its source"
+
+#: includes/class-trackwp-consent-profile.php:429
+msgid "Pop-ups og tilmeldingsformularer til markedsføring"
+msgstr "Pop-ups and sign-up forms for marketing"
+
+#: includes/class-trackwp-consent-profile.php:436
+msgid "Meta for WooCommerce kan sende hændelser direkte fra serveren (Conversions API). Det kan ikke blokeres i browseren."
+msgstr "Meta for WooCommerce can send events directly from the server (Conversions API). This cannot be blocked in the browser."
+
+#: includes/class-trackwp-consent-profile.php:448
+msgid "uafklaret"
+msgstr "unresolved"
+
+#: includes/class-trackwp-consent-profile.php:890
+msgid "Husker, hvornår målecookies sidst blev fornyet, så det højst sker én gang i timen"
+msgstr "Remembers when measurement cookies were last renewed, so it happens at most once an hour"
+
+#: includes/class-trackwp-settings.php:1325
+msgid "Blokeres"
+msgstr "Blocked"
+
+#: includes/class-trackwp-settings.php:1326
+msgid "Tillades"
+msgstr "Allowed"
+
+#: includes/class-trackwp-settings.php:1327
+msgid "Kan ikke blokeres (sat af serveren)"
+msgstr "Cannot be blocked (set by the server)"
+
+#: includes/class-trackwp-settings.php:1328
+msgid "Kan ikke blokeres (server-til-server)"
+msgstr "Cannot be blocked (server-to-server)"
+
+#: includes/class-trackwp-settings.php:1329
+msgid "Kan ikke blokeres (sammenlagt)"
+msgstr "Cannot be blocked (bundled)"
+
+#: includes/class-trackwp-settings.php:1330
+msgid "Styres af GTM/Consent Mode (kræver konfiguration i GTM)"
+msgstr "Controlled by GTM/Consent Mode (requires configuration in GTM)"
+
+#: includes/class-trackwp-settings.php:1331
+msgid "Beskyttet (kræver vurdering)"
+msgstr "Protected (requires assessment)"
+
+#: includes/class-trackwp-settings.php:1332
+msgid "Kører før TrackWP"
+msgstr "Runs before TrackWP"
+
+#: includes/class-trackwp-settings.php:1440
+msgid "Inline-markøren skal være 8-64 tegn og må kun indeholde bogstaver (a-z), tal, punktum, bindestreg og understreg."
+msgstr "The inline marker must be 8-64 characters and may only contain letters (a-z), digits, dots, hyphens and underscores."
+
+#: includes/class-trackwp-settings.php:1475
+msgid "En eller flere undtagelser under \"Tillad altid\" var ugyldige og blev ikke gemt."
+msgstr "One or more exceptions under \"Always allow\" were invalid and were not saved."
+
+#. translators: %s: the rejected value
+#: includes/class-trackwp-settings.php:1604
+#, php-format
+msgid "\"%s\" er ikke en gyldig sti. Angiv kun stier på dette site, der starter med /, fx /kontakt/."
+msgstr "\"%s\" is not a valid path. Only enter paths on this site that start with /, e.g. /contact/."
+
+#. translators: %d: new consent version
+#: includes/class-trackwp-settings.php:1721
+#, php-format
+msgid "Samtykkeversionen er nu %d. Alle besøgende bliver bedt om samtykke igen. Kendte cache-plugins er tømt. Tøm også cachen i dit CDN eller hos dit webhotel."
+msgstr "The consent version is now %d. All visitors will be asked for consent again. Known cache plugins have been purged. Also purge the cache in your CDN or at your host."
+
+#. translators: 1: error code, 2: date/time
+#: includes/class-trackwp-settings.php:1748
+#, php-format
+msgid "Blokering: omskrivningen af siden fejlede (%1$s, %2$s). Siden blev vist uden blokering. Se fanen Blokering."
+msgstr "Blocking: rewriting the page failed (%1$s, %2$s). The page was shown without blocking. See the Blocking tab."
+
+#: includes/class-trackwp-settings.php:1758
+msgid "Blokering: nogle fundne trackere har en vendor, men blokeres ikke. De står stadig i deklarationen. Se fanen Blokering."
+msgstr "Blocking: some detected trackers have a vendor but are not blocked. They are still listed in the declaration. See the Blocking tab."
+
+#: includes/class-trackwp-settings.php:1762
+msgid "Blokering er slået til, men bannerteksten er i custom-tilstand. Tjek at teksten nævner de trackere, der nu blokeres indtil samtykke."
+msgstr "Blocking is on, but the banner text is in custom mode. Check that the text mentions the trackers that are now blocked until consent."
+
+#: includes/class-trackwp-settings.php:1870
+msgid "ukendt fejl"
+msgstr "unknown error"
+
+#: templates/partials/admin-blocker.php:27
+msgid "Nødvendig"
+msgstr "Necessary"
+
+#: templates/partials/admin-blocker.php:33
+msgid "Script-handle"
+msgstr "Script handle"
+
+#: templates/partials/admin-blocker.php:34
+msgid "URL (host + sti)"
+msgstr "URL (host + path)"
+
+#: templates/partials/admin-blocker.php:35
+msgid "Host (inkl. underdomæner)"
+msgstr "Host (incl. subdomains)"
+
+#: templates/partials/admin-blocker.php:36
+msgid "Inline-markør"
+msgstr "Inline marker"
+
+#: templates/partials/admin-blocker.php:37
+msgid "Pixel (host + sti)"
+msgstr "Pixel (host + path)"
+
+#: templates/partials/admin-blocker.php:102
+msgid "Blokér trackere, som andre plugins eller temaet indlæser, indtil den besøgende har givet samtykke til kategorien. Kør en scan, vælg hvad der skal blokeres, og test i Test-tilstand før du slår blokeringen til."
+msgstr "Block trackers loaded by other plugins or the theme until the visitor has consented to the category. Run a scan, choose what to block, and test in Test mode before you turn blocking on."
+
+#: templates/partials/admin-blocker.php:107
+msgid "Blokering kræver WordPress 6.5 eller nyere. Tilstanden er låst til Fra."
+msgstr "Blocking requires WordPress 6.5 or later. The mode is locked to Off."
+
+#. translators: 1: error code, 2: date/time
+#: templates/partials/admin-blocker.php:116
+#, php-format
+msgid "Driftsstatus: omskrivningen fejlede (%1$s, %2$s). Siden blev vist uden blokering."
+msgstr "Operating status: rewriting failed (%1$s, %2$s). The page was shown without blocking."
+
+#. translators: %s: date/time
+#: templates/partials/admin-blocker.php:127
+#, php-format
+msgid "Driftsstatus: ingen fejl. Senest omskrevet uden fejl %s."
+msgstr "Operating status: no errors. Last rewritten without errors %s."
+
+#: templates/partials/admin-blocker.php:136
+msgid "Listen over vendors i samtykke-banneret er ændret. Bed de besøgende om nyt samtykke, så de ser den opdaterede erklæring."
+msgstr "The list of vendors in the consent banner has changed. Ask visitors for new consent so they see the updated declaration."
+
+#: templates/partials/admin-blocker.php:140
+msgid "Bed om nyt samtykke"
+msgstr "Ask for new consent"
+
+#: templates/partials/admin-blocker.php:147
+msgid "Scan"
+msgstr "Scan"
+
+#: templates/partials/admin-blocker.php:150
+msgid "Scan sitet"
+msgstr "Scan the site"
+
+#: templates/partials/admin-blocker.php:153
+msgid "Scanner … det kan tage op til et minut."
+msgstr "Scanning … this can take up to a minute."
+
+#: templates/partials/admin-blocker.php:154
+msgid "Scan færdig. Siden genindlæses."
+msgstr "Scan complete. Reloading the page."
+
+#: templates/partials/admin-blocker.php:155
+msgid "Scan mislykkedes:"
+msgstr "Scan failed:"
+
+#: templates/partials/admin-blocker.php:156
+msgid "Scan er ikke tilgængelig (mangler konfiguration)."
+msgstr "Scan is not available (configuration missing)."
+
+#. translators: 1: date/time, 2: scanned paths
+#: templates/partials/admin-blocker.php:164
+#, php-format
+msgid "Seneste scan: %1$s. Sider: %2$s"
+msgstr "Latest scan: %1$s. Pages: %2$s"
+
+#: templates/partials/admin-blocker.php:171
+msgid "Der er ikke kørt en scan endnu. Scanningen henter forsiden og op til fire andre sider som anonym besøgende."
+msgstr "No scan has been run yet. The scan fetches the front page and up to four other pages as an anonymous visitor."
+
+#. translators: %s: date/time
+#: templates/partials/admin-blocker.php:178
+#, php-format
+msgid "Helbredstjek %s: kolonnen \"Observeret i HTML\" viser, om reglen stod omskrevet i forsidens HTML for en almindelig besøgende."
+msgstr "Health check %s: the \"Observed in HTML\" column shows whether the rule appeared rewritten in the front page HTML for a regular visitor."
+
+#: templates/partials/admin-blocker.php:187
+msgid "Meta indlæses fra mere end én kilde. Det giver dobbelttælling:"
+msgstr "Meta is loaded from more than one source. This causes double counting:"
+
+#: templates/partials/admin-blocker.php:193
+msgid "Server-side Conversions API fra andre kilder kan ikke ses fra browseren og er ikke med i listen."
+msgstr "Server-side Conversions API from other sources cannot be seen from the browser and is not in the list."
+
+#: templates/partials/admin-blocker.php:197
+msgid "Google Tag Manager er aktiv: scanningen kan ikke se tags i GTM. Fjern Meta-tags i GTM (pause er ikke nok), hvis TrackWP leverer Meta."
+msgstr "Google Tag Manager is active: the scan cannot see tags in GTM. Remove Meta tags in GTM (pausing is not enough) if TrackWP delivers Meta."
+
+#. translators: %s: plugin name
+#: templates/partials/admin-blocker.php:208
+#, php-format
+msgid "%s: TrackWP skriver selv sine undtagelser."
+msgstr "%s: TrackWP writes its own exclusions."
+
+#. translators: %s: plugin name
+#: templates/partials/admin-blocker.php:210
+#, php-format
+msgid "%s: uprøvet sammen med blokering. Test grundigt i Test-tilstand."
+msgstr "%s: untested with blocking. Test thoroughly in Test mode."
+
+#: templates/partials/admin-blocker.php:218
+msgid "Cloudflare Rocket Loader er uprøvet sammen med blokering."
+msgstr "Cloudflare Rocket Loader is untested with blocking."
+
+#: templates/partials/admin-blocker.php:233
+msgid "Fra"
+msgstr "Off"
+
+#: templates/partials/admin-blocker.php:234
+msgid "Test (kun for administratorer)"
+msgstr "Test (administrators only)"
+
+#: templates/partials/admin-blocker.php:235
+msgid "Til"
+msgstr "On"
+
+#: templates/partials/admin-blocker.php:246
+msgid "Test blokerer kun, når du er logget ind som administrator, så du kan kontrollere sitet i et almindeligt vindue før du slår blokeringen til for alle."
+msgstr "Test only blocks when you are logged in as an administrator, so you can check the site in a regular window before you turn blocking on for everyone."
+
+#: templates/partials/admin-blocker.php:251
+msgid "Fundne scripts og trackere"
+msgstr "Detected scripts and trackers"
+
+#: templates/partials/admin-blocker.php:253
+msgid "Ingen fund endnu. Kør en scan."
+msgstr "Nothing detected yet. Run a scan."
+
+#: templates/partials/admin-blocker.php:256
+msgid "Bloker alle kendte trackere"
+msgstr "Block all known trackers"
+
+#: templates/partials/admin-blocker.php:257
+msgid "Slår blokering til for alle fund med en vendor og en kategori, der ikke er nødvendig. Husk at gemme."
+msgstr "Turns blocking on for every detection with a vendor and a category other than necessary. Remember to save."
+
+#: templates/partials/admin-blocker.php:260
+msgid "Dette er et beskyttet script (fx betaling). Blokeres det, kan checkout holde op med at virke, indtil kunden giver samtykke. Vil du blokere det alligevel?"
+msgstr "This is a protected script (e.g. payment). If it is blocked, checkout may stop working until the customer consents. Block it anyway?"
+
+#: templates/partials/admin-blocker.php:263
+#: templates/partials/admin-blocker.php:317
+msgid "Vendor"
+msgstr "Vendor"
+
+#: templates/partials/admin-blocker.php:266
+msgid "Sider"
+msgstr "Pages"
+
+#: templates/partials/admin-blocker.php:268
+msgid "Observeret i HTML"
+msgstr "Observed in HTML"
+
+#: templates/partials/admin-blocker.php:269
+#: templates/partials/admin-blocker.php:364
+msgid "Bloker indtil samtykke"
+msgstr "Block until consent"
+
+#. translators: %s: plugin slug
+#: templates/partials/admin-blocker.php:299
+#, php-format
+msgid "plugin: %s"
+msgstr "plugin: %s"
+
+#. translators: %s: script handle
+#: templates/partials/admin-blocker.php:302
+#, php-format
+msgid "handle: %s"
+msgstr "handle: %s"
+
+#. translators: %s: inline marker
+#: templates/partials/admin-blocker.php:308
+#, php-format
+msgid "inline: %s"
+msgstr "inline: %s"
+
+#: templates/partials/admin-blocker.php:318
+msgid "Uafklaret"
+msgstr "Unresolved"
+
+#. translators: %s: custom vendor name
+#: templates/partials/admin-blocker.php:327
+#, php-format
+msgid "%s (egen)"
+msgstr "%s (custom)"
+
+#. translators: %s: comma separated script handles
+#: templates/partials/admin-blocker.php:343
+#, php-format
+msgid "Bruges af: %s"
+msgstr "Used by: %s"
+
+#: templates/partials/admin-blocker.php:346
+msgid "Ikke fundet ved seneste scan."
+msgstr "Not found in the latest scan."
+
+#: templates/partials/admin-blocker.php:373
+msgid "Scripts, der indlæses efter samtykke, får ikke sidens DOMContentLoaded-hændelse. Tjek at de virker efter accept."
+msgstr "Scripts loaded after consent do not receive the page's DOMContentLoaded event. Check that they work after acceptance."
+
+#: templates/partials/admin-blocker.php:378
+msgid "Undtagelser"
+msgstr "Exceptions"
+
+#: templates/partials/admin-blocker.php:381
+msgid "Tillad altid"
+msgstr "Always allow"
+
+#: templates/partials/admin-blocker.php:393
+msgid "Type"
+msgstr "Type"
+
+#: templates/partials/admin-blocker.php:403
+msgid "Tilføj undtagelse"
+msgstr "Add exception"
+
+#: templates/partials/admin-blocker.php:404
+msgid "Vælg typen og skriv værdien uden præfiks, fx host \"cdn.example.com\" eller handle \"my-script\". Tøm feltet for at fjerne en undtagelse."
+msgstr "Choose the type and enter the value without a prefix, e.g. host \"cdn.example.com\" or handle \"my-script\". Clear the field to remove an exception."
+
+#: templates/partials/admin-blocker.php:408
+msgid "Slå blokering fra på stier"
+msgstr "Turn blocking off on paths"
+
+#: templates/partials/admin-blocker.php:411
+msgid "Én sti pr. linje, der starter med /, fx /kasse/. Blokeringen er slået fra på alle sider, hvis sti starter sådan."
+msgstr "One path per line, starting with /, e.g. /checkout/. Blocking is off on every page whose path starts like this."
+
+#: templates/partials/admin-blocker.php:415
+msgid "Ekstra scan-stier"
+msgstr "Extra scan paths"
+
+#. translators: %d: max number of extra paths
+#: templates/partials/admin-blocker.php:422
+#, php-format
+msgid "Højst %d stier, én pr. linje (kun stier, ingen fulde URL'er). Forsiden scannes altid, og resten udfyldes automatisk op til 5 sider."
+msgstr "At most %d paths, one per line (paths only, no full URLs). The front page is always scanned, and the rest is filled in automatically up to 5 pages."
+
+#: templates/partials/admin-blocker.php:430
+msgid "Bloker ukendt inline-script"
+msgstr "Block unknown inline script"
+
+#: templates/partials/admin-blocker.php:440
+msgid "En unik tekst fra scriptets kode (8-64 tegn: bogstaver, tal, punktum, bindestreg og understreg). Inline-scripts, der indeholder teksten, blokeres indtil samtykke."
+msgstr "A unique text from the script's code (8-64 characters: letters, digits, dots, hyphens and underscores). Inline scripts containing the text are blocked until consent."
+
+#: templates/partials/admin-blocker.php:448
+msgid "Egne vendors"
+msgstr "Custom vendors"
+
+#: templates/partials/admin-blocker.php:449
+msgid "Til fund, der ikke er i kataloget. De kan vælges i Vendor-kolonnen og kommer med i cookie-deklarationen. Tøm navnet for at fjerne en vendor."
+msgstr "For detections that are not in the catalogue. They can be chosen in the Vendor column and are included in the cookie declaration. Clear the name to remove a vendor."
+
+#: templates/partials/admin-blocker.php:496
+msgid "Gem blokering"
+msgstr "Save blocking"
+
+#: templates/settings-page.php:60
+msgid "Blokering"
+msgstr "Blocking"
+
+#: templates/settings-page.php:653
+msgid "Overtag Meta-sporing"
+msgstr "Take over Meta tracking"
+
+#: templates/settings-page.php:662
+msgid "TrackWP overtager Meta-sporing (også når GTM er aktiv)."
+msgstr "TrackWP takes over Meta tracking (also when GTM is active)."
+
+#: templates/settings-page.php:665
+msgid "TrackWP indlæser Meta Pixel og sender Conversions API med samme event_id, også når Google Tag Manager er slået til. Når Pixel ID, access token og klient-side Pixel er udfyldt, slås Pixel og CAPI i Meta for WooCommerce fra, så der ikke tælles dobbelt. Katalogsync kører fortsat. Slet Meta-tags i GTM (pause er ikke nok)."
+msgstr "TrackWP loads the Meta Pixel and sends the Conversions API with the same event_id, also when Google Tag Manager is on. When Pixel ID, access token and client-side Pixel are set, Pixel and CAPI in Meta for WooCommerce are turned off so nothing is counted twice. Catalogue sync keeps running. Delete Meta tags in GTM (pausing is not enough)."
+
+#: templates/settings-page.php:673
+msgid "TrackWP leverer Meta. Pixel og CAPI i Meta for WooCommerce er slået fra. Katalogsync kører fortsat."
+msgstr "TrackWP delivers Meta. Pixel and CAPI in Meta for WooCommerce are turned off. Catalogue sync keeps running."
+
+#: templates/settings-page.php:679
+msgid "TrackWP leverer Meta."
+msgstr "TrackWP delivers Meta."
+
+#. translators: %s: default Meta Graph API version
+#: templates/settings-page.php:750
+#, php-format
+msgid "Meta Graph API-version til Conversions API-kald. Standard: %s."
+msgstr "Meta Graph API version for Conversions API calls. Default: %s."
+
+#: includes/class-trackwp-consent-profile.php:370
+msgid "Leadinfo B.V., Nederlandene"
+msgstr "Leadinfo B.V., Netherlands"
+
+#: includes/class-trackwp-consent-profile.php:376
+msgid "_li_id.*: 2 år. _li_ses.*: session. Kan køre uden cookies, afhængigt af opsætningen hos Leadinfo"
+msgstr "_li_id.*: 2 years. _li_ses.*: session. Can run without cookies, depending on the Leadinfo setup"
+
+#: includes/class-trackwp-consent-profile.php:384
+msgid "Klaviyo, Inc. (USA), fælles ansvarlig med Klaviyo Ltd og Klaviyo Ireland Limited"
+msgstr "Klaviyo, Inc. (USA), joint controller with Klaviyo Ltd and Klaviyo Ireland Limited"
+
+#: includes/class-trackwp-consent-profile.php:389
+msgid "2 år, begrænset af browseren"
+msgstr "2 years, limited by the browser"
+
+#: includes/class-trackwp-consent-profile.php:397
+msgid "Aut O'Mattic A8C Ireland Ltd. (Jetpack) og WooCommerce Ireland Ltd. (WooCommerce Analytics), Irland"
+msgstr "Aut O'Mattic A8C Ireland Ltd. (Jetpack) and WooCommerce Ireland Ltd. (WooCommerce Analytics), Ireland"
+
+#: includes/class-trackwp-consent-profile.php:402
+msgid "tk_ai og tk_qs: session. Øvrige: styret af udbyderen"
+msgstr "tk_ai and tk_qs: session. Others: controlled by the provider"
+
+#: includes/class-trackwp-consent-profile.php:404
+msgid "USA (EU's standardkontraktbestemmelser, SCC)"
+msgstr "USA (EU Standard Contractual Clauses, SCC)"
+
+#: includes/class-trackwp-consent-profile.php:417
+msgid "30 minutter (session)"
+msgstr "30 minutes (session)"
+
+#: includes/class-trackwp-consent-profile.php:424
+msgid "Sleeknote ApS, Danmark"
+msgstr "Sleeknote ApS, Denmark"
+
+#: includes/class-trackwp-blocker-scanner.php:1080
+msgid "Meta Pixel (fbevents.js) fra et andet plugin, tema eller script"
+msgstr "Meta Pixel (fbevents.js) from another plugin, theme or script"
+
+#: includes/class-trackwp-blocker-scanner.php:1081
+msgid "GTM Server Side (Stape)"
+msgstr "GTM Server Side (Stape)"
+
+#: includes/class-trackwp-blocker-scanner.php:1085
+msgid "TrackWP Meta Pixel"
+msgstr "TrackWP Meta Pixel"
+
+#. translators: %s: comma separated list of missing settings
+#: includes/class-trackwp-settings.php:1804
+#, php-format
+msgid "Meta: \"TrackWP overtager Meta-sporing\" er slået til, men TrackWP overtager ikke, fordi dette mangler: %s."
+msgstr "Meta: \"TrackWP takes over Meta tracking\" is on, but TrackWP is not taking over because this is missing: %s."
+
+#: includes/class-trackwp-settings.php:1808
+msgid "Meta for WooCommerce sporer derfor fortsat selv."
+msgstr "Meta for WooCommerce therefore keeps tracking on its own."
+
+#. translators: %s: error from Meta
+#: includes/class-trackwp-settings.php:1817
+#, php-format
+msgid "Meta afviste TrackWP's access token: %s. Indsæt et gyldigt token under Platforme."
+msgstr "Meta rejected TrackWP's access token: %s. Enter a valid token under Platforms."
+
+#: includes/class-trackwp-settings.php:1821
+msgid "Sporingen i Meta for WooCommerce forbliver slået fra."
+msgstr "Tracking in Meta for WooCommerce stays off."
+
+#: includes/class-trackwp-settings.php:1836
+msgid "Meta er ikke slået til"
+msgstr "Meta is not turned on"
+
+#: includes/class-trackwp-settings.php:1837
+msgid "gyldigt Pixel ID"
+msgstr "valid Pixel ID"
+
+#: includes/class-trackwp-settings.php:1840
+msgid "WooCommerce-sporing (fanen WooCommerce)"
+msgstr "WooCommerce tracking (WooCommerce tab)"
+
+#. translators: %d: Graph API error code
+#: includes/class-trackwp-settings.php:1862
+#, php-format
+msgid "Graph-kode %d"
+msgstr "Graph code %d"
+
+#. translators: %s: custom vendor name
+#: includes/class-trackwp-settings.php:1399
+#, php-format
+msgid "Egen vendor \"%s\" blev ikke gemt, fordi navnet svarer til en anden egen vendor. Giv den et mere forskelligt navn."
+msgstr "Custom vendor \"%s\" was not saved because its name matches another custom vendor. Give it a more distinct name."

@@ -282,7 +282,14 @@ class TrackWP_Events {
      * @return array
      */
     public static function get_woocommerce_event_names() {
-        return array('view_item', 'add_to_cart', 'begin_checkout', 'purchase');
+        return array(
+            'view_item',
+            'view_item_list',
+            'add_to_cart',
+            'view_cart',
+            'begin_checkout',
+            'purchase',
+        );
     }
 
     /**
@@ -310,16 +317,34 @@ class TrackWP_Events {
             'send_to'      => array('ga4' => true, 'google_ads' => false, 'meta' => true),
         );
 
+        // 1.11.1 (D7/KC10): view_item_list and view_cart are GA4-only by
+        // default (send_to.meta = false, no send_to.google_ads) -- they exist
+        // to fill in the funnel for the dataLayer/GTM path, not to feed Meta
+        // or a client-side Ads conversion.
+        $ga4_only = array( 'ga4' => true, 'google_ads' => false, 'meta' => false );
+
         return array(
             'view_item' => array_merge($base, array(
                 'name'         => 'view_item',
                 'display_name' => 'View Item',
                 'meta_event'   => 'ViewContent',
             )),
+            'view_item_list' => array_merge($base, array(
+                'name'         => 'view_item_list',
+                'display_name' => 'View Item List',
+                'meta_event'   => '',
+                'send_to'      => $ga4_only,
+            )),
             'add_to_cart' => array_merge($base, array(
                 'name'         => 'add_to_cart',
                 'display_name' => 'Add To Cart',
                 'meta_event'   => 'AddToCart',
+            )),
+            'view_cart' => array_merge($base, array(
+                'name'         => 'view_cart',
+                'display_name' => 'View Cart',
+                'meta_event'   => '',
+                'send_to'      => $ga4_only,
             )),
             'begin_checkout' => array_merge($base, array(
                 'name'         => 'begin_checkout',

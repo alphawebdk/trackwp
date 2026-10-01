@@ -1152,3 +1152,40 @@
 .trackwp-admin-notice a {
     font-weight: 600;
 }
+
+/* ---------------------------------------------------------------------
+   Blokering (1.11.0)
+   --------------------------------------------------------------------- */
+.trackwp-blocker-mode label {
+    display: inline-block;
+    margin-right: 20px;
+}
+
+.trackwp-blocker-table td {
+    vertical-align: middle;
+}
+
+.trackwp-blocker-table code {
+    word-break: break-all;
+}
+
+.trackwp-blocker-table select {
+    max-width: 180px;
+}
+
+.trackwp-blocker-list {
+    list-style: disc;
+    margin-left: 20px;
+}
+
+.trackwp-blocker-scan-status {
+    margin-left: 8px;
+}
+
+.trackwp-blocker-ok {
+    color: #00a32a;
+}
+
+.trackwp-blocker-custom input[type="text"] {
+    width: 100%;
+}

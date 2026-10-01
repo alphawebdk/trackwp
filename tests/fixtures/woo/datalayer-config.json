@@ -1,0 +1,60 @@
+{
+    "generated_at": "2026-10-01T07:30:01+00:00",
+    "generated_by": "tests/test-woocommerce-1-11-1-events.php test_generate_js_fixture() (real TrackWP_WooCommerce::build_config() against a real WC_Order/WC_Product)",
+    "purchase": {
+        "event": "purchase",
+        "event_id": "evt_1ef477fa0c508ee92f63c4495ffdeb9c",
+        "order_ref": "96.46bdd51c19aeff5e1fa0dd24",
+        "value": 150,
+        "currency": "USD",
+        "ecommerce": {
+            "transaction_id": "96",
+            "items": [
+                {
+                    "item_id": "95",
+                    "item_name": "Testvare ohcK6O",
+                    "quantity": 1,
+                    "price": 150,
+                    "item_sku": "JS-FIX-1",
+                    "item_category": "JS-Fixture-Kategori PIGA"
+                }
+            ],
+            "value_ga4": 150,
+            "tax": 0,
+            "shipping": 0
+        },
+        "ec": {
+            "sha256_email_address": "1f7c238684e627df1ee4c2f89358ac0fb3359b14d44555bf5cbe42c7ec2d4055",
+            "address": {
+                "sha256_first_name": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+                "sha256_last_name": "70ff197cf7ba9372348a1c06cfa61fb9fcddc992e6dba7b57cacb3910a14fa2b",
+                "postal_code": "8000",
+                "country": "DK"
+            }
+        },
+        "am": {
+            "em": "1f7c238684e627df1ee4c2f89358ac0fb3359b14d44555bf5cbe42c7ec2d4055",
+            "fn": "f16d05ec6b29248d2c61adb1e9263f78e4f7bace1b955014a2d17872cfe4064d",
+            "ln": "70ff197cf7ba9372348a1c06cfa61fb9fcddc992e6dba7b57cacb3910a14fa2b",
+            "zp": "ad5f9478d603fe97eae2bbff07f76fe7f18610343b5f3bc8e00945ee51b30d2c",
+            "country": "867b4bf4357a7c0e415ffd537f61ea8785dd47113104000b534a130c98a42ce8"
+        }
+    },
+    "view_item": {
+        "event": "view_item",
+        "value": 150,
+        "currency": "USD",
+        "ecommerce": {
+            "items": [
+                {
+                    "item_id": "95",
+                    "item_name": "Testvare ohcK6O",
+                    "quantity": 1,
+                    "price": 150,
+                    "item_sku": "JS-FIX-1",
+                    "item_category": "JS-Fixture-Kategori PIGA"
+                }
+            ]
+        }
+    }
+}

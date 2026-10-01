@@ -1,0 +1,9 @@
+{
+  "_comment": "Response headers for the scanner tests (T4). Cookie names follow what WooCommerce and Jetpack set server-side; the values are dummies and must never appear in the saved scan.",
+  "content-type": "text/html; charset=UTF-8",
+  "set-cookie": [
+    "wp_woocommerce_session_0123456789abcdef=SECRETVALUE1%7C%7C1759999999; expires=Wed, 01 Oct 2026 10:00:00 GMT; path=/; secure; HttpOnly",
+    "woocommerce_items_in_cart=1; path=/; secure",
+    "tk_ai=SECRETVALUE2; path=/"
+  ]
+}

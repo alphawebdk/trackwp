@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.10.1
+Stable tag: 1.11.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -113,6 +113,35 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.11.2 =
+
+* Rettet: "[object Object]" vises i begivenhedens detaljerække (admin).
+
+= 1.11.1 =
+
+**Meta uden token, en dataLayer-brolægning til GTM, og en snæver servercookie-gate.** Alt nyt er slået fra efter opdateringen, indtil du selv slår det til — undtagen Meta-overtagelsen (se nedenfor), som kan starte automatisk, hvis dine indstillinger allerede opfylder betingelserne.
+
+* Ny: TrackWP kan nu overtage Meta med kun Pixel, uden et Conversions API-token. Conversions API tilføjes automatisk, så snart du indsætter et token. Har fb4woo (Meta for WooCommerce) allerede et token til samme pixel, bruger TrackWP det som CAPI-fallback uden at gemme eller vise det.
+* Ny: dataLayer-lag til Google Tag Manager. Slået til pusher TrackWP alle e-handelshændelser (view_item, add_to_cart, purchase m.fl.) til `window.dataLayer` i standard GA4-format, uafhængigt af samtykke; kun de hashede kontaktdata ved køb kræver marketingsamtykke. GA4 og Google Ads kan så styres helt af dine egne GTM-tags og Consent Mode.
+* Ny: nye e-handelshændelser view_item_list og view_cart, samt item_sku, kategori-hierarki og kuponkoder på eksisterende hændelser.
+* Ny: en snæver servercookie-gate. Kun eksplicitte "cookie:"-regler (fra scanneren eller tilføjet manuelt) fjernes fra svaret, når der ikke er samtykke til kategorien. WordPress-login og WooCommerce-kurv/session rammes aldrig.
+* Ny: klik-id-parametre (gclid, fbclid m.fl.) gør automatisk siden ucachebar, så attribution ikke går tabt via en cachet side. Listen er en indstilling, du selv kan udvide.
+* Rettet: blokeringsnoticen viser nu også trackere, der ikke kan blokeres i browseren (server-til-server), adskilt fra dem der bare ikke er valgt.
+* Rettet: kategori "Uafklaret" kan vælges for en blokeringsregel; en tom overførselsangivelse for en samtykke-tredjepart vises nu som "Uafklaret" i stedet for stille at blive tolket forkert.
+
+= 1.11.0 =
+
+**Blokering indtil samtykke og Meta-overtagelse.** Begge dele er slået fra efter opdateringen, så forsiden er uændret, indtil du selv slår dem til.
+
+* Ny: Fanen "Blokering" med tre tilstande: Fra (standard), Test (kun for administratorer) og Til. Kræver WordPress 6.5 eller nyere.
+* Ny: Scan af forsiden og op til fire andre sider (produkt, kurv, indlæg og kontakt samt egne stier, højst 5 i alt). Hvert fund vises med vendor, kategori, kilde, sider og en ærlig status: blokeres, tillades, kan ikke blokeres, styres af GTM/Consent Mode, beskyttet eller kører før TrackWP.
+* Ny: Tredjepartsscripts, iframes og kendte 1x1-pixels, som du slår blokering til for, indlæses først, når besøgende giver samtykke til kategorien. Det gælder både scripts, der er registreret i WordPress, og hardcodet HTML. TrackWP, WordPress-kernen, jQuery, WooCommerce, formular-plugins, reCAPTCHA og Turnstile blokeres aldrig.
+* Ny: Trækker en besøgende samtykket til en kategori tilbage, mens blokeringen er slået til, genindlæses siden med det samme.
+* Ny: Undtagelser skrives automatisk ind i WP Rocket og LiteSpeed Cache.
+* Ny: Cookie-deklarationen omfatter alle scannede vendors, og knappen "Bed om nyt samtykke" vises, når vendorlisten ændres.
+* Ny: "TrackWP overtager Meta-sporing (også når GTM er aktiv)". Når den er slået til, og Meta, pixel-id, klient-Pixel og access token er sat, udskriver TrackWP Meta Pixel og slår Pixel og CAPI i Meta for WooCommerce fra. Katalogsync kører fortsat. Mangler noget, vises en rød notice, og Meta for WooCommerce fortsætter uændret.
+* Ændret: GTM's noscript-iframe udelades på sider, hvor blokeringen er aktiv.
 
 = 1.10.1 =
 

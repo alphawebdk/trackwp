@@ -15,12 +15,13 @@ class TrackWP_Proxy {
     /** Statuses a destination result may carry (K1). */
     const RESULT_STATUSES = array( 'ok', 'failed', 'unknown', 'skipped', 'queued', 'duplicate' );
 
-    /** Reasons a destination result may carry (K1 + R21). */
+    /** Reasons a destination result may carry (K1 + R21 + TR4/KC8). */
     const RESULT_REASONS = array(
         'sent', 'batched', 'no_consent', 'not_configured', 'routed_off', 'event_disabled',
         'no_click_id', 'bot', 'client_only', 'stale_version', 'invalid_order_ref',
         'order_not_countable', 'already_claimed', 'timeout', 'transport', 'http_4xx',
         'http_5xx', 'http_429', 'partial_failure', 'claim_error', 'unverified_purchase',
+        'ga4_via_gtm',
     );
 
     /** Destinations in dispatch order. */
@@ -154,6 +155,16 @@ class TrackWP_Proxy {
             }
             $args[ $name ] = $arg;
         }
+        // ga4_route (KC8/TR4): routing-only REST argument for the dataLayer
+        // layer. It is deliberately NOT part of EVENT_FIELDS: it must never
+        // reach $event_data, the trackwp_event_data filter or any platform
+        // payload — only route() (below) ever reads it.
+        $args['ga4_route'] = array(
+            'required'          => false,
+            'sanitize_callback' => function( $value ) {
+                return ( is_string( $value ) && in_array( $value, array( 'gtm', 'server', 'off' ), true ) ) ? $value : null;
+            },
+        );
         return $args;
     }
 
@@ -676,7 +687,11 @@ class TrackWP_Proxy {
         );
 
         // --- 6. Routing ------------------------------------------------------------
-        $results = $this->route( $event_config, $event_enabled, $effective );
+        // ga4_route (KC8/TR4): the client's own routing claim for THIS push,
+        // read straight from the REST param (already sanitised to
+        // gtm|server|off or null). Never stored in $event_data.
+        $ga4_route = $request->get_param( 'ga4_route' );
+        $results   = $this->route( $event_name, $event_config, $event_enabled, $effective, $ga4_route );
 
         // Purchase gate: invalid order refs are never sent; a verified purchase
         // is claimed only when at least one destination will really be tried.
@@ -927,14 +942,19 @@ class TrackWP_Proxy {
      * null for every destination that should be tried.
      *
      * Reason precedence: not_configured, event_disabled, routed_off,
-     * client_only, stale_version / no_consent.
+     * client_only, [ga4_route, GA4 only], stale_version / no_consent.
      *
+     * @param string     $event_name
      * @param array|null $event_config
      * @param bool       $event_enabled
      * @param array      $effective
+     * @param string|null $ga4_route  The client's routing claim for THIS push
+     *   (KC8/TR4): 'gtm'|'server'|'off', or null when absent (old client, or
+     *   an event that never went through pushDataLayer). Only ever used for
+     *   the 'ga4' destination and only ever narrows it further.
      * @return array destination => array|null
      */
-    private function route( $event_config, $event_enabled, $effective ) {
+    private function route( $event_name, $event_config, $event_enabled, $effective, $ga4_route = null ) {
         $advanced        = get_option( 'trackwp_advanced', array() );
         $dedup_mode      = isset( $advanced['dedup_mode'] ) ? $advanced['dedup_mode'] : 'client_and_server';
         $server_dispatch = ( 'client_only' !== $dedup_mode );
@@ -958,6 +978,29 @@ class TrackWP_Proxy {
         );
         $needs = array( 'ga4' => 'analytics', 'meta' => 'marketing', 'google_ads' => 'marketing' );
 
+        // KC8/TR4: the dataLayer layer's own GA4 routing decision, recomputed
+        // server-side from the SAME rule (TrackWP_DataLayer::ga4_route()) so
+        // the client's claim is checked, never trusted blindly. Only
+        // consulted when the SITE is configured for the layer at all
+        // (M2: configured_for_site(), NOT active_for_request() — a REST
+        // request carries no reliable admin session for "test" mode) AND the
+        // client actually sent a route; otherwise this stays null and GA4
+        // falls back to the plain 1.11.0 consent check below.
+        $server_ga4_route = null;
+        if ( null !== $ga4_route && class_exists( 'TrackWP_DataLayer' ) && TrackWP_DataLayer::configured_for_site() ) {
+            $dl_config        = TrackWP_DataLayer::client_config();
+            $server_ga4_route = TrackWP_DataLayer::ga4_route( array(
+                'datalayer_active' => true,
+                'send_to_ga4'      => $routed['ga4'],
+                'ga4_enabled'      => $dl_config['ga4Enabled'],
+                'mp_configured'    => $configured['ga4'],
+                'source'           => $dl_config['ga4Source'],
+                'event'            => $event_name,
+                'statistics'       => $effective['analytics'],
+                'dedup_mode'       => $dedup_mode,
+            ) );
+        }
+
         $results = array();
         foreach ( self::DESTINATIONS as $dest ) {
             if ( ! $configured[ $dest ] ) {
@@ -968,7 +1011,22 @@ class TrackWP_Proxy {
                 $results[ $dest ] = self::result( $dest, 'skipped', 'routed_off' );
             } elseif ( ! $server_dispatch ) {
                 $results[ $dest ] = self::result( $dest, 'skipped', 'client_only' );
+            } elseif ( 'ga4' === $dest && null !== $server_ga4_route && 'server' !== $ga4_route ) {
+                // The client explicitly claimed 'gtm' or 'off': trust it
+                // directly (a client route can only narrow what the server
+                // sends, never widen it, M2), no need to also agree.
+                $results[ $dest ] = self::result( $dest, 'skipped', 'gtm' === $ga4_route ? 'ga4_via_gtm' : 'routed_off' );
+            } elseif ( 'ga4' === $dest && null !== $server_ga4_route && 'server' === $server_ga4_route ) {
+                // Client claimed 'server' and the server's own recomputation
+                // agrees: the server never upgrades a 'gtm' route to
+                // 'server', but here both sides independently agree.
+                $results[ $dest ] = null;
             } elseif ( empty( $effective[ $needs[ $dest ] ] ) ) {
+                // TR4: a 'server' claim that the server's own recomputation
+                // does NOT confirm falls back to the ordinary consent-based
+                // reason codes (no_consent/stale_version) — never a
+                // fabricated ga4_via_gtm/routed_off for a route the client
+                // never actually claimed.
                 $results[ $dest ] = self::result( $dest, 'skipped', ! empty( $effective['stale'] ) ? 'stale_version' : 'no_consent' );
             } else {
                 $results[ $dest ] = null;

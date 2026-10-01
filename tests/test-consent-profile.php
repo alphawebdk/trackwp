@@ -368,4 +368,318 @@ class TrackWP_Consent_Profile_Test extends WP_UnitTestCase {
         ), JSON_UNESCAPED_UNICODE);
         $this->assertDoesNotMatchRegularExpression('/anonymiser/i', $blob);
     }
+
+    /* ---------------- 1.11.0: blocker-driven declaration (T1, §3.6) ---------------- */
+
+    /**
+     * Minimal KB3 scan item for a catalog vendor. The vendor keys and handles are
+     * taken from the producer vendor_catalog() (see tests/test-blocker-catalog.php
+     * for items derived from the real live HTML).
+     */
+    protected function blocker_scan($vendors, $rules = array(), $custom = array()) {
+        $catalog = TrackWP_Consent_Profile::vendor_catalog();
+        $items   = array();
+        foreach ($vendors as $key) {
+            $handles = $catalog[$key]['signatures']['handles'];
+            $hosts   = $catalog[$key]['signatures']['hosts'];
+            $rule_id = $handles ? 'handle:' . $handles[0] : 'host:' . $hosts[0];
+            $items[] = array('obs_id' => substr(sha1($rule_id), 0, 12), 'rule_id' => $rule_id, 'kind' => 'script', 'host' => '', 'path' => '', 'handle' => '', 'plugin' => '', 'deps' => array(), 'dependents' => array(), 'marker' => '', 'pages' => array('/'), 'vendor' => $key, 'category_guess' => $catalog[$key]['category'], 'status' => 'allowed', 'seen_blocked' => null);
+            if (!isset($rules[$rule_id])) {
+                $rules[$rule_id] = array('block' => false, 'category' => $catalog[$key]['category'], 'vendor' => $key);
+            }
+        }
+        update_option('trackwp_blocker_scan', array('scanned_at' => 1, 'pages' => array('/'), 'items' => $items));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => $rules, 'custom_vendors' => $custom, 'exceptions' => array('allow' => array(), 'paths' => array()), 'extra_paths' => array()));
+    }
+
+    public function test_blocker_vendor_is_declared_and_material_hash_changes() {
+        $this->platforms(true);
+        delete_option('trackwp_blocker');
+        delete_option('trackwp_blocker_scan');
+        $before = TrackWP_Consent_Profile::material_hash();
+        $this->assertArrayNotHasKey('klaviyo', TrackWP_Consent_Profile::active_vendors());
+
+        $this->blocker_scan(array('klaviyo'));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertArrayHasKey('klaviyo', $v);
+        $this->assertTrue($v['klaviyo']['via_blocker']);
+        $this->assertFalse($v['klaviyo']['blocked']);
+        $this->assertFalse($v['ga4']['via_blocker']);
+        $this->assertNotSame($before, TrackWP_Consent_Profile::material_hash());
+        $this->assertContains('marketing', TrackWP_Consent_Profile::active_categories());
+        $list = TrackWP_Consent_Profile::vendor_list();
+        $this->assertContains('Klaviyo', wp_list_pluck($list['marketing'], 'name'));
+        // Jetpack is SCC only: the banner then drops the blanket DPF sentence.
+        $this->assertStringContainsString('under EU-US Data Privacy Framework', TrackWP_Consent_Profile::default_texts()['sharing']);
+        $this->blocker_scan(array('klaviyo', 'jetpack'));
+        $this->assertStringNotContainsString('under EU-US Data Privacy Framework', TrackWP_Consent_Profile::default_texts()['sharing']);
+    }
+
+    public function test_native_meta_wins_over_blocker_finding() {
+        $this->platforms(false, false, true);
+        $this->blocker_scan(array('meta'));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertFalse($v['meta']['via_blocker']);
+        $this->assertSame('_fbp', $v['meta']['cookies']);
+    }
+
+    public function test_blocker_finding_fills_in_for_meta_without_browser_cookies() {
+        // Native Meta as CAPI only declares no cookies, so fb4woo's pixel found by the scan is declared.
+        $this->platforms(false, false, true, array('meta_pixel_client_enabled' => false));
+        $this->blocker_scan(array('meta'));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertTrue($v['meta']['via_blocker']);
+        $this->assertSame('_fbp, _fbc', $v['meta']['cookies']);
+    }
+
+    public function test_rule_category_and_block_state_are_used() {
+        $catalog = TrackWP_Consent_Profile::vendor_catalog();
+        $rid     = 'handle:' . $catalog['wc_order_attribution']['signatures']['handles'][0];
+        $this->blocker_scan(array('wc_order_attribution', 'jetpack'), array(
+            $rid => array('block' => true, 'category' => 'statistics', 'vendor' => 'wc_order_attribution'),
+        ));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertSame('statistics', $v['wc_order_attribution']['category']);
+        $this->assertTrue($v['wc_order_attribution']['blocked']);
+        $this->assertSame(array('jetpack'), TrackWP_Consent_Profile::unblocked_vendors());
+        $this->assertContains('unblocked_vendors', TrackWP_Consent_Profile::warnings());
+    }
+
+    public function test_no_unblocked_warning_when_all_blocked() {
+        $catalog = TrackWP_Consent_Profile::vendor_catalog();
+        $rid     = 'host:' . $catalog['leadinfo']['signatures']['hosts'][0];
+        $this->blocker_scan(array('leadinfo'), array($rid => array('block' => true, 'category' => 'marketing', 'vendor' => 'leadinfo')));
+        $this->assertSame(array(), TrackWP_Consent_Profile::unblocked_vendors());
+        $this->assertNotContains('unblocked_vendors', TrackWP_Consent_Profile::warnings());
+    }
+
+    /* ---------------- 1.11.1 F1 (KC12): server-only findings ---------------- */
+
+    public function test_server_side_scan_row_declares_vendor_without_blocking() {
+        update_option('trackwp_blocker_scan', array('items' => array(
+            array('rule_id' => '', 'kind' => 'server_side', 'vendor' => 'meta', 'category_guess' => 'marketing'),
+        )));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => array(), 'custom_vendors' => array(), 'exceptions' => array('allow' => array(), 'paths' => array()), 'extra_paths' => array()));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertTrue($v['meta']['via_blocker']);
+        $this->assertFalse($v['meta']['blocked']);
+        $this->assertTrue($v['meta']['server_only']);
+        // server_only vendors cannot be blocked in the browser: they must not
+        // trigger the "not blocked" warning meant for browser-blockable finds.
+        $this->assertSame(array(), TrackWP_Consent_Profile::unblocked_vendors());
+    }
+
+    public function test_server_cookie_without_rule_id_declares_vendor_as_server_only() {
+        update_option('trackwp_blocker_scan', array('items' => array(
+            array('rule_id' => '', 'kind' => 'server_cookie', 'vendor' => 'leadinfo', 'category_guess' => 'marketing'),
+        )));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => array(), 'custom_vendors' => array(), 'exceptions' => array('allow' => array(), 'paths' => array()), 'extra_paths' => array()));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertTrue($v['leadinfo']['server_only']);
+        $this->assertSame(array(), TrackWP_Consent_Profile::unblocked_vendors());
+    }
+
+    public function test_server_cookie_with_rule_id_is_a_normal_blockable_finding() {
+        // A cookie: rule (KC2) turns a server_cookie row into a real browser
+        // rule, so it must behave like any other blockable vendor.
+        update_option('trackwp_blocker_scan', array('items' => array(
+            array('rule_id' => 'cookie:partner-example', 'kind' => 'server_cookie', 'vendor' => 'leadinfo', 'category_guess' => 'marketing'),
+        )));
+        update_option('trackwp_blocker', array(
+            'mode'  => 'off',
+            'rules' => array('cookie:partner-example' => array('block' => true, 'category' => 'marketing', 'vendor' => 'leadinfo')),
+            'custom_vendors' => array(),
+            'exceptions'     => array('allow' => array(), 'paths' => array()),
+            'extra_paths'    => array(),
+        ));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertFalse($v['leadinfo']['server_only']);
+        $this->assertTrue($v['leadinfo']['blocked']);
+    }
+
+    /**
+     * TrackWP_Blocker_Scanner::server_cookie_items() is private; called via
+     * reflection, same pattern as tests/test-blocker-scanner.php (W1).
+     */
+    protected static function scanner_server_cookie_items($names, array $compiled, $mode) {
+        $m = new ReflectionMethod('TrackWP_Blocker_Scanner', 'server_cookie_items');
+        $m->setAccessible(true);
+        return $m->invoke(null, $names, $compiled, $mode);
+    }
+
+    public function test_server_cookie_items_from_real_scanner_never_creates_a_phantom_vendor() {
+        // M3 regression: an unknown/necessary cookie (PHPSESSID) and a
+        // catalog-known one (_fbp, Meta) must both feed blocker_vendors()
+        // through the REAL scanner producer without ever inventing a vendor
+        // from the scanner's display-only provider text (e.g. sanitize_key()
+        // turning "Webserver (PHP)" into a phantom 'webserver-php' vendor).
+        $compiled = TrackWP_Blocker_Rules::compile(array());
+        $items    = self::scanner_server_cookie_items(array('PHPSESSID', '_fbp'), $compiled, 'off');
+        update_option('trackwp_blocker_scan', array('items' => $items));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => array(), 'custom_vendors' => array(), 'exceptions' => array('allow' => array(), 'paths' => array()), 'extra_paths' => array()));
+
+        $v = TrackWP_Consent_Profile::active_vendors();
+        // No key derived from a display label ("Webserver (PHP)", "Meta
+        // Platforms Ireland Limited") is present.
+        $this->assertArrayNotHasKey('webserver-php', $v);
+        $this->assertArrayNotHasKey('meta-platforms-ireland-limited', $v);
+        $this->assertArrayNotHasKey(sanitize_key('Webserver (PHP)'), $v);
+        $this->assertArrayNotHasKey(sanitize_key('Meta Platforms Ireland Limited'), $v);
+        // Only real catalog keys (or nothing) may appear via_blocker.
+        foreach ($v as $key => $entry) {
+            if (!empty($entry['via_blocker'])) {
+                $this->assertTrue(strpos($key, 'blk_') === 0 || isset(TrackWP_Consent_Profile::vendor_catalog()[$key]), "phantom vendor key: $key");
+            }
+        }
+    }
+
+    public function test_vendor_found_via_script_and_server_side_is_not_server_only() {
+        // A vendor with BOTH a browser-blockable row and a server_side row is
+        // still blockable in the browser, so server_only must stay false.
+        $this->blocker_scan(array('meta'));
+        $scan = get_option('trackwp_blocker_scan');
+        $scan['items'][] = array('rule_id' => '', 'kind' => 'server_side', 'vendor' => 'meta', 'category_guess' => 'marketing');
+        update_option('trackwp_blocker_scan', $scan);
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertFalse($v['meta']['server_only']);
+    }
+
+    public function test_blocker_warning_vendors_separates_not_selected_and_server_side() {
+        $this->blocker_scan(array('jetpack'));
+        $scan = get_option('trackwp_blocker_scan');
+        $scan['items'][] = array('rule_id' => '', 'kind' => 'server_side', 'vendor' => 'meta', 'category_guess' => 'marketing');
+        update_option('trackwp_blocker_scan', $scan);
+        $catalog = TrackWP_Consent_Profile::vendor_catalog();
+        $w = TrackWP_Consent_Profile::blocker_warning_vendors();
+        $this->assertSame(array($catalog['jetpack']['name']), $w['not_selected']);
+        $this->assertSame(array($catalog['meta']['name']), $w['server_side']);
+    }
+
+    protected function meta_scan_only($meta_platforms = array()) {
+        update_option('trackwp_platforms', $meta_platforms);
+        update_option('trackwp_blocker_scan', array('items' => array(
+            array('rule_id' => '', 'kind' => 'server_side', 'vendor' => 'meta', 'category_guess' => 'marketing'),
+        )));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => array(), 'custom_vendors' => array(), 'exceptions' => array('allow' => array(), 'paths' => array()), 'extra_paths' => array()));
+    }
+
+    public function test_blocker_warning_vendors_keeps_meta_when_fb4woo_not_suppressed() {
+        // No native Meta configured at all: TrackWP_Meta_Takeover::status()
+        // (W5, KC6, real producer) is not suppressed, so the server-only
+        // finding must still be warned about.
+        $this->meta_scan_only();
+        $status = TrackWP_Meta_Takeover::status();
+        $this->assertFalse($status['fb4woo_suppressed']);
+        $catalog = TrackWP_Consent_Profile::vendor_catalog();
+        $w = TrackWP_Consent_Profile::blocker_warning_vendors();
+        $this->assertContains($catalog['meta']['name'], $w['server_side']);
+    }
+
+    public function test_blocker_warning_vendors_drops_meta_when_fb4woo_suppressed() {
+        // TrackWP itself delivers Meta (can_deliver()=true, KC6): fb4woo's
+        // own server delivery is suppressed, so warning about "cannot block
+        // server-side" traffic that TrackWP already stopped would mislead.
+        $this->meta_scan_only(array(
+            'meta_pixel_with_gtm'       => true,
+            'meta_enabled'              => true,
+            'meta_pixel_id'             => '123456789012345',
+            'meta_pixel_client_enabled' => true,
+        ));
+        update_option('trackwp_woocommerce', array('enabled' => true));
+        $status = TrackWP_Meta_Takeover::status();
+        $this->assertTrue($status['fb4woo_suppressed']);
+        $w = TrackWP_Consent_Profile::blocker_warning_vendors();
+        $this->assertNotContains(TrackWP_Consent_Profile::vendor_catalog()['meta']['name'], $w['server_side']);
+    }
+
+    public function test_unknown_vendor_key_and_empty_custom_fields_read_uafklaret() {
+        $u = TrackWP_Consent_Profile::unresolved();
+        update_option('trackwp_blocker_scan', array('items' => array(
+            array('rule_id' => 'host:cdn.example-tracker.com', 'vendor' => 'exampletracker'),
+            array('rule_id' => 'host:cdn.other.com', 'vendor' => null),
+            array('rule_id' => 'host:cdn.third.com', 'vendor' => 'uafklaret'),
+        )));
+        update_option('trackwp_blocker', array('mode' => 'off', 'rules' => array(), 'custom_vendors' => array(
+            array('name' => 'Min Tracker', 'category' => 'statistics'),
+            array('name' => 'Ugyldig', 'category' => 'necessary_or_bad'),
+        )));
+        $v = TrackWP_Consent_Profile::active_vendors();
+        $this->assertSame($u, $v['exampletracker']['provider']);
+        $this->assertSame($u, $v['exampletracker']['cookies']);
+        $this->assertArrayHasKey('blk_mintracker', $v);
+        $this->assertTrue($v['blk_mintracker']['via_blocker']);
+        $this->assertSame($u, $v['blk_mintracker']['cookies']);
+        $this->assertSame($u, $v['blk_mintracker']['purpose']);
+        $this->assertCount(2, array_filter($v, function ($x) { return !empty($x['via_blocker']); }));
+    }
+
+    public function test_normalize_custom_vendor_is_shared_with_gtm_vendors() {
+        $entry = array('name' => 'Snap Pixel', 'provider' => 'Snap B.V.', 'category' => 'marketing', 'cookies' => '_scid', 'purpose' => 'Annoncer', 'transfer' => 'USA (DPF)');
+        update_option('trackwp_consent', array('controller_name' => 'Eksempel ApS', 'gtm_vendors' => array('known' => array(), 'custom' => array($entry))));
+        $gtm = TrackWP_Consent_Profile::gtm_vendors();
+        $this->assertSame(TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'gtm_'), $gtm[0]);
+        $blk = TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'blk_');
+        $this->assertSame('blk_snappixel', $blk['key']);
+        $this->assertSame('dpf', $blk['transfer_basis']);
+        $this->assertNull(TrackWP_Consent_Profile::normalize_custom_vendor(array('name' => ''), 'blk_'));
+    }
+
+    /* ---------------- 1.11.1 F3 (KC14): transfer normalisation ---------------- */
+
+    public function test_normalize_custom_vendor_empty_transfer_reads_unresolved_and_basis_other() {
+        $entry = array('name' => 'Ny Tjeneste', 'category' => 'marketing', 'transfer' => '');
+        $v = TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'blk_');
+        $this->assertSame(TrackWP_Consent_Profile::unresolved(), $v['transfer']);
+        $this->assertSame('other', $v['transfer_basis']);
+    }
+
+    /** @dataProvider provider_none_transfer_spellings */
+    public function test_normalize_custom_vendor_none_spellings_give_basis_none($input) {
+        $entry = array('name' => 'Ny Tjeneste', 'category' => 'marketing', 'transfer' => $input);
+        $v = TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'blk_');
+        // "Uændret" per KC14: only the inherent str()-trim applies, the
+        // wording itself (case, spelling) is left exactly as entered.
+        $this->assertSame(trim($input), $v['transfer']);
+        $this->assertSame('none', $v['transfer_basis']);
+    }
+
+    public function provider_none_transfer_spellings() {
+        return array(
+            array('Ingen'),
+            array('  ingen  '),
+            array('Ingen overførsel'),
+            array('NONE'),
+            array('none'),
+        );
+    }
+
+    public function test_normalize_custom_vendor_dpf_mention_gives_basis_dpf() {
+        $entry = array('name' => 'Ny Tjeneste', 'category' => 'marketing', 'transfer' => 'USA under Data Privacy Framework');
+        $v = TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'blk_');
+        $this->assertSame('USA under Data Privacy Framework', $v['transfer']);
+        $this->assertSame('dpf', $v['transfer_basis']);
+    }
+
+    public function test_normalize_custom_vendor_other_free_text_gives_basis_other() {
+        $entry = array('name' => 'Ny Tjeneste', 'category' => 'marketing', 'transfer' => 'Uden for EU, mekanisme uafklaret');
+        $v = TrackWP_Consent_Profile::normalize_custom_vendor($entry, 'blk_');
+        $this->assertSame('Uden for EU, mekanisme uafklaret', $v['transfer']);
+        $this->assertSame('other', $v['transfer_basis']);
+    }
+
+    public function test_known_cookies_catalog_tokens_come_after_existing_and_only_when_scanned() {
+        $before = TrackWP_Cookie_Scanner::scan(array('__kla_id'));
+        $this->assertNotEmpty($before['unclassified']);
+        $this->blocker_scan(array('klaviyo', 'wc_order_attribution', 'jetpack', 'meta'));
+        $known   = TrackWP_Cookie_Scanner::known_cookies();
+        $matches = wp_list_pluck($known, 'match');
+        $this->assertLessThan(array_search('__kla_id', $matches, true), array_search('_fbc', $matches, true));
+        // _fbp keeps its existing (first) descriptor.
+        $this->assertSame('Meta Pixel', $known[array_search('_fbp', $matches, true)]['name']);
+        $scan = TrackWP_Cookie_Scanner::scan(array('__kla_id', 'sbjs_first', 'tk_ai'));
+        $this->assertEmpty($scan['unclassified']);
+        $this->assertStringContainsString('tk_ai', implode(',', wp_list_pluck($scan['statistics'], 'cookies')));
+        $this->assertStringContainsString('__kla_id', implode(',', wp_list_pluck($scan['marketing'], 'cookies')));
+        $this->assertStringContainsString('sbjs_first', implode(',', wp_list_pluck($scan['marketing'], 'cookies')));
+    }
 }

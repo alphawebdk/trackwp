@@ -3,7 +3,7 @@
  * TrackWP Admin Settings Page Template
  *
  * Loaded by TrackWP_Settings::render_page().
- * Provides 5 tabs: Platforms, Events, WooCommerce, Consent, Advanced.
+ * Provides tabs: Dashboard, Platforms, Events, WooCommerce, Consent, Blocking, Advanced.
  *
  * @package TrackWP
  */
@@ -55,6 +55,9 @@ $has_woocommerce = class_exists('WooCommerce');
         <?php endif; ?>
         <a href="#consent" class="nav-tab" data-tab="consent">
             <?php echo esc_html__('Samtykke', 'trackwp'); ?>
+        </a>
+        <a href="#blocker" class="nav-tab" data-tab="blocker">
+            <?php echo esc_html__('Blokering', 'trackwp'); ?>
         </a>
         <a href="#advanced" class="nav-tab" data-tab="advanced">
             <?php echo esc_html__('Avanceret', 'trackwp'); ?>
@@ -647,6 +650,105 @@ $has_woocommerce = class_exists('WooCommerce');
                     </tr>
                     <tr>
                         <th scope="row">
+                            <?php echo esc_html__('Overtag Meta-sporing', 'trackwp'); ?>
+                        </th>
+                        <td>
+                            <label>
+                                <input type="hidden" name="trackwp_platforms[meta_pixel_with_gtm]" value="0" />
+                                <input type="checkbox"
+                                       name="trackwp_platforms[meta_pixel_with_gtm]"
+                                       value="1"
+                                       <?php checked( ! empty($platforms['meta_pixel_with_gtm']) ); ?> />
+                                <?php echo esc_html__('TrackWP overtager Meta-sporing (også når GTM er aktiv).', 'trackwp'); ?>
+                            </label>
+                            <p class="description">
+                                <?php echo esc_html__('TrackWP indlæser Meta Pixel og sender Conversions API med samme event_id, også når Google Tag Manager er slået til. Uden et access token leveres kun Pixel — Conversions API tilføjes automatisk, når et token indsættes. Når Pixel ID og klient-side Pixel er udfyldt, slås Pixel og CAPI i Meta for WooCommerce fra, så der ikke tælles dobbelt. Katalogsync kører fortsat. Slet Meta-tags i GTM (pause er ikke nok).', 'trackwp'); ?>
+                            </p>
+                            <?php
+                            // D1/KC6: TrackWP can now take over with Pixel only (no token). status()
+                            // reports one of four states — shown regardless of the m1 checkbox above,
+                            // because forced_off (the kill switch below) is independent of m1.
+                            if ( class_exists('TrackWP_Meta_Takeover') && method_exists('TrackWP_Meta_Takeover', 'status') ) :
+                                $meta_takeover   = (array) TrackWP_Meta_Takeover::status();
+                                $mt_delivering   = ! empty($meta_takeover['delivering']);
+                                $mt_mode         = isset($meta_takeover['mode']) ? (string) $meta_takeover['mode'] : '';
+                                $mt_capi         = isset($meta_takeover['capi']) ? (string) $meta_takeover['capi'] : '';
+                                $mt_forced_off   = ! empty($meta_takeover['forced_off']);
+                                $mt_missing      = isset($meta_takeover['missing']) && is_array($meta_takeover['missing']) ? $meta_takeover['missing'] : array();
+                                $mt_token_source = isset($meta_takeover['capi_token_source']) ? (string) $meta_takeover['capi_token_source'] : '';
+                                $mt_fb4woo_active = ! empty($meta_takeover['fb4woo_active']);
+                                $mt_labels       = TrackWP_Settings::meta_missing_labels();
+
+                                if ( $mt_delivering && 'pixel_capi' === $mt_mode ) :
+                                    ?>
+                                    <div class="notice notice-success inline trackwp-meta-takeover-status"><p>
+                                        <?php echo esc_html__('TrackWP leverer Meta (Pixel og Conversions API). Katalogsync kører fortsat.', 'trackwp'); ?>
+                                        <?php if ( $mt_fb4woo_active ) : ?>
+                                            <?php echo esc_html__('Pixel og CAPI i Meta for WooCommerce er slået fra.', 'trackwp'); ?>
+                                        <?php endif; ?>
+                                        <?php if ( 'fb4woo' === $mt_token_source ) : ?>
+                                            <?php echo esc_html__('Conversions API via token fra Meta for WooCommerce.', 'trackwp'); ?>
+                                        <?php endif; ?>
+                                    </p></div>
+                                    <?php
+                                elseif ( $mt_delivering && 'pixel_only' === $mt_mode ) :
+                                    ?>
+                                    <div class="notice notice-info inline trackwp-meta-takeover-status"><p>
+                                        <?php echo esc_html__('TrackWP leverer Meta (kun Pixel, ingen Conversions API). Conversions API tilføjes automatisk, når der indsættes et token.', 'trackwp'); ?>
+                                        <?php if ( $mt_fb4woo_active ) : ?>
+                                            <?php echo esc_html__('Pixel og CAPI i Meta for WooCommerce er slået fra.', 'trackwp'); ?>
+                                        <?php endif; ?>
+                                    </p></div>
+                                    <?php
+                                elseif ( $mt_forced_off && ! $mt_delivering ) :
+                                    ?>
+                                    <div class="notice notice-warning inline trackwp-meta-takeover-status"><p>
+                                        <?php
+                                        $mt_missing_names = array();
+                                        foreach ( $mt_missing as $mt_code ) {
+                                            $mt_missing_names[] = isset($mt_labels[$mt_code]) ? $mt_labels[$mt_code] : (string) $mt_code;
+                                        }
+                                        echo esc_html(sprintf(
+                                            /* translators: %s: comma separated list of missing conditions */
+                                            __('Meta for WooCommerce er stoppet. TrackWP leverer ikke Meta (mangler: %s). Meta modtager ingen hændelser fra shoppen.', 'trackwp'),
+                                            implode(', ', $mt_missing_names)
+                                        ));
+                                        ?>
+                                    </p></div>
+                                    <?php
+                                endif;
+
+                                if ( $mt_delivering && 'token_error' === $mt_capi ) :
+                                    ?>
+                                    <div class="notice notice-error inline trackwp-meta-takeover-error"><p>
+                                        <?php echo esc_html__('Conversions API-tokenet blev afvist. Pixel sender fortsat.', 'trackwp'); ?>
+                                    </p></div>
+                                    <?php
+                                endif;
+                            endif;
+                            ?>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <?php echo esc_html__('Nødstop: stop Meta for WooCommerce', 'trackwp'); ?>
+                        </th>
+                        <td>
+                            <label>
+                                <input type="hidden" name="trackwp_platforms[fb4woo_tracking_off]" value="0" />
+                                <input type="checkbox"
+                                       name="trackwp_platforms[fb4woo_tracking_off]"
+                                       value="1"
+                                       <?php checked( ! empty($platforms['fb4woo_tracking_off']) ); ?> />
+                                <?php echo esc_html__('Stop Meta for WooCommerce\'s pixel, CAPI og _fbp helt, uanset om TrackWP overtager.', 'trackwp'); ?>
+                            </label>
+                            <p class="description">
+                                <?php echo esc_html__('Nødstop (D1/KC6). Brug det, hvis Meta for WooCommerce skal stoppes, selvom TrackWP endnu ikke opfylder betingelserne for at overtage — Meta modtager så ingen hændelser fra shoppen.', 'trackwp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
                             <label for="meta_access_token"><?php echo esc_html__('Access Token', 'trackwp'); ?></label>
                         </th>
                         <td>
@@ -745,6 +847,47 @@ $has_woocommerce = class_exists('WooCommerce');
                                    placeholder="GTM-XXXXXXX" />
                             <p class="description">
                                 <?php echo esc_html__("Format: GTM-XXXXXXX. Snippet'et indsættes automatisk i <head> og <body>.", 'trackwp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="trackwp_gtm_datalayer_events"><?php echo esc_html__('Send hændelser til dataLayer', 'trackwp'); ?></label>
+                        </th>
+                        <td>
+                            <?php $dl_mode = isset($platforms['gtm_datalayer_events']) ? $platforms['gtm_datalayer_events'] : 'off'; ?>
+                            <select id="trackwp_gtm_datalayer_events" name="trackwp_platforms[gtm_datalayer_events]">
+                                <option value="off" <?php selected($dl_mode, 'off'); ?>><?php esc_html_e('Fra', 'trackwp'); ?></option>
+                                <option value="test" <?php selected($dl_mode, 'test'); ?>><?php esc_html_e('Test (kun for administratorer)', 'trackwp'); ?></option>
+                                <option value="on" <?php selected($dl_mode, 'on'); ?>><?php esc_html_e('Til', 'trackwp'); ?></option>
+                            </select>
+                            <p class="description">
+                                <?php echo esc_html__('Kræver Google Tag Manager. Pusher e-handelsevents til window.dataLayer, uafhængigt af samtykke — GTM og Consent Mode styrer selv, om et tag fyrer, og om det sker cookieløst.', 'trackwp'); ?>
+                            </p>
+                            <p class="description">
+                                <?php echo esc_html__('GTM-regel: byg triggeren på trackwp.source = "trackwp" (kun TrackWP\'s pushes) og — for GA4-tagget — trackwp.ga4_route = "gtm" (eksakt streng).', 'trackwp'); ?>
+                            </p>
+                            <p class="description">
+                                <strong><?php echo esc_html__('Vigtigt:', 'trackwp'); ?></strong>
+                                <?php echo esc_html__('Tags der læser disse dataLayer-værdier må ikke have "Kræv yderligere samtykke" — de skal fyre på selve eventet, ellers er variablerne tomme, når GTM senere holder tagget tilbage. Samtykke styres af taggets egen Consent Mode.', 'trackwp'); ?>
+                            </p>
+                            <p class="description">
+                                <?php echo esc_html__('Kendt begrænsning: accepterer kunden samtykke først EFTER at et køb er pushet, får Google Ads-konverteringen ingen Enhanced Conversions for den ordre.', 'trackwp'); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="trackwp_ga4_source"><?php echo esc_html__('GA4-kilde', 'trackwp'); ?></label>
+                        </th>
+                        <td>
+                            <?php $ga4_source = isset($platforms['ga4_source']) ? $platforms['ga4_source'] : 'gtm'; ?>
+                            <select id="trackwp_ga4_source" name="trackwp_platforms[ga4_source]">
+                                <option value="gtm" <?php selected($ga4_source, 'gtm'); ?>><?php esc_html_e('GTM (GTM ejer alle GA4-browserevents)', 'trackwp'); ?></option>
+                                <option value="split" <?php selected($ga4_source, 'split'); ?>><?php esc_html_e('Split (køb med samtykke via TrackWP\'s server, ellers GTM)', 'trackwp'); ?></option>
+                            </select>
+                            <p class="description">
+                                <?php echo esc_html__('Kun relevant, når "Send hændelser til dataLayer" er slået til. Standard er GTM.', 'trackwp'); ?>
                             </p>
                         </td>
                     </tr>
@@ -849,6 +992,14 @@ $has_woocommerce = class_exists('WooCommerce');
                         __('Ordre gennemført', 'trackwp'),
                         __('Sendes på ordrebekræftelsessiden, én gang pr. ordre. Ordrenummeret bruges som transaction_id, så GA4 og Google Ads ikke tæller samme ordre to gange.', 'trackwp'),
                     ),
+                    'view_item_list' => array(
+                        __('Produktliste vist', 'trackwp'),
+                        __('Sendes på shop-, kategori- og søgesider for produkter, der vises via en almindelig løkke (op til 50). Dækker ikke blokke, Product Collection eller AJAX-lister.', 'trackwp'),
+                    ),
+                    'view_cart'      => array(
+                        __('Kurv vist', 'trackwp'),
+                        __('Sendes ved visning af kurvsiden, når kurven ikke er tom.', 'trackwp'),
+                    ),
                 );
                 foreach ( TrackWP_Events::get_woocommerce_event_names() as $woo_event ) :
                     $woo_key = 'event_' . $woo_event;
@@ -887,6 +1038,15 @@ $has_woocommerce = class_exists('WooCommerce');
                         <p class="description">
                             <?php echo esc_html__('Gælder både ordre- og kurvværdi, og bestemmer også om produktpriserne sendes med eller uden moms. Vælg det samme grundlag som dine budkampagner optimerer på.', 'trackwp'); ?>
                         </p>
+                        <?php
+                        $dl_active_for_warning = isset($platforms['gtm_datalayer_events']) && 'off' !== $platforms['gtm_datalayer_events'];
+                        $value_basis_incl_vat  = in_array($value_basis, array('total', 'ex_shipping'), true);
+                        if ( $dl_active_for_warning && $value_basis_incl_vat ) :
+                        ?>
+                        <div class="notice notice-warning inline"><p>
+                            <?php echo esc_html__('Konverteringsværdien "ecommerce.value" i dataLayer følger dette valg. Med moms inkluderet sender GTMs GA4-tag omsætning inkl. moms. Vælg "uden moms" eller "uden moms og fragt" for at sende værdien uden moms.', 'trackwp'); ?>
+                        </p></div>
+                        <?php endif; ?>
                     </td>
                 </tr>
                 <tr>
@@ -1508,6 +1668,11 @@ $has_woocommerce = class_exists('WooCommerce');
     <!-- ================================================================
          TAB 5: Advanced
          ================================================================ -->
+    <!-- ================================================================
+         TAB: Blokering (1.11.0)
+         ================================================================ -->
+    <?php include TRACKWP_PLUGIN_DIR . 'templates/partials/admin-blocker.php'; ?>
+
     <div id="tab-advanced" class="trackwp-tab-content" data-tab="advanced">
         <form method="post" action="options.php">
             <?php settings_fields('trackwp_advanced_group'); ?>

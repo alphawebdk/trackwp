@@ -1,12 +1,44 @@
 <?php
 /**
- * TrackWP_Meta Conversions API adapter tests (W3).
+ * TrackWP_Meta Conversions API adapter tests (W3), extended for
+ * PLAN-1.11.1-v2 §9 TR6/TR8 (access_token()/access_token_source() fallback
+ * to Meta for WooCommerce's token for the same pixel).
  *
  * Enhanced data is built with the producer TrackWP_Hash::normalize_enhanced();
  * the expected em/ph/ct hashes come from normalization-vectors.json, whose
  * Meta section is output of the real facebook-python-business-sdk
  * normalize.py (commit 0b12f070533df7eed7239e63b445327a2f7482bc).
+ *
+ * TR6 fallback tests below mostly use the raw-option path
+ * (`get_option('wc_facebook_access_token')`), which is what actually runs
+ * in every test environment here (fb4woo is not loaded, so
+ * `function_exists('facebook_for_woocommerce')` is false in
+ * TrackWP_Meta::fb4woo_connection_token()).
+ *
+ * A global `function facebook_for_woocommerce() {}` stub is deliberately
+ * NOT used to test the Connection-handler branch:
+ * TrackWP_Meta_Takeover::fb4woo_active() also checks
+ * function_exists('facebook_for_woocommerce'), and phpunit loads all test
+ * files into one process, so such a stub would leak into every other test
+ * file's "fb4woo is not active" assumption (e.g. test-assets.php's
+ * takeover-notice tests). Instead, TrackWP_Meta::fb4woo_connection_token()
+ * is `protected static` and called via `static::` the whole way down from
+ * access_token(), so Test_TrackWP_Meta_FB4Woo_Handler below can override
+ * just that one method (subclass test seam, same pattern as
+ * Test_TrackWP_Meta_Takeover_With_Woo/No_Woo in test-meta-takeover.php) to
+ * prove the Connection-handler value (i.e. fb4woo's own
+ * `wc_facebook_connection_access_token` filter) wins over the raw option,
+ * with no global state left behind for other test files.
  */
+
+// phpcs:ignore Generic.Files.OneObjectStructurePerFile
+class Test_TrackWP_Meta_FB4Woo_Handler extends TrackWP_Meta {
+    public static $connection_token = '';
+    protected static function fb4woo_connection_token() {
+        return static::$connection_token;
+    }
+}
+
 class Test_TrackWP_Meta extends WP_UnitTestCase {
 
     private $requests  = array();
@@ -29,6 +61,9 @@ class Test_TrackWP_Meta extends WP_UnitTestCase {
     public function tear_down() {
         remove_filter( 'pre_http_request', array( $this, 'intercept' ), 10 );
         unset( $_COOKIE[ LOGGED_IN_COOKIE ] );
+        delete_option( 'wc_facebook_pixel_id' );
+        delete_option( 'wc_facebook_access_token' );
+        Test_TrackWP_Meta_FB4Woo_Handler::$connection_token = '';
         parent::tear_down();
     }
 
@@ -199,5 +234,112 @@ class Test_TrackWP_Meta extends WP_UnitTestCase {
         $this->assertSame( 'http_4xx', $result['reason'] );
         $this->assertSame( 1, $result['attempts'] );
         $this->assertStringNotContainsString( '@', $result['detail'] );
+    }
+
+    // --- TR6/TR8: access_token() ------------------------------------------
+
+    public function test_access_token_uses_own_token_first() {
+        $this->assertSame( 'token', TrackWP_Meta::access_token() );
+        $this->assertSame( 'trackwp', TrackWP_Meta::access_token_source() );
+    }
+
+    public function test_access_token_falls_back_to_fb4woo_for_same_pixel() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => '',
+        ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+
+        // Raw: base64_decode() would mangle this value, so an unchanged
+        // result proves the fb4woo token is never run through TrackWP_Hash::decode().
+        $this->assertSame( 'EAAB-fb4woo-raw', TrackWP_Meta::access_token() );
+        $this->assertSame( 'fb4woo', TrackWP_Meta::access_token_source() );
+        $this->assertTrue( ( new TrackWP_Meta() )->is_enabled() );
+    }
+
+    public function test_access_token_ignores_fb4woo_for_a_different_pixel() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => '',
+        ) );
+        update_option( 'wc_facebook_pixel_id', '9999999999' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+
+        $this->assertSame( '', TrackWP_Meta::access_token() );
+        $this->assertSame( '', TrackWP_Meta::access_token_source() );
+        $this->assertFalse( ( new TrackWP_Meta() )->is_enabled() );
+    }
+
+    public function test_access_token_ignores_fb4woo_without_own_pixel_id() {
+        update_option( 'trackwp_platforms', array( 'meta_enabled' => 1, 'meta_pixel_id' => '', 'meta_access_token' => '' ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+        $this->assertSame( '', TrackWP_Meta::access_token() );
+    }
+
+    public function test_access_token_own_token_wins_over_fb4woo() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => TrackWP_Hash::encode( 'own-token' ),
+        ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+
+        $this->assertSame( 'own-token', TrackWP_Meta::access_token() );
+        $this->assertSame( 'trackwp', TrackWP_Meta::access_token_source() );
+    }
+
+    public function test_access_token_prefers_connection_handler_over_raw_option() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => '',
+        ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        // Raw option deliberately different from the handler's value, so
+        // the assertion proves the Connection-handler path (which applies
+        // fb4woo's own wc_facebook_connection_access_token filter) wins.
+        update_option( 'wc_facebook_access_token', 'raw-option-token' );
+
+        Test_TrackWP_Meta_FB4Woo_Handler::$connection_token = 'via-connection-handler';
+
+        $this->assertSame( 'via-connection-handler', Test_TrackWP_Meta_FB4Woo_Handler::access_token() );
+        $this->assertSame( 'fb4woo', Test_TrackWP_Meta_FB4Woo_Handler::access_token_source() );
+
+        // The unmodified class is untouched: no global state leaked.
+        $this->assertSame( 'raw-option-token', TrackWP_Meta::access_token() );
+    }
+
+    public function test_fb4woo_fallback_token_is_never_written_to_trackwp_platforms() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => '',
+        ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+
+        ( new TrackWP_Meta() )->send_event( self::event() );
+
+        $stored = get_option( 'trackwp_platforms' );
+        $this->assertSame( '', $stored['meta_access_token'], 'the fb4woo fallback token is never written to trackwp_platforms' );
+    }
+
+    public function test_send_event_uses_fb4woo_fallback_token_in_request() {
+        update_option( 'trackwp_platforms', array(
+            'meta_enabled'      => 1,
+            'meta_pixel_id'     => '1234567890',
+            'meta_access_token' => '',
+        ) );
+        update_option( 'wc_facebook_pixel_id', '1234567890' );
+        update_option( 'wc_facebook_access_token', 'EAAB-fb4woo-raw' );
+
+        $result = ( new TrackWP_Meta() )->send_event( self::event() );
+        $this->assertSame( 'ok', $result['status'] );
+        $this->assertSame( 'EAAB-fb4woo-raw', $this->requests[0]['body']['access_token'] );
     }
 }

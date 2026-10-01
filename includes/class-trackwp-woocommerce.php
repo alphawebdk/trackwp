@@ -184,11 +184,16 @@ class TrackWP_WooCommerce {
      */
     public static function get_defaults() {
         return array(
-            'enabled'              => false,
-            'event_view_item'      => true,
-            'event_add_to_cart'    => true,
-            'event_begin_checkout' => true,
-            'event_purchase'       => true,
+            'enabled'                 => false,
+            'event_view_item'         => true,
+            // 1.11.1 (D7/KC10): off by default, same reasoning as the shop
+            // toggle itself -- these widen what leaves the site and must be a
+            // deliberate choice.
+            'event_view_item_list'    => false,
+            'event_add_to_cart'       => true,
+            'event_view_cart'         => false,
+            'event_begin_checkout'    => true,
+            'event_purchase'          => true,
             // total | ex_tax | ex_shipping | ex_tax_shipping
             'value_basis'          => 'total',
             // product_id | sku -- item_id must match the Merchant Center feed,
@@ -493,9 +498,17 @@ class TrackWP_WooCommerce {
             'shipping'       => round( max( 0, (float) $order->get_shipping_total() ), 2 ),
         );
 
+        // D7/KC11: ALL coupons, comma-separated (documented as one string),
+        // not just the first.
         $coupons = $order->get_coupon_codes();
         if ( ! empty( $coupons ) ) {
-            $ecommerce['coupon'] = (string) reset( $coupons );
+            $ecommerce['coupon'] = implode( ',', array_map( 'strval', $coupons ) );
+        }
+
+        // D7/KC11: order-level discount, same basis as the amounts above.
+        $discount = round( max( 0, (float) $order->get_total_discount( ! $include_tax ) ), 2 );
+        if ( $discount > 0 ) {
+            $ecommerce['discount'] = $discount;
         }
 
         $data = array(
@@ -1199,6 +1212,27 @@ class TrackWP_WooCommerce {
             }
         }
 
+        // view_cart (D7/KC10)
+        if ( ! empty( $settings['event_view_cart'] ) && function_exists( 'is_cart' ) && is_cart() ) {
+            $cart_payload = $this->build_cart_payload();
+            if ( ! empty( $cart_payload['ecommerce']['items'] ) ) {
+                $config['immediate'][] = array_merge( array( 'event' => 'view_cart' ), $cart_payload );
+            }
+        }
+
+        // view_item_list (D7/KC10): is_shop(), a product taxonomy term (cat or
+        // tag) or a search, built from the products actually rendered in a
+        // loop this request (collect_loop_product()). Coverage is therefore
+        // limited to woocommerce_loop_add_to_cart_args-based loops -- blocks,
+        // Product Collection and AJAX-refreshed lists are not seen (documented
+        // gap, PLAN-1.11.1-v2 KC10).
+        if ( ! empty( $settings['event_view_item_list'] ) ) {
+            $list = $this->build_view_item_list_payload( $config['currency'] );
+            if ( ! empty( $list ) ) {
+                $config['immediate'][] = $list;
+            }
+        }
+
         // purchase
         if ( ! empty( $settings['event_purchase'] ) && $is_order_received ) {
             $purchase = $this->build_purchase_payload();
@@ -1365,6 +1399,71 @@ class TrackWP_WooCommerce {
     }
 
     /**
+     * Build the view_item_list entry (D7/KC10) from the products collected
+     * this request by collect_loop_product(), capped at 50, index from 0.
+     *
+     * @param string $currency Shop currency.
+     * @return array Empty when there is no list context or no products.
+     */
+    private function build_view_item_list_payload( $currency ) {
+        list( $list_id, $list_name ) = $this->current_product_list_context();
+        if ( null === $list_id || empty( $this->loop_product_ids ) ) {
+            return array();
+        }
+
+        $items = array();
+        $index = 0;
+        foreach ( array_slice( array_unique( $this->loop_product_ids ), 0, 50 ) as $product_id ) {
+            $item = $this->build_item_from_product( (int) $product_id, 1 );
+            if ( empty( $item ) ) {
+                continue;
+            }
+            unset( $item['quantity'] );
+            $item['item_list_id']   = $list_id;
+            $item['item_list_name'] = $list_name;
+            $item['index']          = $index;
+            $items[]                = $item;
+            $index++;
+        }
+        if ( empty( $items ) ) {
+            return array();
+        }
+
+        return array(
+            'event'     => 'view_item_list',
+            'value'     => 0,
+            'currency'  => $currency,
+            'ecommerce' => array(
+                'items'          => $items,
+                'item_list_id'   => $list_id,
+                'item_list_name' => $list_name,
+            ),
+        );
+    }
+
+    /**
+     * The current page's product-list context for view_item_list (KC10):
+     * a product taxonomy term (category or tag), the shop page, or a search.
+     *
+     * @return array {0: string|null item_list_id, 1: string|null item_list_name}
+     */
+    private function current_product_list_context() {
+        if ( function_exists( 'is_product_taxonomy' ) && is_product_taxonomy() ) {
+            $term = get_queried_object();
+            if ( $term instanceof WP_Term ) {
+                return array( $term->slug, $term->name );
+            }
+        }
+        if ( function_exists( 'is_shop' ) && is_shop() ) {
+            return array( 'shop', __( 'Butik', 'trackwp' ) );
+        }
+        if ( is_search() ) {
+            return array( 'search', __( 'Søgning', 'trackwp' ) );
+        }
+        return array( null, null );
+    }
+
+    /**
      * Build the cart payload used for begin_checkout.
      *
      * @return array Payload without the event name: value, currency, ecommerce.
@@ -1498,7 +1597,19 @@ class TrackWP_WooCommerce {
         if ( ! $product instanceof WC_Product ) {
             return array();
         }
+        return $this->build_item_from_product_object( $product, $quantity );
+    }
 
+    /**
+     * Build a GA4 item straight from a WC_Product, for callers that already
+     * have the product (build_item_from_product() above, after its own
+     * lookup).
+     *
+     * @param WC_Product $product  Product.
+     * @param int        $quantity Quantity.
+     * @return array
+     */
+    private function build_item_from_product_object( $product, $quantity = 1 ) {
         // Follow the configured value basis, NOT the shop's display setting.
         // wc_get_price_to_display() honours woocommerce_tax_display_shop, so on
         // a shop that lists prices excluding tax it returned an ex-tax price
@@ -1517,6 +1628,7 @@ class TrackWP_WooCommerce {
             'price'     => round( (float) $unit_price, 2 ),
         );
 
+        $this->add_sku( $item, $product );
         $this->add_category( $item, $product );
         $this->add_variant( $item, $product );
 
@@ -1553,6 +1665,7 @@ class TrackWP_WooCommerce {
         );
 
         $this->add_price_and_discount( $item, $subtotal, $subtotal_tax, $total, $total_tax, $quantity, $include_tax );
+        $this->add_sku( $item, $product );
         $this->add_category( $item, $product );
         $this->add_variant( $item, $product );
 
@@ -1593,6 +1706,7 @@ class TrackWP_WooCommerce {
         );
 
         if ( $product instanceof WC_Product ) {
+            $this->add_sku( $item, $product );
             $this->add_category( $item, $product );
             $this->add_variant( $item, $product );
         }
@@ -1646,7 +1760,27 @@ class TrackWP_WooCommerce {
     }
 
     /**
-     * Add item_category (and item_category2..5) from the product's categories.
+     * Add item_sku (D7/KC11) when the product declares one. The proxy's
+     * ecommerce whitelist (class-trackwp-proxy.php sanitize_ecommerce()) does
+     * not carry item_sku onward to GA4/Meta -- it exists for the dataLayer
+     * push only.
+     *
+     * @param array      $item    Item, by reference.
+     * @param WC_Product $product Product.
+     * @return void
+     */
+    private function add_sku( &$item, $product ) {
+        $sku = $product->get_sku();
+        if ( '' !== (string) $sku ) {
+            $item['item_sku'] = (string) $sku;
+        }
+    }
+
+    /**
+     * Add item_category (and item_category2..5) from the DEEPEST product_cat
+     * term directly assigned to the product (D7/KC11): the term's own
+     * ancestor chain, top level first, capped at 5. Ties (two terms at the
+     * same depth) are broken by the lowest term_id, so the choice is stable.
      *
      * Variations carry no terms of their own, so the parent is used.
      *
@@ -1666,19 +1800,61 @@ class TrackWP_WooCommerce {
             return;
         }
 
+        $primary = $this->deepest_product_category( $terms );
+
+        /**
+         * Filter the primary category term used to build
+         * item_category..item_category5.
+         *
+         * @param WP_Term|null $primary The deepest assigned term (ties broken
+         *                              by the lowest term_id). Null when none.
+         * @param WC_Product   $product Product (or variation's parent).
+         * @param WP_Term[]    $terms   All product_cat terms assigned directly.
+         */
+        $primary = apply_filters( 'trackwp_item_primary_category', $primary, $product, $terms );
+        if ( ! $primary instanceof WP_Term ) {
+            return;
+        }
+
+        $chain   = array_reverse( get_ancestors( $primary->term_id, 'product_cat', 'taxonomy' ) );
+        $chain[] = $primary->term_id;
+        $chain   = array_slice( $chain, 0, 5 );
+
         $index = 0;
-        foreach ( $terms as $term ) {
-            if ( ! isset( $term->name ) ) {
+        foreach ( $chain as $term_id ) {
+            $term = get_term( $term_id, 'product_cat' );
+            if ( ! $term || is_wp_error( $term ) ) {
                 continue;
             }
             // GA4 spells the hierarchy item_category, item_category2 .. item_category5.
             $key          = 0 === $index ? 'item_category' : 'item_category' . ( $index + 1 );
             $item[ $key ] = $term->name;
             $index++;
-            if ( $index >= 5 ) {
-                break;
+        }
+    }
+
+    /**
+     * The deepest of a product's directly assigned product_cat terms. Ties
+     * are broken by the lowest term_id, so the choice is stable across
+     * requests (D7/KC11).
+     *
+     * @param WP_Term[] $terms Assigned terms.
+     * @return WP_Term|null
+     */
+    private function deepest_product_category( $terms ) {
+        $best       = null;
+        $best_depth = -1;
+        foreach ( $terms as $term ) {
+            if ( ! isset( $term->term_id ) ) {
+                continue;
+            }
+            $depth = count( get_ancestors( $term->term_id, 'product_cat', 'taxonomy' ) );
+            if ( null === $best || $depth > $best_depth || ( $depth === $best_depth && $term->term_id < $best->term_id ) ) {
+                $best       = $term;
+                $best_depth = $depth;
             }
         }
+        return $best;
     }
 
     /**

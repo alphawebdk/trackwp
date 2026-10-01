@@ -1,0 +1,109 @@
+{
+  "_comment": "1.11.1 KC3/KC4 fixtures for the cookie gate. 'real' holds a saved anonymous curl -sI response (values replaced with 'x', attributes kept verbatim, no site-specific meaning asserted by the tests beyond the generic RFC rules). 'constructed' are RFC 6265 edge cases used to test is_deletion()/plan() as a general rule, not a specific vendor.",
+  "real": [
+    {
+      "source": "https://adashofmagic.dk/",
+      "method": "curl -s -D - -o /dev/null -A \"Mozilla/5.0\" https://adashofmagic.dk/",
+      "captured_at": "2026-09-29T11:52:55Z",
+      "note": "Anonymous front-page GET set no cookies at all on this request.",
+      "lines": []
+    },
+    {
+      "source": "https://adashofmagic.dk/?pacid=twptest",
+      "method": "curl -s -D - -o /dev/null -A \"Mozilla/5.0\" \"https://adashofmagic.dk/?pacid=twptest\"",
+      "captured_at": "2026-09-29T11:52:58Z",
+      "note": "One real Set-Cookie line, value replaced with x, attributes kept as sent.",
+      "lines": [
+        "Set-Cookie: partner-ads-query=x; expires=Sun, 08 Nov 2026 11:52:58 GMT; Max-Age=3456000; path=/"
+      ]
+    }
+  ],
+  "constructed": [
+    {
+      "name": "max_age_positive_with_past_expires",
+      "description": "A valid positive Max-Age has precedence over an Expires in the past: not a deletion.",
+      "line": "_fbp=x; Max-Age=3600; Expires=Mon, 01 Jan 2001 00:00:00 GMT; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "invalid_max_age_no_expires",
+      "description": "An invalid Max-Age never counts as a deletion by itself.",
+      "line": "_fbp=x; Max-Age=abc; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "invalid_max_age_with_future_expires",
+      "description": "Max-Age is invalid, so Expires is consulted; it is in the future, so not a deletion.",
+      "line": "_fbp=x; Max-Age=abc; Expires=Fri, 01 Jan 2999 00:00:00 GMT; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "invalid_max_age_with_past_expires",
+      "description": "Max-Age is invalid, so Expires is consulted; it is in the past, so this is a deletion.",
+      "line": "_fbp=x; Max-Age=abc; Expires=Mon, 01 Jan 2001 00:00:00 GMT; Path=/",
+      "is_deletion": true
+    },
+    {
+      "name": "deletion_max_age_zero",
+      "description": "Max-Age=0 is always a deletion.",
+      "line": "_fbp=x; Max-Age=0; Path=/",
+      "is_deletion": true
+    },
+    {
+      "name": "deletion_max_age_negative",
+      "description": "A negative Max-Age is a deletion.",
+      "line": "_fbp=x; Max-Age=-1; Path=/",
+      "is_deletion": true
+    },
+    {
+      "name": "deletion_via_expires_only",
+      "description": "No Max-Age at all, Expires in the past: a deletion.",
+      "line": "_fbp=x; Expires=Mon, 01 Jan 2001 00:00:00 GMT; Path=/",
+      "is_deletion": true
+    },
+    {
+      "name": "no_max_age_future_expires",
+      "description": "No Max-Age, Expires in the future: not a deletion.",
+      "line": "_fbp=x; Expires=Fri, 01 Jan 2999 00:00:00 GMT; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "no_expiry_attributes_at_all",
+      "description": "Session cookie (no Max-Age, no Expires): never a deletion.",
+      "line": "_fbp=x; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "host_prefixed_name",
+      "description": "The __Host- prefix is part of the cookie name.",
+      "line": "__Host-example=x; Path=/; Secure",
+      "cookie_name": "__Host-example",
+      "is_deletion": false
+    },
+    {
+      "name": "secure_prefixed_name",
+      "description": "The __Secure- prefix is part of the cookie name.",
+      "line": "__Secure-example=x; Path=/; Secure",
+      "cookie_name": "__Secure-example",
+      "is_deletion": false
+    },
+    {
+      "name": "duplicate_name_first",
+      "description": "Two Set-Cookie lines for the same name are handled independently (first: not a deletion).",
+      "line": "_fbp=x; Path=/",
+      "is_deletion": false
+    },
+    {
+      "name": "duplicate_name_second_is_deletion",
+      "description": "Two Set-Cookie lines for the same name are handled independently (second: a deletion).",
+      "line": "_fbp=x; Max-Age=0; Path=/",
+      "is_deletion": true
+    },
+    {
+      "name": "invalid_cookie_name",
+      "description": "No '=' at all: not a valid cookie name, must be kept.",
+      "line": "not-a-cookie-pair",
+      "cookie_name": null
+    }
+  ]
+}

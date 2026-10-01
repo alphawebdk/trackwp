@@ -25,6 +25,33 @@ class TrackWP_Settings {
     private static $presanitized = false;
 
     /**
+     * Set by bump_consent_version() for the duration of its update_option()
+     * call, so sanitize_consent() (hooked on sanitize_option_trackwp_consent)
+     * keeps the bumped version instead of restoring the stored one.
+     *
+     * @var int|null
+     */
+    private static $bump_consent_to = null;
+
+    /** KB1 modes. The first entry is the default. */
+    const BLOCKER_MODES = array( 'off', 'test', 'on' );
+
+    /** KB1 rule categories. */
+    const BLOCKER_CATEGORIES = array( 'necessary', 'statistics', 'marketing', 'personalisation' );
+
+    /** KB2 rule-id prefixes. "cookie" (KC2/D6) is only valid in exceptions.allow — never.cookies. */
+    const BLOCKER_RULE_TYPES = array( 'handle', 'url', 'host', 'inline', 'pixel', 'cookie' );
+
+    /** KB3 inline-marker allowlist. */
+    const BLOCKER_MARKER_PATTERN = '/^[A-Za-z0-9._-]{8,64}$/';
+
+    /** S13: the front page is always page 1, so at most 4 extra paths (5 pages in total). */
+    const BLOCKER_MAX_EXTRA_PATHS = 4;
+
+    /** Upper bound for exceptions.paths and exceptions.allow entries. */
+    const BLOCKER_MAX_EXCEPTIONS = 100;
+
+    /**
      * Cloudflare's published IP ranges, used to expand advanced.trusted_proxies
      * when advanced.trusted_proxies_cloudflare is enabled. TrackWP_Request_Guard
      * (W1) reads these via get_trusted_proxies() to recognise CF-Connecting-IP
@@ -112,10 +139,16 @@ class TrackWP_Settings {
         register_setting('trackwp_woocommerce_group', 'trackwp_woocommerce', array(
             'sanitize_callback' => array($this, 'sanitize_woocommerce'),
         ));
+        // KB1: blocking-until-consent. Autoload is set by the add_option() in
+        // the 1.11.0 upgrade (T6); register_setting() does not touch it.
+        register_setting('trackwp_blocker_group', 'trackwp_blocker', array(
+            'sanitize_callback' => array($this, 'sanitize_blocker'),
+        ));
 
         // admin-post.php runs admin_init before dispatching admin_post_{action},
         // so registering here (rather than at plugin bootstrap) is in time.
         add_action( 'admin_post_trackwp_consent_export', array( __CLASS__, 'handle_consent_export' ) );
+        add_action( 'admin_post_trackwp_bump_consent', array( __CLASS__, 'handle_bump_consent' ) );
         add_action( 'admin_notices', array( $this, 'render_admin_notices' ) );
     }
 
@@ -219,6 +252,10 @@ class TrackWP_Settings {
 
         $output['meta_pixel_client_enabled'] = ! empty($input['meta_pixel_client_enabled']);
 
+        // M1 (KB15): TrackWP delivers the Meta Pixel even when GTM is active.
+        // Opt-in, default false.
+        $output['meta_pixel_with_gtm'] = ! empty($input['meta_pixel_with_gtm']);
+
         // Meta Test Event Code — must match TEST<digits> or be empty
         $raw_test_code = isset($input['meta_test_event_code']) ? sanitize_text_field($input['meta_test_event_code']) : '';
         $raw_test_code = trim($raw_test_code);
@@ -291,6 +328,35 @@ class TrackWP_Settings {
                 $output[$secret_key] = '';
             }
         }
+
+        // A stored Graph token error (TrackWP_Meta_Takeover::LAST_ERROR_OPTION)
+        // belongs to the old token. Drop it only when a new token was saved,
+        // not when the field was left empty or masked (review MINOR 5).
+        $old_token = isset($current['meta_access_token']) ? (string) $current['meta_access_token'] : '';
+        if ( $output['meta_access_token'] !== '' && $output['meta_access_token'] !== $old_token && class_exists('TrackWP_Meta_Takeover') ) {
+            delete_option( TrackWP_Meta_Takeover::LAST_ERROR_OPTION );
+        }
+
+        // D1/KC6: explicit kill switch for Meta for WooCommerce. It stops
+        // fb4woo's own pixel/CAPI/_fbp (via filter_pixel_enabled()), and does
+        // NOT affect whether TrackWP itself delivers — that is can_deliver()
+        // alone, unaffected by this flag (TrackWP_Meta_Takeover::status()).
+        $output['fb4woo_tracking_off'] = ! empty( $input['fb4woo_tracking_off'] );
+
+        // D2/KC7: the dataLayer layer. 'test' only pushes for manage_options
+        // users at runtime (TrackWP_DataLayer, W4) — that is a runtime check,
+        // not a save-time capability gate. Forced to 'off' when GTM is not in
+        // use, because KC8's routing has no meaning without GTM.
+        $dl_mode = isset( $input['gtm_datalayer_events'] ) && is_string( $input['gtm_datalayer_events'] ) ? sanitize_key( $input['gtm_datalayer_events'] ) : 'off';
+        $dl_mode = in_array( $dl_mode, array( 'off', 'test', 'on' ), true ) ? $dl_mode : 'off';
+        $advanced_for_gtm = get_option( 'trackwp_advanced', array() );
+        $uses_gtm = ! empty( $output['gtm_enabled'] ) || ( is_array( $advanced_for_gtm ) && ! empty( $advanced_for_gtm['uses_gtm'] ) );
+        $output['gtm_datalayer_events'] = $uses_gtm ? $dl_mode : 'off';
+
+        // D4/KC8: routing for GA4 browser events once the dataLayer is on.
+        // Ignored (but still stored) while the layer is off.
+        $ga4_source = isset( $input['ga4_source'] ) && is_string( $input['ga4_source'] ) ? sanitize_key( $input['ga4_source'] ) : 'gtm';
+        $output['ga4_source'] = in_array( $ga4_source, array( 'gtm', 'split' ), true ) ? $ga4_source : 'gtm';
 
         return $output;
     }
@@ -554,6 +620,13 @@ class TrackWP_Settings {
             $output['consent_version'] = isset($current['consent_version']) ? absint($current['consent_version']) : 1;
         }
 
+        // The form never carries consent_version (it is always taken from the
+        // stored value above). The only writer of a higher value is the
+        // explicit "Bed om nyt samtykke" action, see bump_consent_version().
+        if ( null !== self::$bump_consent_to ) {
+            $output['consent_version'] = self::$bump_consent_to;
+        }
+
         return $output;
     }
 
@@ -580,6 +653,7 @@ class TrackWP_Settings {
             'c',           // TrackWP_Loader collect-proxy prefix (/c/e, /c/se)
             'keepalive',   // TrackWP_Proxy
             'my-data',     // TrackWP_Proxy (GDPR access/erasure)
+            'blocker',     // TrackWP_Blocker_Scanner (/blocker/scan, 1.11.0)
         );
         if ( in_array( $slug, $reserved, true ) ) {
             $slug = 'event';
@@ -1144,6 +1218,7 @@ class TrackWP_Settings {
         $consent     = get_option( 'trackwp_consent',   array() );
         $cookies     = get_option( 'trackwp_cookie_declarations', array() );
         $woocommerce = get_option( 'trackwp_woocommerce', array() );
+        $blocker     = get_option( 'trackwp_blocker', array() );
 
         if ( ! $include_secrets ) {
             unset( $platforms['ga4_api_secret'], $platforms['meta_access_token'], $platforms['google_ads_developer_token'], $platforms['google_ads_oauth_client_secret'], $platforms['google_ads_oauth_refresh_token'] );
@@ -1159,6 +1234,7 @@ class TrackWP_Settings {
             'consent'             => $consent,
             'cookie_declarations' => is_array( $cookies ) ? $cookies : array(),
             'woocommerce'         => is_array( $woocommerce ) ? $woocommerce : array(),
+            'blocker'             => is_array( $blocker ) ? $blocker : array(),
         );
     }
 
@@ -1212,7 +1288,547 @@ class TrackWP_Settings {
             );
         }
 
+        // Optional — absent in files exported before 1.11.0.
+        if ( isset( $data['blocker'] ) && is_array( $data['blocker'] ) ) {
+            update_option(
+                'trackwp_blocker',
+                $instance->sanitize_blocker( $data['blocker'] )
+            );
+        }
+
         return true;
+    }
+
+    // =========================================================================
+    // Blocking until consent (1.11.0, KB1/KB2, S13, S16)
+    // =========================================================================
+
+    /**
+     * KB1 defaults: mode off, nothing configured.
+     *
+     * @return array
+     */
+    public static function blocker_defaults() {
+        return array(
+            'mode'            => 'off',
+            'rules'           => array(),
+            'custom_vendors'  => array(),
+            'exceptions'      => array(
+                'allow' => array(),
+                'paths' => array(),
+            ),
+            'extra_paths'     => array(),
+            // TR7: generic ad-click-id parameters that make a page uncacheable
+            // (KC4.6). A setting, not a site-specific hardcode — admin can add
+            // affiliate parameters via the "Tilføj server-cookie" section.
+            'nocache_params'  => self::default_nocache_params(),
+        );
+    }
+
+    /**
+     * TR7: default click-id parameter list (generic, not site-specific).
+     * TrackWP_Cookie_Gate (W1) is the single source of truth when it exists;
+     * the literal list here is only a fallback so this file keeps working
+     * standalone (e.g. before W1's class is loaded during parallel dev/tests).
+     */
+    public static function default_nocache_params() {
+        if ( class_exists( 'TrackWP_Cookie_Gate' ) && defined( 'TrackWP_Cookie_Gate::DEFAULT_NOCACHE_PARAMS' ) ) {
+            $from_gate = constant( 'TrackWP_Cookie_Gate::DEFAULT_NOCACHE_PARAMS' );
+            if ( is_array( $from_gate ) ) {
+                return $from_gate;
+            }
+        }
+        return array( 'gclid', 'gbraid', 'wbraid', 'dclid', 'fbclid', 'msclkid', 'ttclid', 'li_fat_id', 'twclid', 'epik', 'ScCid' );
+    }
+
+    /** Upper bound for trackwp_blocker['nocache_params'] (TR7). */
+    const BLOCKER_MAX_NOCACHE_PARAMS = 30;
+
+    /**
+     * Stored blocker option merged over the defaults.
+     *
+     * @return array
+     */
+    public static function get_blocker_config() {
+        $stored = get_option( 'trackwp_blocker', array() );
+        $config = array_merge( self::blocker_defaults(), is_array( $stored ) ? $stored : array() );
+        if ( ! is_array( $config['exceptions'] ) ) {
+            $config['exceptions'] = array();
+        }
+        $config['exceptions'] = array_merge( array( 'allow' => array(), 'paths' => array() ), $config['exceptions'] );
+        return $config;
+    }
+
+    /**
+     * KC3: honest, code-specific texts for TrackWP_Cookie_Gate's own status
+     * codes (TrackWP_Blocker::record_status()), shared by notice_blocker()
+     * and templates/partials/admin-blocker.php. These are NOT HTML-rewriting
+     * failures, so they never reuse the blocker's "omskrivningen fejlede".
+     *
+     * @return array<string,string>
+     */
+    public static function cookie_gate_status_texts() {
+        return array(
+            'cookie_gate_late'            => __( 'Cookie-gaten kunne ikke køre på en side, fordi HTTP-headers allerede var sendt, da den skulle registrere sig. Server-cookies er måske ikke fjernet på den side.', 'trackwp' ),
+            'cookie_gate_register_failed' => __( 'Cookie-gaten kunne ikke registrere sig hos PHP — et andet plugin har formentlig allerede overtaget header-callbacken. Server-cookies fjernes ikke, før det er løst.', 'trackwp' ),
+            'cookie_gate_exception'       => __( 'Cookie-gaten stødte på en fejl under beregningen og ændrede ingen headers på den side. Server-cookies blev ikke fjernet på den side.', 'trackwp' ),
+            'cookie_gate_not_run'         => __( 'Cookie-gaten kunne ikke køre på en side (headers var allerede sendt, eller et andet plugin overtog header-callbacken). Server-cookies er måske ikke fjernet.', 'trackwp' ),
+        );
+    }
+
+    /**
+     * KB4 status labels, shared by the admin table and the tests.
+     *
+     * @return array<string,string>
+     */
+    public static function blocker_status_labels() {
+        return array(
+            'blocked'           => __( 'Blokeres', 'trackwp' ),
+            'allowed'           => __( 'Tillades', 'trackwp' ),
+            'cannot_server'     => __( 'Sat af serveren, ingen regel', 'trackwp' ),
+            'server_gated'      => __( 'Regel aktiv: fjernes uden samtykke', 'trackwp' ),
+            'cannot_serverside' => __( 'Kan ikke blokeres (server-til-server)', 'trackwp' ),
+            'cannot_bundled'    => __( 'Kan ikke blokeres (sammenlagt)', 'trackwp' ),
+            'gtm_consent_mode'  => __( 'Styres af GTM/Consent Mode (kræver konfiguration i GTM)', 'trackwp' ),
+            'protected'         => __( 'Beskyttet (kræver vurdering)', 'trackwp' ),
+            'before_trackwp'    => __( 'Kører før TrackWP', 'trackwp' ),
+        );
+    }
+
+    /**
+     * Sanitize the trackwp_blocker option (KB1). Used by the settings form
+     * (options.php) and by import_settings().
+     *
+     * - mode: whitelist, default off; forced off when TrackWP_Blocker::html_api_available() is false.
+     * - rules: keys must be KB2 rule ids, category whitelist, vendor must be a
+     *   catalog key or a custom vendor id (otherwise '' = "uafklaret").
+     *   A rule in the necessary category is never blocked.
+     * - exceptions.allow: only prefixed rule ids (S16). The admin form sends
+     *   {type, value} rows; the prefix is added here.
+     * - exceptions.paths / extra_paths: paths only, no absolute URLs, query
+     *   and fragment stripped. extra_paths is capped at 4 (S13).
+     *
+     * @param mixed $input Raw form or import input.
+     * @return array
+     */
+    public function sanitize_blocker( $input ) {
+        $output = self::blocker_defaults();
+        if ( ! is_array( $input ) ) {
+            return $output;
+        }
+
+        $mode           = isset( $input['mode'] ) && is_string( $input['mode'] ) ? sanitize_key( $input['mode'] ) : 'off';
+        $output['mode'] = in_array( $mode, self::BLOCKER_MODES, true ) ? $mode : 'off';
+        if ( ! TrackWP_Blocker::html_api_available() ) {
+            $output['mode'] = 'off';
+        }
+
+        // Custom vendors — same fields as gtm_vendors.custom (normalize_custom_vendor, T1).
+        $custom_raw = isset( $input['custom_vendors'] ) ? $input['custom_vendors'] : array();
+        if ( is_string( $custom_raw ) ) {
+            $decoded    = json_decode( $custom_raw, true );
+            $custom_raw = is_array( $decoded ) ? $decoded : array();
+        }
+        // The vendor id is TrackWP_Consent_Profile::normalize_custom_vendor(..., 'blk_')['key'],
+        // the same key the profile declares under (review B1). The form sends
+        // the stored key along; when a rename changes the key, rules pointing
+        // at the old key are moved to the new one ($renamed, review MINOR 2).
+        $custom_keys = array();
+        $renamed     = array();
+        foreach ( (array) $custom_raw as $row ) {
+            if ( ! is_array( $row ) ) {
+                continue;
+            }
+            $clean = array();
+            foreach ( array( 'name', 'provider', 'category', 'cookies', 'purpose', 'lifetime', 'transfer' ) as $field ) {
+                $clean[ $field ] = isset( $row[ $field ] ) && is_scalar( $row[ $field ] ) ? sanitize_text_field( (string) $row[ $field ] ) : '';
+            }
+            $clean['category'] = sanitize_key( $clean['category'] );
+            if ( '' === $clean['category'] ) {
+                $clean['category'] = 'marketing';
+            }
+            $vendor = TrackWP_Consent_Profile::normalize_custom_vendor( $clean, 'blk_' );
+            if ( null === $vendor ) {
+                continue;
+            }
+            if ( isset( $custom_keys[ $vendor['key'] ] ) ) {
+                // Two names that normalise to the same key cannot both be declared (review MINOR 3).
+                add_settings_error(
+                    'trackwp_blocker',
+                    'blocker_vendor_duplicate',
+                    sprintf(
+                        /* translators: %s: custom vendor name */
+                        __( 'Egen vendor "%s" blev ikke gemt, fordi navnet svarer til en anden egen vendor. Giv den et mere forskelligt navn.', 'trackwp' ),
+                        $clean['name']
+                    ),
+                    'warning'
+                );
+                continue;
+            }
+            $custom_keys[ $vendor['key'] ] = true;
+            $old_key = isset( $row['key'] ) && is_string( $row['key'] ) ? sanitize_key( $row['key'] ) : '';
+            if ( '' !== $old_key && $old_key !== $vendor['key'] ) {
+                $renamed[ $old_key ] = $vendor['key'];
+            }
+            $output['custom_vendors'][] = array_merge( array( 'key' => $vendor['key'] ), $clean );
+        }
+
+        $catalog = ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'vendor_catalog' ) )
+            ? TrackWP_Consent_Profile::vendor_catalog()
+            : array();
+
+        // Rules.
+        $rules_raw    = isset( $input['rules'] ) && is_array( $input['rules'] ) ? $input['rules'] : array();
+        $never_hits   = 0;
+        foreach ( $rules_raw as $rule_id => $rule ) {
+            $rule_id = self::sanitize_blocker_rule_id( $rule_id );
+            if ( '' === $rule_id || ! is_array( $rule ) ) {
+                continue;
+            }
+            // KC2/D6: a cookie: rule may never target a cookie the gate must
+            // always keep (session, login, consent itself).
+            if ( 0 === strpos( $rule_id, 'cookie:' ) && self::blocker_rule_hits_never_cookie( substr( $rule_id, 7 ) ) ) {
+                $never_hits++;
+                continue;
+            }
+            $output['rules'][ $rule_id ] = self::sanitize_blocker_rule( $rule, $catalog, $custom_keys, $renamed );
+        }
+        if ( $never_hits > 0 ) {
+            add_settings_error(
+                'trackwp_blocker',
+                'blocker_cookie_never',
+                __( 'En eller flere server-cookie-regler blev ikke gemt, fordi de rammer en cookie, der aldrig må fjernes (fx login, WooCommerce-session eller selve samtykket).', 'trackwp' ),
+                'warning'
+            );
+        }
+
+        // TR7: click-id parameters that make a page uncacheable.
+        $nocache_raw = isset( $input['nocache_params'] ) ? $input['nocache_params'] : self::default_nocache_params();
+        if ( is_string( $nocache_raw ) ) {
+            $nocache_raw = preg_split( '/[\s,]+/', $nocache_raw, -1, PREG_SPLIT_NO_EMPTY );
+        }
+        $output['nocache_params'] = array();
+        foreach ( (array) $nocache_raw as $param ) {
+            if ( ! is_scalar( $param ) ) {
+                continue;
+            }
+            $param = trim( (string) $param );
+            if ( '' === $param || ! preg_match( '/^[A-Za-z0-9_\-]{1,40}$/', $param ) ) {
+                continue;
+            }
+            if ( ! in_array( $param, $output['nocache_params'], true ) && count( $output['nocache_params'] ) < self::BLOCKER_MAX_NOCACHE_PARAMS ) {
+                $output['nocache_params'][] = $param;
+            }
+        }
+
+        // Admin-entered inline marker for an unknown inline script (§3.5).
+        if ( isset( $input['new_inline'] ) && is_array( $input['new_inline'] ) ) {
+            $marker = isset( $input['new_inline']['marker'] ) && is_scalar( $input['new_inline']['marker'] ) ? trim( (string) $input['new_inline']['marker'] ) : '';
+            if ( '' !== $marker ) {
+                if ( preg_match( self::BLOCKER_MARKER_PATTERN, $marker ) ) {
+                    $new_rule            = $input['new_inline'];
+                    $new_rule['block']   = true;
+                    $output['rules'][ 'inline:' . $marker ] = self::sanitize_blocker_rule( $new_rule, $catalog, $custom_keys, $renamed );
+                } else {
+                    add_settings_error(
+                        'trackwp_blocker',
+                        'blocker_marker',
+                        __( 'Inline-markøren skal være 8-64 tegn og må kun indeholde bogstaver (a-z), tal, punktum, bindestreg og understreg.', 'trackwp' ),
+                        'error'
+                    );
+                }
+            }
+        }
+
+        // KC5.3: manual server-cookie rule ("Tilføj server-cookie").
+        if ( isset( $input['new_cookie'] ) && is_array( $input['new_cookie'] ) ) {
+            $cookie_name = isset( $input['new_cookie']['name'] ) && is_scalar( $input['new_cookie']['name'] ) ? trim( (string) $input['new_cookie']['name'] ) : '';
+            if ( '' !== $cookie_name ) {
+                $cookie_rule_id = self::sanitize_blocker_rule_id( 'cookie:' . $cookie_name );
+                if ( '' === $cookie_rule_id ) {
+                    add_settings_error(
+                        'trackwp_blocker',
+                        'blocker_cookie_name',
+                        __( 'Cookienavnet til "Tilføj server-cookie" er ugyldigt. Brug 2-128 tegn (bogstaver, tal, punktum, bindestreg, understreg), evt. med * til sidst for et præfiks.', 'trackwp' ),
+                        'error'
+                    );
+                } elseif ( self::blocker_rule_hits_never_cookie( substr( $cookie_rule_id, 7 ) ) ) {
+                    add_settings_error(
+                        'trackwp_blocker',
+                        'blocker_cookie_never',
+                        __( 'Cookienavnet til "Tilføj server-cookie" rammer en cookie, der aldrig må fjernes (fx login, WooCommerce-session eller selve samtykket), og blev ikke gemt.', 'trackwp' ),
+                        'warning'
+                    );
+                } else {
+                    $new_cookie_rule          = $input['new_cookie'];
+                    $new_cookie_rule['block'] = true;
+                    $output['rules'][ $cookie_rule_id ] = self::sanitize_blocker_rule( $new_cookie_rule, $catalog, $custom_keys, $renamed );
+                }
+            }
+        }
+
+        // Exceptions.
+        $exceptions = isset( $input['exceptions'] ) && is_array( $input['exceptions'] ) ? $input['exceptions'] : array();
+        $allow_raw  = isset( $exceptions['allow'] ) ? $exceptions['allow'] : array();
+        $rejected   = 0;
+        foreach ( (array) $allow_raw as $entry ) {
+            if ( is_array( $entry ) ) {
+                $type  = isset( $entry['type'] ) && is_scalar( $entry['type'] ) ? sanitize_key( (string) $entry['type'] ) : '';
+                $value = isset( $entry['value'] ) && is_scalar( $entry['value'] ) ? trim( (string) $entry['value'] ) : '';
+                if ( '' === $value ) {
+                    continue; // An empty row in the form means "no entry".
+                }
+                $rule_id = self::compose_blocker_rule_id( $type, $value );
+            } else {
+                $rule_id = self::sanitize_blocker_rule_id( $entry );
+            }
+            if ( '' === $rule_id ) {
+                $rejected++;
+                continue;
+            }
+            if ( ! in_array( $rule_id, $output['exceptions']['allow'], true )
+                && count( $output['exceptions']['allow'] ) < self::BLOCKER_MAX_EXCEPTIONS ) {
+                $output['exceptions']['allow'][] = $rule_id;
+            }
+        }
+        if ( $rejected > 0 ) {
+            add_settings_error(
+                'trackwp_blocker',
+                'blocker_allow',
+                __( 'En eller flere undtagelser under "Tillad altid" var ugyldige og blev ikke gemt.', 'trackwp' ),
+                'warning'
+            );
+        }
+
+        $output['exceptions']['paths'] = self::sanitize_blocker_paths(
+            isset( $exceptions['paths'] ) ? $exceptions['paths'] : array(),
+            self::BLOCKER_MAX_EXCEPTIONS
+        );
+        $output['extra_paths'] = self::sanitize_blocker_paths(
+            isset( $input['extra_paths'] ) ? $input['extra_paths'] : array(),
+            self::BLOCKER_MAX_EXTRA_PATHS
+        );
+
+        return $output;
+    }
+
+    /**
+     * One rule: {block, category, vendor}.
+     *
+     * @param array $rule       Raw rule.
+     * @param array $catalog    TrackWP_Consent_Profile::vendor_catalog().
+     * @param array $custom_keys Valid custom vendor keys (key => true).
+     * @param array $renamed     Old custom vendor key => new key (rename).
+     * @return array
+     */
+    private static function sanitize_blocker_rule( $rule, $catalog, $custom_keys, $renamed ) {
+        $vendor = isset( $rule['vendor'] ) && is_scalar( $rule['vendor'] ) ? sanitize_key( (string) $rule['vendor'] ) : '';
+        if ( isset( $renamed[ $vendor ] ) && ! isset( $custom_keys[ $vendor ] ) ) {
+            $vendor = $renamed[ $vendor ];
+        }
+        if ( ! isset( $catalog[ $vendor ] ) && ! isset( $custom_keys[ $vendor ] ) ) {
+            $vendor = '';
+        }
+        $category = isset( $rule['category'] ) && is_scalar( $rule['category'] ) ? sanitize_key( (string) $rule['category'] ) : '';
+        if ( '' !== $category && ! in_array( $category, self::BLOCKER_CATEGORIES, true ) ) {
+            $category = '';
+        }
+        if ( '' === $category ) {
+            // KC13/F2: fall back to the catalog vendor's category when known,
+            // otherwise "" ("Uafklaret") — never a guessed "marketing".
+            $category = ( '' !== $vendor && isset( $catalog[ $vendor ]['category'] ) && in_array( $catalog[ $vendor ]['category'], self::BLOCKER_CATEGORIES, true ) )
+                ? $catalog[ $vendor ]['category']
+                : '';
+        }
+        return array(
+            // Necessary is always granted, so blocking it would be a no-op at
+            // best and a broken page at worst. An unresolved ("") category
+            // cannot be blocked either — the admin must pick one first.
+            'block'    => ! empty( $rule['block'] ) && '' !== $category && 'necessary' !== $category,
+            'category' => $category,
+            'vendor'   => $vendor,
+        );
+    }
+
+    /**
+     * KC2/D6: does a cookie: rule pattern overlap with a never-touch cookie
+     * name from TrackWP_Cookie_Gate::NEVER (plus the trackwp_cookie_gate_never
+     * filter, W1)? Matching is prefix-based, matching the wildcard semantics
+     * both lists use ("name*"): two patterns overlap when the literal prefix
+     * of one is a prefix of the other.
+     *
+     * @param string $pattern The value after "cookie:" (may end in "*").
+     * @return bool
+     */
+    private static function blocker_rule_hits_never_cookie( $pattern ) {
+        if ( ! class_exists( 'TrackWP_Cookie_Gate' ) || ! defined( 'TrackWP_Cookie_Gate::NEVER' ) ) {
+            return false;
+        }
+        $never = constant( 'TrackWP_Cookie_Gate::NEVER' );
+        if ( ! is_array( $never ) ) {
+            return false;
+        }
+        /** This filter is documented in class-trackwp-cookie-gate.php (KC3). */
+        $never = apply_filters( 'trackwp_cookie_gate_never', $never );
+        foreach ( (array) $never as $never_pattern ) {
+            if ( is_scalar( $never_pattern ) && self::cookie_patterns_overlap( $pattern, (string) $never_pattern ) ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * @param string $a
+     * @param string $b
+     * @return bool
+     */
+    private static function cookie_patterns_overlap( $a, $b ) {
+        $a_prefix = rtrim( (string) $a, '*' );
+        $b_prefix = rtrim( (string) $b, '*' );
+        if ( '' === $a_prefix || '' === $b_prefix ) {
+            return true;
+        }
+        return 0 === strpos( $a_prefix, $b_prefix ) || 0 === strpos( $b_prefix, $a_prefix );
+    }
+
+    /**
+     * Validate a full KB2 rule id. Returns '' when invalid.
+     *
+     * @param mixed $rule_id
+     * @return string
+     */
+    public static function sanitize_blocker_rule_id( $rule_id ) {
+        if ( ! is_string( $rule_id ) ) {
+            return '';
+        }
+        $rule_id = trim( $rule_id );
+        if ( ! TrackWP_Blocker_Rules::is_valid_rule_id( $rule_id ) ) {
+            return '';
+        }
+        if ( 0 === strpos( $rule_id, 'inline:' ) && ! preg_match( self::BLOCKER_MARKER_PATTERN, substr( $rule_id, 7 ) ) ) {
+            return '';
+        }
+        return $rule_id;
+    }
+
+    /**
+     * S16: build a prefixed rule id from the admin's type + value. The value
+     * may be pasted as a URL; scheme, query and fragment are dropped and the
+     * host is lower-cased (KB6), the path keeps its case.
+     *
+     * @param string $type  handle|url|host|inline|pixel
+     * @param string $value Raw value.
+     * @return string Rule id, or '' when invalid.
+     */
+    public static function compose_blocker_rule_id( $type, $value ) {
+        if ( ! in_array( $type, self::BLOCKER_RULE_TYPES, true ) ) {
+            return '';
+        }
+        $value = trim( (string) $value );
+        // Already prefixed with the same type: accept as-is.
+        if ( 0 === strpos( $value, $type . ':' ) ) {
+            $value = substr( $value, strlen( $type ) + 1 );
+        }
+        if ( in_array( $type, array( 'url', 'host', 'pixel' ), true ) ) {
+            $value = preg_replace( '#^https?:#i', '', $value );
+            $value = ltrim( $value, '/' );
+            $value = preg_replace( '/[?#].*$/', '', $value );
+            $slash = strpos( $value, '/' );
+            $host  = false === $slash ? $value : substr( $value, 0, $slash );
+            $path  = false === $slash ? '' : substr( $value, $slash );
+            $host  = strtolower( preg_replace( '/:(80|443)$/', '', $host ) );
+            $value = 'host' === $type ? $host : $host . $path;
+        }
+        return self::sanitize_blocker_rule_id( $type . ':' . $value );
+    }
+
+    /**
+     * Path list (textarea string or array). Only site paths starting with a
+     * single "/", no scheme, no "..", query and fragment stripped.
+     *
+     * @param mixed $raw
+     * @param int   $max
+     * @return string[]
+     */
+    public static function sanitize_blocker_paths( $raw, $max ) {
+        if ( is_string( $raw ) ) {
+            $raw = preg_split( '/\r\n|\r|\n/', $raw );
+        }
+        $out = array();
+        foreach ( (array) $raw as $path ) {
+            if ( ! is_string( $path ) ) {
+                continue;
+            }
+            $path = trim( preg_replace( '/[?#].*$/', '', trim( $path ) ) );
+            if ( '' === $path ) {
+                continue;
+            }
+            if ( '/' !== $path[0] || 0 === strpos( $path, '//' )
+                || preg_match( '#[\s<>"\'\\\\]#', $path )
+                || preg_match( '#(^|/)\.\.(/|$)#', $path ) ) {
+                add_settings_error(
+                    'trackwp_blocker',
+                    'blocker_path',
+                    sprintf(
+                        /* translators: %s: the rejected value */
+                        __( '"%s" er ikke en gyldig sti. Angiv kun stier på dette site, der starter med /, fx /kontakt/.', 'trackwp' ),
+                        $path
+                    ),
+                    'warning'
+                );
+                continue;
+            }
+            if ( ! in_array( $path, $out, true ) ) {
+                $out[] = $path;
+            }
+            if ( count( $out ) >= $max ) {
+                break;
+            }
+        }
+        return $out;
+    }
+
+    /**
+     * "Bed om nyt samtykke" (§3.5): +1 on consent_version, new material_hash
+     * baseline, purge known page caches.
+     *
+     * @return int The new consent version.
+     */
+    public static function bump_consent_version() {
+        $consent = get_option( 'trackwp_consent', array() );
+        $consent = is_array( $consent ) ? $consent : array();
+        $next    = max( 1, isset( $consent['consent_version'] ) ? absint( $consent['consent_version'] ) : 1 ) + 1;
+
+        $consent['consent_version'] = $next;
+        self::$bump_consent_to      = $next;
+        try {
+            update_option( 'trackwp_consent', $consent );
+        } finally {
+            self::$bump_consent_to = null;
+        }
+
+        if ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'material_hash' ) ) {
+            update_option( 'trackwp_consent_material_hash', TrackWP_Consent_Profile::material_hash(), false );
+        }
+        if ( class_exists( 'TrackWP' ) && method_exists( 'TrackWP', 'instance' ) && method_exists( 'TrackWP', 'purge_known_page_caches' ) ) {
+            TrackWP::instance()->purge_known_page_caches();
+        }
+        return $next;
+    }
+
+    /**
+     * admin_post_trackwp_bump_consent. Requires manage_options and the
+     * trackwp_bump_consent nonce.
+     */
+    public static function handle_bump_consent() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_die( esc_html__( 'Adgang nægtet.', 'trackwp' ), '', array( 'response' => 403 ) );
+        }
+        check_admin_referer( 'trackwp_bump_consent' );
+        $version = self::bump_consent_version();
+        wp_safe_redirect( admin_url( 'admin.php?page=trackwp&trackwp_bumped=' . $version . '#blocker' ) );
+        exit;
     }
 
     // =========================================================================
@@ -1253,6 +1869,230 @@ class TrackWP_Settings {
         self::notice_missing_ads_label( $platforms );
         self::notice_ga4_double_counting( $platforms );
         self::notice_missing_tables( $consent );
+
+        // 1.11.0: blocking and Meta takeover.
+        self::notice_consent_bumped();
+        self::notice_blocker( $consent );
+        self::notice_meta_takeover( $platforms );
+    }
+
+    /**
+     * Confirmation after "Bed om nyt samtykke", with the CDN reminder that
+     * purge_known_page_caches() cannot cover.
+     */
+    private static function notice_consent_bumped() {
+        if ( empty( $_GET['trackwp_bumped'] ) ) {
+            return;
+        }
+        self::render_notice(
+            'success',
+            esc_html(
+                sprintf(
+                    /* translators: %d: new consent version */
+                    __( 'Samtykkeversionen er nu %d. Alle besøgende bliver bedt om samtykke igen. Kendte cache-plugins er tømt. Tøm også cachen i dit CDN eller hos dit webhotel.', 'trackwp' ),
+                    absint( $_GET['trackwp_bumped'] )
+                )
+            )
+        );
+    }
+
+    /**
+     * Blocking notices (§3.5, KB14). Only when the mode is not off.
+     *
+     * @param array $consent trackwp_consent.
+     */
+    private static function notice_blocker( $consent ) {
+        $blocker = self::get_blocker_config();
+        if ( 'off' === $blocker['mode'] ) {
+            return;
+        }
+
+        // KB14 operating status.
+        $status = get_option( 'trackwp_blocker_status', array() );
+        if ( is_array( $status ) && ! empty( $status['last_error']['code'] ) ) {
+            $blk_error_code  = sanitize_key( (string) $status['last_error']['code'] );
+            $ts              = isset( $status['last_error']['ts'] ) ? (int) $status['last_error']['ts'] : 0;
+            $blk_error_date  = $ts ? wp_date( 'Y-m-d H:i', $ts ) : '-';
+            $blk_gate_texts  = self::cookie_gate_status_texts();
+
+            if ( isset( $blk_gate_texts[ $blk_error_code ] ) ) {
+                // KC3: these codes come from TrackWP_Cookie_Gate — they are NOT
+                // an HTML-rewriting failure, so they get their own honest text
+                // instead of the blocker's "omskrivningen af siden fejlede".
+                self::render_notice(
+                    'warning',
+                    esc_html(
+                        sprintf(
+                            /* translators: 1: message, 2: date/time */
+                            __( '%1$s (%2$s)', 'trackwp' ),
+                            $blk_gate_texts[ $blk_error_code ],
+                            $blk_error_date
+                        )
+                    )
+                );
+            } else {
+                self::render_notice(
+                    'error',
+                    esc_html(
+                        sprintf(
+                            /* translators: 1: error code, 2: date/time */
+                            __( 'Blokering: omskrivningen af siden fejlede (%1$s, %2$s). Siden blev vist uden blokering. Se fanen Blokering.', 'trackwp' ),
+                            $blk_error_code,
+                            $blk_error_date
+                        )
+                    )
+                );
+            }
+        }
+
+        // KC12/F1: named lists instead of a generic "some trackers" message.
+        if ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'blocker_warning_vendors' ) ) {
+            $warning_vendors = (array) TrackWP_Consent_Profile::blocker_warning_vendors();
+            $not_selected    = isset( $warning_vendors['not_selected'] ) ? array_values( array_map( 'strval', (array) $warning_vendors['not_selected'] ) ) : array();
+            $server_side     = isset( $warning_vendors['server_side'] ) ? array_values( array_map( 'strval', (array) $warning_vendors['server_side'] ) ) : array();
+
+            if ( ! empty( $not_selected ) ) {
+                self::render_notice(
+                    'warning',
+                    esc_html(
+                        sprintf(
+                            /* translators: %s: comma separated vendor names */
+                            __( 'Blokering: disse fundne trackere blokeres ikke: %s. Vælg »Bloker indtil samtykke« på fanen Blokering.', 'trackwp' ),
+                            implode( ', ', $not_selected )
+                        )
+                    )
+                );
+            }
+            if ( ! empty( $server_side ) ) {
+                self::render_notice(
+                    'warning',
+                    esc_html(
+                        sprintf(
+                            /* translators: %s: comma separated vendor names */
+                            __( 'Kan ikke blokeres i browseren (server-til-server): %s.', 'trackwp' ),
+                            implode( ', ', $server_side )
+                        )
+                    )
+                );
+            }
+        } elseif ( class_exists( 'TrackWP_Consent_Profile' ) && method_exists( 'TrackWP_Consent_Profile', 'warnings' )
+            && in_array( 'unblocked_vendors', (array) TrackWP_Consent_Profile::warnings(), true ) ) {
+            self::render_notice( 'warning', esc_html__( 'Blokering: nogle fundne trackere har en vendor, men blokeres ikke. De står stadig i deklarationen. Se fanen Blokering.', 'trackwp' ) );
+        }
+
+        if ( isset( $consent['description_mode'] ) && 'custom' === $consent['description_mode'] ) {
+            self::render_notice( 'warning', esc_html__( 'Blokering er slået til, men bannerteksten er i custom-tilstand. Tjek at teksten nævner de trackere, der nu blokeres indtil samtykke.', 'trackwp' ) );
+        }
+    }
+
+    /**
+     * §3.7 / S17: red notice when M1 is on but TrackWP cannot deliver Meta,
+     * and when Graph rejected the configured token. The wording follows
+     * TrackWP_Meta_Takeover::status(): fb4woo is only described as running
+     * or switched off when it is actually loaded, and "forbliver slået fra"
+     * is only said while the takeover is in effect (delivering). The
+     * persistent "TrackWP leverer Meta" status lives on the Platforms tab.
+     *
+     * @param array $platforms trackwp_platforms.
+     */
+    private static function notice_meta_takeover( $platforms ) {
+        if ( empty( $platforms['meta_pixel_with_gtm'] ) || ! class_exists( 'TrackWP_Meta_Takeover' ) ) {
+            return;
+        }
+        foreach ( self::meta_takeover_notices( (array) TrackWP_Meta_Takeover::status() ) as $message ) {
+            self::render_notice( 'error', esc_html( $message ) );
+        }
+    }
+
+    /**
+     * Plain-text (unescaped) notice messages for a TrackWP_Meta_Takeover::status() array.
+     *
+     * @param array $status status().
+     * @return string[]
+     */
+    public static function meta_takeover_notices( $status ) {
+        $messages = array();
+        $missing  = isset( $status['missing'] ) ? array_values( array_diff( (array) $status['missing'], array( 'm1' ) ) ) : array();
+        $fb4woo   = ! empty( $status['fb4woo_active'] );
+        $labels   = self::meta_missing_labels();
+
+        if ( ! empty( $missing ) ) {
+            $names = array();
+            foreach ( $missing as $code ) {
+                $names[] = isset( $labels[ $code ] ) ? $labels[ $code ] : (string) $code;
+            }
+            $message = sprintf(
+                /* translators: %s: comma separated list of missing settings */
+                __( 'Meta: "TrackWP overtager Meta-sporing" er slået til, men TrackWP overtager ikke, fordi dette mangler: %s.', 'trackwp' ),
+                implode( ', ', $names )
+            );
+            // Not true when the kill switch (fb4woo_tracking_off) is on: fb4woo
+            // is not tracking either in that case (review Reviewer-deep).
+            if ( $fb4woo && empty( $status['forced_off'] ) ) {
+                $message .= ' ' . __( 'Meta for WooCommerce sporer derfor fortsat selv.', 'trackwp' );
+            }
+            $messages[] = $message;
+        }
+
+        $error = self::meta_error_text( isset( $status['last_error'] ) ? $status['last_error'] : null );
+        if ( '' !== $error ) {
+            $message = sprintf(
+                /* translators: %s: error from Meta */
+                __( "Meta afviste TrackWP's access token: %s. Indsæt et gyldigt token under Platforme.", 'trackwp' ),
+                $error
+            );
+            if ( $fb4woo && ! empty( $status['delivering'] ) ) {
+                $message .= ' ' . __( 'Sporingen i Meta for WooCommerce forbliver slået fra.', 'trackwp' );
+            }
+            $messages[] = $message;
+        }
+        return $messages;
+    }
+
+    /**
+     * Labels for TrackWP_Meta_Takeover::status()['missing'] codes (KB15,
+     * review M2). 'm1' never shows: the notice only runs with M1 on.
+     *
+     * @return array<string,string>
+     */
+    public static function meta_missing_labels() {
+        return array(
+            'meta_enabled' => __( 'Meta er ikke slået til', 'trackwp' ),
+            'pixel_id'     => __( 'gyldigt Pixel ID', 'trackwp' ),
+            'token'        => __( 'Access Token', 'trackwp' ),
+            'client_pixel' => __( 'Klient-side Pixel', 'trackwp' ),
+            'woo_events'   => __( 'WooCommerce-sporing (fanen WooCommerce)', 'trackwp' ),
+            'dedup_server_only' => __( 'Dedup-tilstand "kun server" uden et Conversions API-token (Pixel ville kun sende PageView)', 'trackwp' ),
+        );
+    }
+
+    /**
+     * Plain-text summary of status()['last_error'], as written by
+     * TrackWP_Meta::record_token_error() (keys http_code, code, message,
+     * time). Not escaped.
+     *
+     * @param mixed $error
+     * @return string
+     */
+    public static function meta_error_text( $error ) {
+        if ( empty( $error ) || ! is_array( $error ) ) {
+            return '';
+        }
+        $parts = array();
+        if ( ! empty( $error['http_code'] ) ) {
+            $parts[] = 'HTTP ' . (int) $error['http_code'];
+        }
+        if ( ! empty( $error['code'] ) ) {
+            /* translators: %d: Graph API error code */
+            $parts[] = sprintf( __( 'Graph-kode %d', 'trackwp' ), (int) $error['code'] );
+        }
+        if ( isset( $error['message'] ) && is_scalar( $error['message'] ) && '' !== (string) $error['message'] ) {
+            $parts[] = sanitize_text_field( (string) $error['message'] );
+        }
+        if ( ! empty( $error['time'] ) ) {
+            $parts[] = wp_date( 'Y-m-d H:i', (int) $error['time'] );
+        }
+        return $parts ? implode( ', ', $parts ) : __( 'ukendt fejl', 'trackwp' );
     }
 
     /**

@@ -496,6 +496,17 @@
             banner_hash: bannerHash()
         }, expire);
 
+        // 5. KB11: with the blocker guard on the page, a category going from
+        // true to false reloads at once, so released third-party scripts are
+        // gone. Cookie and revoked event are already done above; tracking and
+        // the server answer are not awaited (pagehide flushes the log).
+        if (window.trackwpBlocker && (revoked.statistics || revoked.marketing || revoked.personalisation)) {
+            renderStatus();
+            hideBanner();
+            try { window.location.reload(); } catch (e) {}
+            return obj;
+        }
+
         renderStatus();
         hideBanner();
         return obj;

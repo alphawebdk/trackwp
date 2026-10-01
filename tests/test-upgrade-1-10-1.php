@@ -50,7 +50,7 @@ class TrackWP_Upgrade_1_10_1_Test extends WP_UnitTestCase {
 
         TrackWP::instance()->maybe_upgrade();
 
-        $this->assertSame('1.10.1', get_option('trackwp_version'));
+        $this->assertSame(TRACKWP_VERSION, get_option('trackwp_version'));
 
         $platforms = get_option('trackwp_platforms');
         $this->assertSame('v25.0', $platforms['meta_api_version']);
@@ -108,7 +108,7 @@ class TrackWP_Upgrade_1_10_1_Test extends WP_UnitTestCase {
 
         $this->assertFalse(get_option(TrackWP::OPTION_UPGRADE_NOTICE));
         $this->assertSame($fired_before, did_action('trackwp_upgraded_1_10_1'));
-        $this->assertSame('1.10.1', get_option('trackwp_version'));
+        $this->assertSame(TRACKWP_VERSION, get_option('trackwp_version'));
     }
 
     public function test_second_run_is_a_no_op() {

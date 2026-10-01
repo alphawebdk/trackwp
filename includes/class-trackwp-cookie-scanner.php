@@ -38,7 +38,7 @@ class TrackWP_Cookie_Scanner {
         $dpf        = __('USA (EU-US Data Privacy Framework)', 'trackwp');
         $session    = __('Session', 'trackwp');
         $p          = 'TrackWP_Consent_Profile';
-        return array(
+        $known      = array(
             array('match' => 'PHPSESSID', 'category' => 'necessary', 'name' => 'PHPSESSID', 'provider' => __('Webserver (PHP)', 'trackwp'), 'purpose' => __('Bevarer session-tilstand mellem sidevisninger', 'trackwp'), 'lifetime' => $session),
             array('match' => 'trackwp_consent', 'category' => 'necessary', 'name' => __('Cookie-samtykke', 'trackwp'), 'provider' => $site, 'purpose' => __('Husker dit cookievalg, tidspunktet og dit samtykke-ID', 'trackwp'), 'lifetime' => $p::configured_lifetime_text('trackwp_consent')),
             array('match' => 'breakdance_*', 'category' => 'necessary', 'name' => 'Breakdance', 'provider' => __('Breakdance (sidebygger)', 'trackwp'), 'purpose' => __('Intern funktion i sidebyggeren', 'trackwp'), 'lifetime' => $session),
@@ -59,10 +59,43 @@ class TrackWP_Cookie_Scanner {
             array('match' => '_fbp', 'category' => 'marketing', 'name' => 'Meta Pixel', 'provider' => 'Meta Platforms Ireland Limited', 'purpose' => __('Konverteringsmåling samt tilpasning og målretning af annoncer', 'trackwp'), 'lifetime' => $p::provider_lifetime_text('_fbp'), 'transfer' => $dpf),
             array('match' => '_fbc', 'category' => 'marketing', 'name' => __('Meta-annonceklik', 'trackwp'), 'provider' => $site, 'purpose' => __('Gemmer klik-id fra Meta-annoncer (fbclid), så et køb kan knyttes til annoncen', 'trackwp'), 'lifetime' => $p::configured_lifetime_text('_fbc')),
         );
+
+        // 1.11.0 (§3.6): cookie tokens of the catalog vendors the blocker scan found
+        // (e.g. __kla_id, sbjs_*, tk_*), with the declared category. Placed after the
+        // existing entries so those keep winning (first match wins).
+        $unresolved = $p::unresolved();
+        foreach ($p::active_vendors() as $v) {
+            if (empty($v['via_blocker']) || empty($v['cookies']) || $v['cookies'] === $unresolved) {
+                continue;
+            }
+            foreach (array_map('trim', explode(',', $v['cookies'])) as $token) {
+                if ($token === '' || $token === $unresolved) {
+                    continue;
+                }
+                $known[] = array(
+                    'match'    => $token,
+                    'category' => $v['category'],
+                    'name'     => $v['name'],
+                    'provider' => $v['provider'],
+                    'purpose'  => $v['purpose'],
+                    'lifetime' => isset($v['lifetime']) ? $v['lifetime'] : '',
+                    'transfer' => isset($v['transfer']) ? $v['transfer'] : '',
+                    // 1.11.1 M3: the real catalog vendor key, so a caller can
+                    // tell a cataloged vendor apart from a display-only match
+                    // (e.g. TrackWP_Blocker_Scanner::server_cookie_items()).
+                    'key'      => (isset($v['key']) && is_string($v['key'])) ? $v['key'] : '',
+                );
+            }
+        }
+        return $known;
     }
 
-    /** Match a cookie name against a 'prefix*' or exact pattern. */
-    protected static function name_matches($cookie_name, $pattern) {
+    /**
+     * Match a cookie name against a 'prefix*' or exact pattern. Public
+     * (1.11.1 KC3) so TrackWP_Cookie_Gate::name_matches() can delegate here
+     * without a second implementation of the same rule.
+     */
+    public static function name_matches($cookie_name, $pattern) {
         if (substr($pattern, -1) === '*') {
             return strpos($cookie_name, substr($pattern, 0, -1)) === 0;
         }

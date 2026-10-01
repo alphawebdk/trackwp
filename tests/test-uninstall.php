@@ -16,6 +16,19 @@ class TrackWP_Uninstall_Test extends WP_UnitTestCase {
     private function seed_site() {
         update_option('trackwp_consent', array('consent_version' => 2));
         update_option('trackwp_some_future_option', 1);
+        // 1.11.0 options and transients.
+        update_option('trackwp_blocker', array('mode' => 'off'));
+        update_option('trackwp_blocker_scan', array('items' => array()), false);
+        update_option('trackwp_blocker_compiled', array('v' => 1));
+        update_option('trackwp_blocker_status', array('last_ok' => 1), false);
+        update_option('trackwp_meta_last_error', array('code' => 190), false);
+        // 1.11.1: the versioned upgrade notice, its predecessor, and the D1
+        // Meta-takeover one-time notice (KC15).
+        update_option('trackwp_upgrade_notice', '1.11.1', false);
+        update_option('trackwp_upgrade_notice_1_10_1', 1, false);
+        update_option('trackwp_upgrade_notice_meta_takeover', 1, false);
+        set_transient('trackwp_blk_scan_lock', 1, 120);
+        set_transient('trackwp_blk_obs_' . hash('sha256', 'x'), array('user_id' => 1), 600);
         set_transient('trackwp_rl_consent_x_1', 3, 60);
         set_transient('trackwp_cts_abc', '1', 60);
         wp_schedule_event(time() + 60, 'daily', 'trackwp_prune_consent_log');
@@ -32,6 +45,14 @@ class TrackWP_Uninstall_Test extends WP_UnitTestCase {
         $this->assertFalse(get_option('trackwp_some_future_option'));
         $this->assertFalse(get_transient('trackwp_rl_consent_x_1'));
         $this->assertFalse(get_transient('trackwp_cts_abc'));
+        foreach (array('trackwp_blocker', 'trackwp_blocker_scan', 'trackwp_blocker_compiled', 'trackwp_blocker_status', 'trackwp_meta_last_error') as $option) {
+            $this->assertFalse(get_option($option), $option);
+        }
+        foreach (array('trackwp_upgrade_notice', 'trackwp_upgrade_notice_1_10_1', 'trackwp_upgrade_notice_meta_takeover') as $option) {
+            $this->assertFalse(get_option($option), $option);
+        }
+        $this->assertFalse(get_transient('trackwp_blk_scan_lock'));
+        $this->assertFalse(get_transient('trackwp_blk_obs_' . hash('sha256', 'x')));
         $this->assertFalse(wp_next_scheduled('trackwp_prune_consent_log'));
         $this->assertFalse(wp_next_scheduled('trackwp_migrate_consent_log'));
         $this->assertSame(array(), get_post_meta($post, '_trackwp_attribution'));
