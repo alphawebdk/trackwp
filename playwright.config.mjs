@@ -13,6 +13,8 @@ export default defineConfig({
     timeout: 30000,
     expect: { timeout: 5000 },
     fullyParallel: false,
+    // Specs share WP options and the global mockplatforms log, so files must not run concurrently.
+    workers: 1,
     forbidOnly: !!process.env.CI,
     retries: 0,
     reporter: [['list']],

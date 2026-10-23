@@ -14,6 +14,7 @@
  * build_config()/build_purchase_data() capture consumed by
  * tests/js/woo-datalayer-consent.test.mjs (the same "generate once, commit,
  * JS reads the static file" pattern as tests/fixtures/consent-cookie.json).
+ * Set TRACKWP_REGEN_FIXTURES=1 to rewrite it.
  *
  * @group orders
  */
@@ -383,10 +384,12 @@ class TrackWP_WooCommerce_1111_Events_Test extends WP_UnitTestCase {
         $this->assertNotNull( $out['view_item'], 'fixture generation itself must produce a view_item entry' );
 
         $dir = dirname( __FILE__ ) . '/fixtures/woo';
-        if ( ! is_dir( $dir ) ) {
-            mkdir( $dir, 0777, true );
+        if ( false !== getenv( 'TRACKWP_REGEN_FIXTURES' ) ) {
+            if ( ! is_dir( $dir ) ) {
+                mkdir( $dir, 0777, true );
+            }
+            file_put_contents( $dir . '/datalayer-config.json', wp_json_encode( $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) . "\n" );
         }
-        file_put_contents( $dir . '/datalayer-config.json', wp_json_encode( $out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE ) . "\n" );
 
         $this->assertFileExists( $dir . '/datalayer-config.json' );
     }

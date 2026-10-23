@@ -37,6 +37,45 @@ class TrackWP_Privacy {
     const EMAIL_PATTERN = '/[^@\s]+@[^@\s]+\.[^@\s]+/';
 
     /**
+     * Danish CPR number as a query value: ddmmyy[-]xxxx with day 01-31 and
+     * month 01-12. A plain 8-digit number is not matched (product/order IDs).
+     */
+    const CPR_PATTERN = '/^(0[1-9]|[12][0-9]|3[01])(0[1-9]|1[0-2])[0-9]{2}-?[0-9]{4}$/D';
+
+    /**
+     * International phone number as a query value. Only with a leading "+",
+     * so bare digit strings (IDs, timestamps) are never matched.
+     */
+    const PHONE_PATTERN = '/^\+[0-9][0-9 \-]{7,16}$/D';
+
+    /**
+     * Does a raw (still percent-encoded) query value look like a CPR number
+     * or a "+" phone number?
+     *
+     * Deliberate choice for "+": a LEADING "+" (literal or %2B) is read as a
+     * plus sign, because a value that starts with a space is not a phone
+     * number anyone typed; every other "+" is form-encoding for a space.
+     * cleaner_js() implements the same rule.
+     *
+     * @param string $value Raw query value.
+     * @return bool
+     */
+    public static function value_is_pii( $value ) {
+        if ( ! is_string( $value ) || '' === $value ) {
+            return false;
+        }
+        if ( preg_match( self::CPR_PATTERN, urldecode( $value ) ) ) {
+            return true;
+        }
+        $raw = rawurldecode( $value );
+        if ( '+' === substr( $raw, 0, 1 ) ) {
+            $raw = '+' . str_replace( '+', ' ', substr( $raw, 1 ) );
+            return (bool) preg_match( self::PHONE_PATTERN, $raw );
+        }
+        return false;
+    }
+
+    /**
      * Query parameters that are always removed (case-insensitive).
      *
      * @return string[] Lower-case parameter names.
@@ -44,7 +83,13 @@ class TrackWP_Privacy {
     public static function url_param_denylist() {
         $list = apply_filters(
             'trackwp_url_param_denylist',
-            array( 'key', 'email', 'e-mail', 'mail', 'token', 'password', 'pwd', 'nonce' )
+            array(
+                'key', 'email', 'e-mail', 'mail', 'token', 'password', 'pwd', 'nonce',
+                'phone', 'tel', 'telefon', 'tlf', 'mobil', 'mobile',
+                'name', 'navn', 'fornavn', 'efternavn', 'first_name', 'last_name', 'firstname', 'lastname',
+                'address', 'adresse', 'street', 'zip', 'postnr', 'postcode', 'postal_code',
+                'cpr', 'order_key',
+            )
         );
         if ( ! is_array( $list ) ) {
             return array();
@@ -124,6 +169,9 @@ class TrackWP_Privacy {
                 if ( '' !== $value && preg_match( self::EMAIL_PATTERN, urldecode( $value ) ) ) {
                     continue;
                 }
+                if ( self::value_is_pii( $value ) ) {
+                    continue;
+                }
                 $kept[] = $pair;
             }
             $query = implode( '&', $kept );
@@ -172,6 +220,8 @@ class TrackWP_Privacy {
         $js    = <<<'JS'
 window.trackwpPrivacy=window.trackwpPrivacy||(function(){
 var DENY=__DENY__,CLICK=__CLICK__,EM=/[^@\s]+@[^@\s]+\.[^@\s]+/,EMG=/[^@\s]+@[^@\s]+\.[^@\s]+/g;
+var CPR=/^(0[1-9]|[12][0-9]|3[01])(0[1-9]|1[0-2])[0-9]{2}-?[0-9]{4}$/,PH=/^\+[0-9][0-9 \-]{7,16}$/;
+function pii(v){if(CPR.test(dec(v,true))){return true;}var r=dec(v,false);if(r.charAt(0)==='+'){return PH.test('+'+r.slice(1).replace(/\+/g,' '));}return false;}
 function dec(s,plus){if(plus){s=s.replace(/\+/g,' ');}try{return decodeURIComponent(s);}catch(e){return s;}}
 function cleanUrl(u,dropClick){
 if(typeof u!=='string'||u===''){return '';}
@@ -188,7 +238,7 @@ for(var k=0;k<pairs.length;k++){var p=pairs[k];if(p===''){continue;}
 var eq=p.indexOf('='),name=eq===-1?p:p.slice(0,eq),val=eq===-1?'':p.slice(eq+1);
 var dn=dec(name,true).toLowerCase(),bn=dn.replace(/\[.*$/,'');
 if(deny.indexOf(dn)>-1||deny.indexOf(bn)>-1){continue;}
-if(val!==''&&EM.test(dec(val,true))){continue;}
+if(val!==''&&(EM.test(dec(val,true))||pii(val))){continue;}
 kept.push(p);}
 if(kept.length){out+='?'+kept.join('&');}}
 return out;}

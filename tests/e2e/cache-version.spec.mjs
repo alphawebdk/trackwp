@@ -5,22 +5,26 @@
  * reaches a platform before a new choice.
  *
  * Needs the W0 test endpoint POST /wp-json/trackwp-test/v1/options
- * ({option_name: value}); the spec skips with a message when it is absent.
+ * ({option_name: value}); the spec fails when it is absent.
  */
+import dns from 'node:dns';
 import { test, expect } from '@playwright/test';
 import { clearMockLog, getMockLog } from './helpers/mockplatforms-client.mjs';
 import { cacheBase } from './helpers/cache.mjs';
+import { setOptions, resetTrackWP } from './helpers/test-endpoints.mjs';
+import { stubExternal } from './helpers/stub-external.mjs';
 
 const EVENTS = [{
     name: 'lead', enabled: true, value: 0, currency: 'DKK', meta_event: 'Lead',
     send_to: { ga4: true, meta: true, google_ads: false },
-    triggers: [{ type: 'time_on_page', time_seconds: 1, conditions: [] }],
+    firing_triggers: [{ type: 'time_on_page', time_seconds: 1, conditions: [] }],
 }];
 
-async function setOptions(request, baseURL, options) {
-    const res = await request.post(new URL('/wp-json/trackwp-test/v1/options', baseURL).toString(), { data: options });
-    return res.ok();
-}
+// A real CDN serves the site's own host. Map "wp" to the cache IP in the
+// browser only, so cached HTML (restUrl http://wp/...) is same-origin and the
+// Origin guard sees the home host. Node fetch (setOptions) still goes to wp.
+const { address: CACHE_IP } = await dns.promises.lookup(new URL(cacheBase()).hostname);
+test.use({ launchOptions: { args: [`--host-resolver-rules=MAP wp ${CACHE_IP}`] } });
 
 async function spyPixel(page) {
     await page.addInitScript(() => {
@@ -29,21 +33,25 @@ async function spyPixel(page) {
     });
 }
 
-test('cached v1 page after bump to v2 gives stale_version and no platform events', async ({ page, request, baseURL }) => {
-    const ok = await setOptions(request, baseURL, {
-        trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
+test('cached v1 page after bump to v2 gives stale_version and no platform events', async ({ page, baseURL }) => {
+    await resetTrackWP();
+    const first = await setOptions({
+        trackwp_platforms: { ga4_enabled: true, ga4_gtag_enabled: true, ga4_measurement_id: 'G-TEST123456' },
         trackwp_events: EVENTS,
+        trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
     });
-    test.skip(!ok, 'W0 test endpoint /wp-json/trackwp-test/v1/options is missing');
+    expect(first.updated.trackwp_consent.consent_version, 'precondition: no auto-bump on setup').toBe(1);
 
-    const cached = new URL('/?twp-cache-version=1', cacheBase()).toString();
+    await stubExternal(page.context());
+    const cached = new URL(`/?twp-cache-version=${Date.now()}`, baseURL).toString();
     await spyPixel(page);
     await page.goto(cached);
-    await page.goto(cached); // second request is served from the cache
+    const hit = await page.goto(cached); // second request is served from the cache
+    expect(hit.headers()['x-trackwp-cache'], 'page is served from the nginx cache').toBe('HIT');
     await page.locator('[data-action="accept-all"]').first().click();
     await expect.poll(async () => (await page.context().cookies()).some((c) => c.name === 'trackwp_consent')).toBe(true);
 
-    expect(await setOptions(request, baseURL, { trackwp_consent: { enabled: true, consent_version: 2, require_active_consent: true } })).toBe(true);
+    await setOptions({ trackwp_consent: { enabled: true, consent_version: 2, require_active_consent: true } });
     await clearMockLog();
 
     const stale = page.waitForResponse(async (r) => r.url().includes('/trackwp/v1/event') && (await r.json().catch(() => ({}))).consent === 'stale_version');

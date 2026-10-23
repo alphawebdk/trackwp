@@ -31,6 +31,20 @@ class TrackWP_Privacy_Test extends WP_UnitTestCase {
             'encoding of kept params kept' => array( 'https://example.org/?q=a%20b&r=%C3%A6', false, 'https://example.org/?q=a%20b&r=%C3%A6' ),
             'userinfo dropped'             => array( 'https://user:pass@example.org:8443/a?b=1', false, 'https://example.org:8443/a?b=1' ),
             'empty'                        => array( '', false, '' ),
+            'new key phone'                => array( 'https://example.org/?phone=1&tel=2&telefon=3&tlf=4&mobil=5&mobile=6&k=1', false, 'https://example.org/?k=1' ),
+            'new key name'                 => array( 'https://example.org/?name=a&navn=b&fornavn=c&efternavn=d&first_name=e&last_name=f&firstname=g&lastname=h&k=1', false, 'https://example.org/?k=1' ),
+            'new key address'              => array( 'https://example.org/?address=a&adresse=b&street=c&zip=d&postnr=e&postcode=f&postal_code=g&k=1', false, 'https://example.org/?k=1' ),
+            'new key cpr and order_key'    => array( 'https://example.org/?cpr=1&ORDER_KEY=2&k=1', false, 'https://example.org/?k=1' ),
+            'cpr value with dash'          => array( 'https://example.org/?x=010190-1234&k=1', false, 'https://example.org/?k=1' ),
+            'cpr value without dash'       => array( 'https://example.org/?x=0101901234&k=1', false, 'https://example.org/?k=1' ),
+            'cpr bad day survives'         => array( 'https://example.org/?x=3213901234', false, 'https://example.org/?x=3213901234' ),
+            'cpr bad month survives'       => array( 'https://example.org/?x=0113901234', false, 'https://example.org/?x=0113901234' ),
+            'phone value literal plus'     => array( 'https://example.org/?x=+4512345678&k=1', false, 'https://example.org/?k=1' ),
+            'phone value encoded plus'     => array( 'https://example.org/?x=%2B4512345678&k=1', false, 'https://example.org/?k=1' ),
+            'phone value spaced'           => array( 'https://example.org/?x=%2B45+12+34+56+78&k=1', false, 'https://example.org/?k=1' ),
+            'phone without plus survives'  => array( 'https://example.org/?x=4512345678', false, 'https://example.org/?x=4512345678' ),
+            '8-digit id survives'          => array( 'https://example.org/?id=12345678', false, 'https://example.org/?id=12345678' ),
+            'short id and search survive'  => array( 'https://example.org/?p=123&utm_source=x&s=sko', false, 'https://example.org/?p=123&utm_source=x&s=sko' ),
         );
     }
 

@@ -26,13 +26,14 @@ class Test_TrackWP_GA4 extends WP_UnitTestCase {
         ) );
         update_option( 'trackwp_advanced', array( 'default_phone_country' => 'DK' ) );
         delete_transient( 'trackwp_ga4_queue' );
+        delete_transient( 'trackwp_ga4_withdrawn' );
         $_SERVER['REMOTE_ADDR'] = '203.0.113.9';
         add_filter( 'pre_http_request', array( $this, 'intercept' ), 10, 3 );
     }
 
     public function tear_down() {
         remove_filter( 'pre_http_request', array( $this, 'intercept' ), 10 );
-        unset( $_COOKIE[ LOGGED_IN_COOKIE ] );
+        unset( $_COOKIE[ LOGGED_IN_COOKIE ], $_COOKIE['trackwp_consent'] );
         wp_clear_scheduled_hook( 'trackwp_flush_ga4' );
         parent::tear_down();
     }
@@ -268,6 +269,169 @@ class Test_TrackWP_GA4 extends WP_UnitTestCase {
         $queue = get_transient( 'trackwp_ga4_queue' );
         $this->assertCount( 1, $queue );
         $this->assertSame( '123.456', $queue[0]['client_id'] );
+    }
+
+    private const CID_A = '11111111-1111-4111-8111-111111111111';
+    private const CID_B = '22222222-2222-4222-8222-222222222222';
+
+    /**
+     * Queue an event through the producer (queue_event) with a consent cookie
+     * carrying $consent_id ('' = no cookie).
+     */
+    private static function queue_with_cookie( $consent_id, $event = null ) {
+        unset( $_COOKIE['trackwp_consent'] );
+        if ( $consent_id !== '' ) {
+            $_COOKIE['trackwp_consent'] = wp_json_encode( array(
+                'v' => TrackWP_Consent::server_version(), 'ts' => '2026-09-01T10:00:00.000Z', 'id' => $consent_id,
+                'necessary' => true, 'statistics' => true, 'marketing' => true, 'personalisation' => false,
+            ) );
+        }
+        ( new TrackWP_GA4() )->queue_event( $event === null ? self::event() : $event );
+        unset( $_COOKIE['trackwp_consent'] );
+    }
+
+    public function test_snapshot_sets_consent_id_from_cookie() {
+        self::queue_with_cookie( self::CID_A );
+        self::queue_with_cookie( '' );
+        $queue = get_transient( 'trackwp_ga4_queue' );
+        $this->assertSame( self::CID_A, $queue[0]['_consent_id'] );
+        $this->assertSame( '', $queue[1]['_consent_id'] );
+    }
+
+    public function test_purge_withdrawal_removes_only_own_events() {
+        self::queue_with_cookie( self::CID_A );
+        self::queue_with_cookie( self::CID_B );
+        self::queue_with_cookie( '' );
+        self::queue_with_cookie( self::CID_A );
+
+        $n = TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false );
+
+        $this->assertSame( 2, $n );
+        $queue = get_transient( 'trackwp_ga4_queue' );
+        $this->assertCount( 2, $queue );
+        $this->assertSame( self::CID_B, $queue[0]['_consent_id'] );
+        $this->assertSame( '', $queue[1]['_consent_id'] );
+    }
+
+    public function test_purge_marketing_downgrade_clears_user_data_and_keeps_event() {
+        self::queue_with_cookie( self::CID_A );
+        self::queue_with_cookie( self::CID_B );
+        $queue = get_transient( 'trackwp_ga4_queue' );
+        $queue[0]['_user_data'] = array( 'sha256_email_address' => str_repeat( 'a', 64 ) );
+        $queue[1]['_user_data'] = array( 'sha256_email_address' => str_repeat( 'b', 64 ) );
+        set_transient( 'trackwp_ga4_queue', $queue, HOUR_IN_SECONDS );
+
+        $n = TrackWP_GA4::purge_queued_for_consent( self::CID_A, true, false );
+
+        $this->assertSame( 1, $n );
+        $queue = get_transient( 'trackwp_ga4_queue' );
+        $this->assertCount( 2, $queue );
+        $this->assertFalse( $queue[0]['_consent_marketing'] );
+        $this->assertSame( array(), $queue[0]['_user_data'] );
+        $this->assertTrue( $queue[1]['_consent_marketing'] );
+        $this->assertNotEmpty( $queue[1]['_user_data'] );
+    }
+
+    public function test_purge_leaves_events_without_consent_id_and_empty_queue_alone() {
+        $this->assertSame( 0, TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false ) );
+        $this->assertFalse( get_transient( 'trackwp_ga4_queue' ) );
+
+        self::queue_with_cookie( '' );
+        $this->assertSame( 0, TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false ) );
+        $this->assertSame( 0, TrackWP_GA4::purge_queued_for_consent( '', false, false ) );
+        $this->assertCount( 1, get_transient( 'trackwp_ga4_queue' ) );
+    }
+
+    /**
+     * Run a flush that fails with 503 while $during() runs inside the HTTP
+     * call (the in-flight window), and return the re-queued events.
+     */
+    private function flush_failing_with( $during ) {
+        $this->responses = array( self::response( 503 ) );
+        $done            = false;
+        $cb              = function ( $pre ) use ( $during, &$done ) {
+            if ( ! $done ) {
+                $done = true;
+                $during();
+            }
+            return $pre;
+        };
+        add_filter( 'pre_http_request', $cb, 5 );
+        ( new TrackWP_GA4() )->flush_queue();
+        remove_filter( 'pre_http_request', $cb, 5 );
+        $queue = get_transient( 'trackwp_ga4_queue' );
+        return is_array( $queue ) ? $queue : array();
+    }
+
+    public function test_withdrawal_during_failed_flush_is_not_requeued() {
+        self::queue_with_cookie( self::CID_A );
+        self::queue_with_cookie( self::CID_B );
+        $queue = $this->flush_failing_with( function () {
+            TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false );
+        } );
+        $ids = array_column( $queue, '_consent_id' );
+        $this->assertNotContains( self::CID_A, $ids );
+        $this->assertContains( self::CID_B, $ids );
+    }
+
+    public function test_marketing_downgrade_during_failed_flush_is_applied_to_requeue() {
+        self::queue_with_cookie( self::CID_A );
+        $queue = $this->flush_failing_with( function () {
+            TrackWP_GA4::purge_queued_for_consent( self::CID_A, true, false );
+        } );
+        $this->assertCount( 1, $queue );
+        $this->assertSame( self::CID_A, $queue[0]['_consent_id'] );
+        $this->assertFalse( $queue[0]['_consent_marketing'] );
+        $this->assertSame( array(), $queue[0]['_user_data'] );
+    }
+
+    public function test_failed_flush_without_purge_requeues_event_unchanged() {
+        self::queue_with_cookie( self::CID_A );
+        $queue = $this->flush_failing_with( function () {} );
+        $this->assertCount( 1, $queue );
+        $this->assertSame( self::CID_A, $queue[0]['_consent_id'] );
+        $this->assertTrue( $queue[0]['_consent_marketing'] );
+    }
+
+    public function test_withdrawal_survives_overlapping_flush() {
+        self::queue_with_cookie( self::CID_A );
+        $queue = $this->flush_failing_with( function () {
+            TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false );
+            self::queue_with_cookie( self::CID_B );
+            ( new TrackWP_GA4() )->flush_queue();
+        } );
+        $ids = array_column( $queue, '_consent_id' );
+        $this->assertNotContains( self::CID_A, $ids );
+        $this->assertContains( self::CID_B, $ids );
+    }
+
+    public function test_withdrawal_record_spares_events_queued_after_it() {
+        TrackWP_GA4::purge_queued_for_consent( self::CID_A, false, false );
+        self::queue_with_cookie( self::CID_A );
+        $queue = $this->flush_failing_with( function () {} );
+        $this->assertCount( 1, $queue );
+        $this->assertSame( self::CID_A, $queue[0]['_consent_id'] );
+        $this->assertTrue( $queue[0]['_consent_marketing'] );
+    }
+
+    public function test_purge_asks_hyperdb_style_db_for_master_reads() {
+        global $wpdb;
+        $spy = new class( DB_USER, DB_PASSWORD, DB_NAME, DB_HOST ) extends wpdb {
+            public $master_calls = 0;
+            public function send_reads_to_masters() {
+                $this->master_calls++;
+            }
+        };
+        $spy->set_prefix( $wpdb->prefix );
+        $original = $GLOBALS['wpdb'];
+        $GLOBALS['wpdb'] = $spy;
+        try {
+            TrackWP_GA4::purge_queued_for_consent( 'x', false, false );
+            delete_transient( 'trackwp_ga4_withdrawn' ); // spy connection autocommits; clean up there
+        } finally {
+            $GLOBALS['wpdb'] = $original;
+        }
+        $this->assertSame( 1, $spy->master_calls );
     }
 
     /**

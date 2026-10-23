@@ -525,4 +525,39 @@ class TrackWP_Assets_Test extends WP_UnitTestCase {
         $this->assertStringNotContainsString('</script>', $raw);
         $this->assertSame('</script><script>alert(1)</script>', $cfg['heading']);
     }
+
+    public function test_gtag_configures_extra_ga4_ids_with_transport_url_and_gtm_gate() {
+        $adv = get_option('trackwp_advanced');
+        $adv['first_party_loader_enabled'] = true;
+        update_option('trackwp_advanced', $adv);
+        update_option('trackwp_platforms', array(
+            'ga4_enabled'              => true,
+            'ga4_gtag_enabled'         => true,
+            'ga4_measurement_id'       => 'G-TEST1234',
+            'ga4_extra_ids'            => array(array('id' => 'G-EXTRA1', 'api_secret' => '')),
+            'google_ads_enabled'       => true,
+            'google_ads_conversion_id' => 'AW-1234567890',
+        ));
+        $out = $this->render('render_gtag_head');
+
+        $transport = esc_js(untrailingslashit(rest_url('trackwp/v1/c')));
+        $this->assertStringContainsString("gtag('config','G-TEST1234',cfg({'transport_url':'" . $transport . "'}))", $out);
+        $this->assertStringContainsString("gtag('config','G-EXTRA1',cfg({'transport_url':'" . $transport . "'}))", $out);
+        $this->assertStringNotContainsString('send_page_view', $out);
+        $this->assertStringNotContainsString("'page_view'", $out);
+        // AW config unchanged: no transport_url.
+        $this->assertSame(1, preg_match("/gtag\\('config','AW-1234567890',cfg\\(([^)]*)\\)\\)/", $out, $m));
+        $this->assertStringNotContainsString('transport_url', $m[1]);
+
+        $adv['first_party_loader_enabled'] = false;
+        update_option('trackwp_advanced', $adv);
+        $out = $this->render('render_gtag_head');
+        $this->assertStringContainsString('gtag/js?id=G-TEST1234', $out, 'Loader URL keeps the primary ID');
+        $this->assertStringContainsString("gtag('config','G-EXTRA1',cfg({}))", $out);
+
+        $adv['uses_gtm'] = true;
+        update_option('trackwp_advanced', $adv);
+        $out = $this->render('render_gtag_head');
+        $this->assertStringNotContainsString('G-EXTRA1', $out);
+    }
 }

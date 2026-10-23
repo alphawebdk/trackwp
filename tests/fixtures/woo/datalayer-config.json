@@ -1,22 +1,22 @@
 {
-    "generated_at": "2026-10-01T07:30:01+00:00",
+    "generated_at": "2026-10-21T15:03:18+00:00",
     "generated_by": "tests/test-woocommerce-1-11-1-events.php test_generate_js_fixture() (real TrackWP_WooCommerce::build_config() against a real WC_Order/WC_Product)",
     "purchase": {
         "event": "purchase",
-        "event_id": "evt_1ef477fa0c508ee92f63c4495ffdeb9c",
-        "order_ref": "96.46bdd51c19aeff5e1fa0dd24",
+        "event_id": "evt_7db34b27e92d21514493f81e5761cecc",
+        "order_ref": "104.752972c13aaf8aed7b107e35",
         "value": 150,
         "currency": "USD",
         "ecommerce": {
-            "transaction_id": "96",
+            "transaction_id": "104",
             "items": [
                 {
-                    "item_id": "95",
-                    "item_name": "Testvare ohcK6O",
+                    "item_id": "103",
+                    "item_name": "Testvare Dy0ZHt",
                     "quantity": 1,
                     "price": 150,
                     "item_sku": "JS-FIX-1",
-                    "item_category": "JS-Fixture-Kategori PIGA"
+                    "item_category": "JS-Fixture-Kategori Jp4Q"
                 }
             ],
             "value_ga4": 150,
@@ -47,12 +47,12 @@
         "ecommerce": {
             "items": [
                 {
-                    "item_id": "95",
-                    "item_name": "Testvare ohcK6O",
+                    "item_id": "103",
+                    "item_name": "Testvare Dy0ZHt",
                     "quantity": 1,
                     "price": 150,
                     "item_sku": "JS-FIX-1",
-                    "item_category": "JS-Fixture-Kategori PIGA"
+                    "item_category": "JS-Fixture-Kategori Jp4Q"
                 }
             ]
         }

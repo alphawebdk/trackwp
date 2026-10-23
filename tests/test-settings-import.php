@@ -400,4 +400,27 @@ class TrackWP_Settings_Import_Test extends WP_UnitTestCase {
             TrackWP_Settings::blocker_defaults()['nocache_params']
         );
     }
+
+    /**
+     * Floating trigger position: whitelist right/left, round-trips through
+     * export/import, and an older export without the key falls back to right.
+     */
+    public function test_sanitize_consent_trigger_position() {
+        $settings = new TrackWP_Settings();
+        $this->assertSame( 'right', $settings->sanitize_consent( array() )['trigger_position'] );
+        $this->assertSame( 'left', $settings->sanitize_consent( array( 'trigger_position' => 'left' ) )['trigger_position'] );
+        $this->assertSame( 'right', $settings->sanitize_consent( array( 'trigger_position' => 'LEFT' ) )['trigger_position'] );
+        $this->assertSame( 'right', $settings->sanitize_consent( array( 'trigger_position' => '<script>' ) )['trigger_position'] );
+
+        update_option( 'trackwp_consent', $settings->sanitize_consent( array( 'trigger_position' => 'left' ) ) );
+        $e = TrackWP_Settings::export_settings( false );
+        delete_option( 'trackwp_consent' );
+        $this->assertTrue( TrackWP_Settings::import_settings( json_decode( wp_json_encode( $e ), true ) ) );
+        $this->assertSame( 'left', get_option( 'trackwp_consent' )['trigger_position'] );
+
+        unset( $e['consent']['trigger_position'] );
+        delete_option( 'trackwp_consent' );
+        $this->assertTrue( TrackWP_Settings::import_settings( json_decode( wp_json_encode( $e ), true ) ) );
+        $this->assertSame( 'right', get_option( 'trackwp_consent' )['trigger_position'] );
+    }
 }

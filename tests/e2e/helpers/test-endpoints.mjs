@@ -52,6 +52,16 @@ export async function setOrderStatus(orderId, status) {
     return post(`/wp-json/trackwp-test/v1/orders/${orderId}/status`, { status });
 }
 
+/**
+ * Runs the backup purchase job for an order, as Action Scheduler would.
+ * @param {number} orderId
+ * @returns {Promise<{order_id: number, was_scheduled: boolean}>} was_scheduled:
+ *   a trackwp_backup_purchase job was queued before the run.
+ */
+export async function runBackupPurchase(orderId) {
+    return post('/wp-json/trackwp-test/v1/backup/run', { order_id: orderId });
+}
+
 /** Resets TrackWP options to their defaults and empties claims/consent-log tables. */
 export async function resetTrackWP() {
     return post('/wp-json/trackwp-test/v1/reset', {});

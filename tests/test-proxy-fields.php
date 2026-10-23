@@ -99,6 +99,46 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         return rest_get_server()->dispatch( $request );
     }
 
+    /**
+     * Run the real TrackWP_Proxy::build_event_data() (private) with the
+     * given effective consent and no ga_session_cookies in the payload, so
+     * the legacy server-side _ga_* cookie fallback is used.
+     */
+    private function legacy_session_cookie( array $effective ) {
+        $request = new WP_REST_Request( 'POST', '/trackwp/v1/event' );
+        $request->set_param( 'event', 'form_submit' );
+        $method = new ReflectionMethod( 'TrackWP_Proxy', 'build_event_data' );
+        $method->setAccessible( true );
+        $data = $method->invoke( new TrackWP_Proxy(), $request, $effective, null, '', '' );
+        return array_key_exists( 'ga_session_cookie', $data ) ? $data['ga_session_cookie'] : null;
+    }
+
+    public function test_legacy_session_cookie_prefers_primary_over_earlier_ga_cookie() {
+        // An extra property's cookie comes first in $_COOKIE.
+        $_COOKIE = array(
+            '_ga_EXTRA1'    => 'GS2.1.s2222222222$o1$g0',
+            '_ga_TEST12345' => 'GS2.1.s1111111111$o1$g0',
+        );
+        $this->assertSame( 'GS2.1.s1111111111$o1$g0', $this->legacy_session_cookie( array( 'analytics' => true, 'marketing' => false ) ) );
+    }
+
+    public function test_legacy_session_cookie_falls_back_to_first_ga_cookie_without_primary() {
+        $_COOKIE = array(
+            '_ga'           => 'GA1.1.123.456',
+            '_ga_OTHER1'    => 'GS2.1.s3333333333$o1$g0',
+            '_ga_OTHER2'    => 'GS2.1.s4444444444$o1$g0',
+        );
+        $this->assertSame( 'GS2.1.s3333333333$o1$g0', $this->legacy_session_cookie( array( 'analytics' => true, 'marketing' => false ) ) );
+    }
+
+    public function test_legacy_session_cookie_not_set_without_analytics_consent() {
+        $_COOKIE = array(
+            '_ga_TEST12345' => 'GS2.1.s1111111111$o1$g0',
+            '_ga_OTHER1'    => 'GS2.1.s3333333333$o1$g0',
+        );
+        $this->assertNull( $this->legacy_session_cookie( array( 'analytics' => false, 'marketing' => true ) ) );
+    }
+
     private function base_body( array $extra = array() ) {
         return array_merge( array(
             'event'      => 'form_submit',
@@ -109,6 +149,14 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
             'session_id' => '1700000000',
             'consent'    => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
         ), $extra );
+    }
+
+    /**
+     * Back the payload consent with a cookie written by the real producer
+     * (effective_consent() requires payload AND cookie), at the server version.
+     */
+    private function set_consent_cookie( $statistics = true, $marketing = false ) {
+        $_COOKIE['trackwp_consent'] = $this->produced_consent_cookie( TrackWP_Consent::server_version(), $statistics, $marketing );
     }
 
     private function log_rows( $destination ) {
@@ -217,6 +265,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
     }
 
     public function test_filter_cannot_reintroduce_identifiers() {
+        $this->set_consent_cookie( true, false );
         add_filter( 'trackwp_event_data', function( $data ) {
             $data['gclid']    = 'INJECTED';
             $data['fbp']      = 'fb.1.1.INJECTED';
@@ -241,6 +290,9 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
     // ------------------------------------------------------------------
 
     public function test_non_boolean_true_consent_values_send_nothing() {
+        // A valid cookie is present for the whole test: the fake payload values
+        // must still send nothing, and only the real boolean payload sends.
+        $this->set_consent_cookie( true, true );
         foreach ( array( 'true', 1, '1', 'false' ) as $fake ) {
             $this->post_event( $this->base_body( array(
                 'consent' => array( 'analytics' => $fake, 'marketing' => $fake, 'v' => 1 ),
@@ -294,6 +346,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
     // ------------------------------------------------------------------
 
     public function test_form_id_reaches_ga4_body() {
+        $this->set_consent_cookie( true, false );
         $this->post_event( $this->base_body( array( 'form_id' => 'cf7_42', 'form_name' => 'Kontakt' ) ) );
 
         $ga4 = $this->ga4_requests();
@@ -386,6 +439,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
 
     public function test_delivery_log_records_status_and_http_code() {
         $this->http_status = 500;
+        $this->set_consent_cookie( true, false );
         $this->post_event( $this->base_body() );
 
         $rows = $this->log_rows( 'ga4' );
@@ -407,6 +461,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
     }
 
     public function test_forwarded_stat_counts_delivered_events_and_unknown_names_go_to_other() {
+        $this->set_consent_cookie( true, false );
         $this->post_event( $this->base_body() );
         $this->post_event( $this->base_body( array( 'event' => 'not_configured_event' ) ) );
 
@@ -428,6 +483,56 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'forwarded', $today );
         $rows = $this->log_rows( 'ga4' );
         $this->assertSame( 'no_consent', $rows[0]['reason'] );
+    }
+
+    public function test_payload_consent_without_cookie_logs_consent_cookie_missing() {
+        unset( $_COOKIE['trackwp_consent'] );
+        $this->post_event( $this->base_body( array(
+            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
+        ) ) );
+        $this->assertCount( 0, $this->ga4_requests() );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'skipped', $rows[0]['status'] );
+        $this->assertSame( 'consent_cookie_missing', $rows[0]['reason'] );
+    }
+
+    public function test_cookie_with_statistics_false_keeps_no_consent_reason() {
+        $this->set_consent_cookie( false, false );
+        $this->post_event( $this->base_body( array(
+            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
+        ) ) );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'no_consent', $rows[0]['reason'] );
+    }
+
+    public function test_payload_without_consent_and_without_cookie_keeps_no_consent_reason() {
+        unset( $_COOKIE['trackwp_consent'] );
+        $this->post_event( $this->base_body( array(
+            'consent' => array( 'analytics' => false, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
+        ) ) );
+        $rows = $this->log_rows( 'ga4' );
+        $this->assertSame( 'no_consent', $rows[0]['reason'] );
+    }
+
+    public function test_payload_analytics_without_cookie_flags_only_ga4_as_cookie_missing() {
+        update_option( 'trackwp_platforms', array(
+            'ga4_enabled'        => true,
+            'ga4_measurement_id' => 'G-TEST12345',
+            'ga4_api_secret'     => 'test-secret',
+            'meta_enabled'       => true,
+            'meta_pixel_id'      => '1234567890',
+            'meta_access_token'  => TrackWP_Hash::encode( 'EAAB-token' ),
+        ) );
+        unset( $_COOKIE['trackwp_consent'] );
+        $this->post_event( $this->base_body( array(
+            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
+        ) ) );
+
+        $this->assertCount( 0, $this->http );
+        $ga4  = $this->log_rows( 'ga4' );
+        $meta = $this->log_rows( 'meta' );
+        $this->assertSame( 'consent_cookie_missing', $ga4[0]['reason'] );
+        $this->assertSame( 'no_consent', $meta[0]['reason'] );
     }
 
     // ------------------------------------------------------------------
@@ -452,7 +557,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->enable_datalayer( 'gtm' );
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'gtm',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 0, $this->ga4_requests() );
@@ -465,7 +570,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->enable_datalayer( 'gtm' );
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'off',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 0, $this->ga4_requests() );
@@ -486,7 +591,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->enable_datalayer( 'gtm' ); // site config: everything via GTM
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'server', // a forged or stale client claim
-            'consent'   => array( 'analytics' => false, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => false, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 0, $this->ga4_requests() );
@@ -501,9 +606,10 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
      */
     public function test_server_claim_mismatch_with_consent_dispatches_like_1_11_0() {
         $this->enable_datalayer( 'gtm' );
+        $this->set_consent_cookie( true, false );
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'server',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 1, $this->ga4_requests(), 'a server-claim mismatch with consent present falls back to the ordinary consent branch, which sends' );
@@ -520,7 +626,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         // visitor's browser is not an authenticated admin session either.
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'gtm',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 0, $this->ga4_requests(), 'ga4_route must still be honoured in test mode without an admin session' );
@@ -530,6 +636,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
 
     public function test_ga4_route_server_dispatches_when_both_sides_agree() {
         $this->enable_datalayer( 'split' );
+        $this->set_consent_cookie( true, false );
         $events   = TrackWP_Events::get_defaults();
         $events[] = array(
             'name' => 'purchase', 'enabled' => true, 'trigger_type' => 'custom',
@@ -541,7 +648,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->post_event( $this->base_body( array(
             'event'     => 'purchase',
             'ga4_route' => 'server',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 1, $this->ga4_requests(), 'both client and server agree on server: MP must dispatch' );
@@ -567,7 +674,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $this->post_event( $this->base_body( array(
             'event'     => 'purchase',
             'ga4_route' => 'gtm',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 0, $this->ga4_requests(), 'client gtm must never be upgraded to an MP send' );
@@ -578,16 +685,18 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
 
     public function test_missing_ga4_route_falls_back_to_1_11_0_behaviour() {
         $this->enable_datalayer( 'gtm' );
+        $this->set_consent_cookie( true, false );
         // No ga4_route field at all (old cached JS, or an event pushDataLayer
         // never saw): plain consent-based routing, unaffected by KC8.
         $this->post_event( $this->base_body( array(
-            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent' => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 1, $this->ga4_requests() );
     }
 
     public function test_ga4_route_ignored_when_layer_not_active() {
+        $this->set_consent_cookie( true, false );
         // dataLayer is off (gtm_datalayer_events absent/off): a ga4_route
         // value must never suppress GA4 delivery.
         update_option( 'trackwp_platforms', array(
@@ -597,7 +706,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         ) );
         $this->post_event( $this->base_body( array(
             'ga4_route' => 'gtm',
-            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => 1 ),
+            'consent'   => array( 'analytics' => true, 'marketing' => false, 'v' => TrackWP_Consent::server_version() ),
         ) ) );
 
         $this->assertCount( 1, $this->ga4_requests(), 'ga4_route must be inert while the dataLayer layer is off' );
@@ -614,6 +723,7 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
         $events   = TrackWP_Events::get_defaults();
         $events[] = TrackWP_Events::get_woocommerce_event_templates()['purchase'];
         update_option( 'trackwp_events', $events );
+        $this->set_consent_cookie( true, false );
 
         $this->post_event( $this->base_body( array(
             'event'     => 'purchase',
@@ -636,9 +746,9 @@ class TrackWP_Proxy_Fields_Test extends WP_UnitTestCase {
      * Producer: TrackWP_Consent::write_consent_cookie(), the server's own
      * writer of trackwp_consent; the value is taken from what it sent.
      */
-    private function produced_consent_cookie( $version ) {
+    private function produced_consent_cookie( $version, $statistics = true, $marketing = false ) {
         TrackWP_Cookies::reset_sent();
-        TrackWP_Consent::write_consent_cookie( $version, 1790000000000, '0b6f3c1e-8f4a-4d2b-9c7e-1a2b3c4d5e6f', true, false, false );
+        TrackWP_Consent::write_consent_cookie( $version, 1790000000000, '0b6f3c1e-8f4a-4d2b-9c7e-1a2b3c4d5e6f', $statistics, $marketing, false );
         foreach ( TrackWP_Cookies::sent_cookies() as $cookie ) {
             if ( 'trackwp_consent' === $cookie['name'] ) {
                 return $cookie['value'];

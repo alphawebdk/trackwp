@@ -18,11 +18,15 @@ class TrackWP_Proxy {
     /** Reasons a destination result may carry (K1 + R21 + TR4/KC8). */
     const RESULT_REASONS = array(
         'sent', 'batched', 'no_consent', 'not_configured', 'routed_off', 'event_disabled',
-        'no_click_id', 'bot', 'client_only', 'stale_version', 'invalid_order_ref',
+        'no_click_id', 'bot', 'client_only', 'stale_version', 'consent_cookie_missing', 'invalid_order_ref',
         'order_not_countable', 'already_claimed', 'timeout', 'transport', 'http_4xx',
         'http_5xx', 'http_429', 'partial_failure', 'claim_error', 'unverified_purchase',
-        'ga4_via_gtm',
+        'ga4_via_gtm', 'backup', 'no_snapshot', 'no_client_id', 'event_too_old',
+        'browser_seen', 'no_purchase',
     );
+
+    /** Adapter time budget (seconds) for the server-side backup purchase. */
+    const BACKUP_TIMEOUT = 10.0;
 
     /** Destinations in dispatch order. */
     const DESTINATIONS = array( 'ga4', 'meta', 'google_ads' );
@@ -93,19 +97,22 @@ class TrackWP_Proxy {
         $slug = isset($advanced['endpoint_path']) ? $advanced['endpoint_path'] : 'event';
         $slug = TrackWP_Settings::sanitize_endpoint_slug($slug);
 
-        register_rest_route('trackwp/v1', '/' . $slug, array(
-            'methods'             => WP_REST_Server::CREATABLE,
-            'callback'            => array($this, 'handle_event'),
-            'permission_callback' => array($this, 'check_permission'),
-            'args'                => self::rest_args(),
-        ));
+        // /event and /keepalive only with a license; /my-data (GDPR) always.
+        if (TrackWP_License::tracking_allowed()) {
+            register_rest_route('trackwp/v1', '/' . $slug, array(
+                'methods'             => WP_REST_Server::CREATABLE,
+                'callback'            => array($this, 'handle_event'),
+                'permission_callback' => array($this, 'check_permission'),
+                'args'                => self::rest_args(),
+            ));
 
-        // First-party cookie keepalive — renews ITP-durable cookies via HTTP Set-Cookie on each page load.
-        register_rest_route('trackwp/v1', '/keepalive', array(
-            'methods'             => array('GET', 'POST'),
-            'callback'            => array($this, 'handle_keepalive'),
-            'permission_callback' => array($this, 'check_permission'),
-        ));
+            // First-party cookie keepalive: renews ITP-durable cookies via HTTP Set-Cookie on each page load.
+            register_rest_route('trackwp/v1', '/keepalive', array(
+                'methods'             => array('GET', 'POST'),
+                'callback'            => array($this, 'handle_keepalive'),
+                'permission_callback' => array($this, 'check_permission'),
+            ));
+        }
 
         // GDPR data subject access — returns consent state stored in user's cookies + any server log.
         register_rest_route( 'trackwp/v1', '/my-data', array(
@@ -538,6 +545,27 @@ class TrackWP_Proxy {
     }
 
     /**
+     * Reason code for a destination skipped for missing consent. Diagnostics
+     * only: never changes what is sent.
+     *
+     * @param array  $effective
+     * @param mixed  $raw_consent
+     * @param string $category 'analytics' or 'marketing' (the destination's).
+     * @return string
+     */
+    private static function no_consent_reason( $effective, $raw_consent, $category ) {
+        if ( ! empty( $effective['stale'] ) ) {
+            return 'stale_version';
+        }
+        if ( 'payload' === $effective['source'] && is_array( $raw_consent )
+            && isset( $raw_consent[ $category ] ) && true === $raw_consent[ $category ]
+            && null === TrackWP_Consent::parse_cookie() ) {
+            return 'consent_cookie_missing';
+        }
+        return 'no_consent';
+    }
+
+    /**
      * Build a K1 result.
      *
      * @return array
@@ -663,10 +691,20 @@ class TrackWP_Proxy {
         if ( is_array( $filtered ) ) {
             $event_data = $filtered;
         }
+        // Server context is set by the backup path only, never by a request or an extension.
+        unset( $event_data['_server_ctx'] );
         // Identity of the event and the consent state are not the filter's to change.
         $event_data['event']    = $event_name;
         $event_data['event_id'] = $purchase['event_id_lock'] ? $purchase['event_id_lock'] : ( isset( $event_data['event_id'] ) && is_string( $event_data['event_id'] ) && preg_match( '/^evt_[a-f0-9]{16,64}$/', $event_data['event_id'] ) ? $event_data['event_id'] : TrackWP_Hash::generate_event_id() );
         $event_data['consent']  = $consent_flags;
+
+        // An unverified purchase has no order behind it, so customer data in it
+        // can only be the client's own claim. It is removed here (after the
+        // extension filter, before the category filter); value, currency and
+        // ecommerce are kept.
+        if ( 'unverified' === $purchase['mode'] ) {
+            unset( $event_data['enhanced'], $event_data['external_id'] );
+        }
 
         // --- 5. Final filter ---------------------------------------------------
         $event_data = self::strip_by_category( $event_data, $effective );
@@ -691,7 +729,13 @@ class TrackWP_Proxy {
         // read straight from the REST param (already sanitised to
         // gtm|server|off or null). Never stored in $event_data.
         $ga4_route = $request->get_param( 'ga4_route' );
-        $results   = $this->route( $event_name, $event_config, $event_enabled, $effective, $ga4_route );
+        $results   = $this->route( $event_name, $event_config, $event_enabled, $effective, $ga4_route, $raw_consent );
+
+        // The order-received page handled this order, so the server backup
+        // must not send it again. Idempotent insert, result ignored.
+        if ( 'verified' === $purchase['mode'] ) {
+            TrackWP_Order_Claims::claim( $purchase['order_id'], 'browser_seen', 'browser' );
+        }
 
         // Purchase gate: invalid order refs are never sent; a verified purchase
         // is claimed only when at least one destination will really be tried.
@@ -757,6 +801,71 @@ class TrackWP_Proxy {
     }
 
     /**
+     * Server-side backup purchase (no HTTP request behind it). The caller has
+     * already built, filtered and category-stripped $event_data and set
+     * _server_ctx. Routing, the per-order claim and the adapters are the same
+     * as for the browser path.
+     *
+     * @param array $event_data Final event data incl. _server_ctx.
+     * @param array $effective  array( 'analytics' => bool, 'marketing' => bool, ... ).
+     * @param int   $order_id
+     * @param array $pre_skips  destination => reason, for destinations that must not be tried.
+     * @return array destination => K1 result.
+     */
+    public function dispatch_backup( array $event_data, array $effective, $order_id, array $pre_skips = array() ) {
+        $effective = $effective + array( 'v' => 0, 'source' => 'snapshot', 'stale' => false );
+        $effective['analytics'] = ! empty( $effective['analytics'] );
+        $effective['marketing'] = ! empty( $effective['marketing'] );
+        $consent_flags = array( 'analytics' => $effective['analytics'], 'marketing' => $effective['marketing'] );
+
+        $events_manager = new TrackWP_Events();
+        $event_config   = $events_manager->find_event( 'purchase' );
+        $event_enabled  = ! is_array( $event_config ) || ! empty( $event_config['enabled'] );
+
+        $results = $this->route( 'purchase', $event_config, $event_enabled, $effective, null, null );
+        foreach ( $results as $dest => $r ) {
+            if ( null === $r && isset( $pre_skips[ $dest ] ) ) {
+                $results[ $dest ] = self::result( $dest, 'skipped', (string) $pre_skips[ $dest ] );
+            }
+        }
+
+        $log_id     = isset( $event_data['event_id'] ) ? (string) $event_data['event_id'] : '';
+        $to_attempt = array_keys( array_filter( $results, function( $r ) { return null === $r; } ) );
+        if ( ! empty( $to_attempt ) ) {
+            $claim = TrackWP_Order_Claims::claim( $order_id, 'purchase', 'backup' );
+            if ( TrackWP_Order_Claims::CLAIMED !== $claim ) {
+                $status = ( TrackWP_Order_Claims::DUPLICATE === $claim ) ? 'duplicate' : 'failed';
+                $reason = ( TrackWP_Order_Claims::DUPLICATE === $claim ) ? 'already_claimed' : 'claim_error';
+                foreach ( $to_attempt as $dest ) {
+                    $results[ $dest ] = self::result( $dest, $status, $reason );
+                }
+                $to_attempt = array();
+            }
+        }
+
+        TrackWP_Delivery_Log::record( $log_id, 'purchase', 'received', 'ok', $consent_flags, 0, 'backup' );
+
+        foreach ( $to_attempt as $dest ) {
+            $results[ $dest ] = $this->dispatch( $dest, $event_data, $consent_flags, self::BACKUP_TIMEOUT );
+        }
+
+        $forwarded = false;
+        foreach ( $results as $dest => $result ) {
+            if ( in_array( $result['status'], array( 'ok', 'queued' ), true ) ) {
+                $forwarded = true;
+            }
+            if ( 'not_configured' === $result['reason'] ) {
+                continue;
+            }
+            TrackWP_Delivery_Log::record( $log_id, 'purchase', $dest, $result['status'], $consent_flags, $result['http_code'], $result['reason'] );
+        }
+        if ( $forwarded ) {
+            TrackWP_Settings::record_event_hit( 'forwarded', 'purchase' );
+        }
+        return $results;
+    }
+
+    /**
      * K2 step 3: build $event_data from EVENT_FIELDS, only with the
      * categories the effective consent allows, plus server-side cookie
      * fallbacks for the same categories.
@@ -791,6 +900,16 @@ class TrackWP_Proxy {
         if ( ! empty( $effective['analytics'] ) ) {
             if ( empty( $event_data['ga_cookie'] ) && ! empty( $_COOKIE['_ga'] ) ) {
                 $event_data['ga_cookie'] = (string) self::sanitize_field( '_ga', wp_unslash( $_COOKIE['_ga'] ) );
+            }
+            if ( empty( $event_data['ga_session_cookie'] ) ) {
+                // Prefer the primary property's cookie, so an extra GA4 ID's
+                // _ga_<id> cookie is never taken as the primary session.
+                $twp_platforms   = get_option( 'trackwp_platforms', array() );
+                $twp_primary     = ( is_array( $twp_platforms ) && isset( $twp_platforms['ga4_measurement_id'] ) ) ? (string) $twp_platforms['ga4_measurement_id'] : '';
+                $twp_primary_ck  = ( 0 === strpos( $twp_primary, 'G-' ) ) ? '_ga_' . substr( $twp_primary, 2 ) : '';
+                if ( '' !== $twp_primary_ck && isset( $_COOKIE[ $twp_primary_ck ] ) && is_string( $_COOKIE[ $twp_primary_ck ] ) ) {
+                    $event_data['ga_session_cookie'] = (string) self::sanitize_field( 'ga_session_cookie', wp_unslash( $_COOKIE[ $twp_primary_ck ] ) );
+                }
             }
             if ( empty( $event_data['ga_session_cookie'] ) ) {
                 foreach ( $_COOKIE as $ck_name => $ck_val ) {
@@ -952,9 +1071,10 @@ class TrackWP_Proxy {
      *   (KC8/TR4): 'gtm'|'server'|'off', or null when absent (old client, or
      *   an event that never went through pushDataLayer). Only ever used for
      *   the 'ga4' destination and only ever narrows it further.
+     * @param mixed      $raw_consent Raw payload consent (diagnostics only).
      * @return array destination => array|null
      */
-    private function route( $event_name, $event_config, $event_enabled, $effective, $ga4_route = null ) {
+    private function route( $event_name, $event_config, $event_enabled, $effective, $ga4_route = null, $raw_consent = null ) {
         $advanced        = get_option( 'trackwp_advanced', array() );
         $dedup_mode      = isset( $advanced['dedup_mode'] ) ? $advanced['dedup_mode'] : 'client_and_server';
         $server_dispatch = ( 'client_only' !== $dedup_mode );
@@ -1027,7 +1147,7 @@ class TrackWP_Proxy {
                 // reason codes (no_consent/stale_version) — never a
                 // fabricated ga4_via_gtm/routed_off for a route the client
                 // never actually claimed.
-                $results[ $dest ] = self::result( $dest, 'skipped', ! empty( $effective['stale'] ) ? 'stale_version' : 'no_consent' );
+                $results[ $dest ] = self::result( $dest, 'skipped', self::no_consent_reason( $effective, $raw_consent, $needs[ $dest ] ) );
             } else {
                 $results[ $dest ] = null;
             }
@@ -1217,18 +1337,20 @@ class TrackWP_Proxy {
         if ( class_exists( 'TrackWP_Delivery_Log' ) && TrackWP_Delivery_Log::is_enabled() ) {
             $notes[] = sprintf(
                 /* translators: %d: retention in days */
-                __( 'Tracking-events forwardes til Google/Meta. Der gemmes server-side udelukkende teknisk leveringsinformation i %d dage — begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform og leveringsstatus. Der gemmes hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer eller dit client_id, og posterne kan derfor ikke knyttes til dig.', 'trackwp' ),
+                __( 'Tracking-events forwardes til Google/Meta. Leveringsloggen gemmer server-side udelukkende teknisk leveringsinformation i %d dage: begivenhedsnavn, et tilfældigt begivenheds-id, tidspunkt afrundet til minut, modtagerplatform og leveringsstatus. Leveringsloggen gemmer hverken IP, browseroplysninger, side-URL, formularindhold, e-mail, telefonnummer eller dit client_id, og posterne kan derfor ikke knyttes til dig.', 'trackwp' ),
                 (int) TrackWP_Delivery_Log::retention_days()
             );
         } else {
-            $notes[] = __( 'Tracking-events forwardes til Google/Meta og gemmes ikke server-side. Førsteparts-cookien indeholder kun et tilfældigt client_id.', 'trackwp' );
+            $notes[] = __( 'Tracking-events forwardes til Google/Meta. Selve begivenhederne gemmes ikke server-side ud over det, der er nævnt nedenfor. Førsteparts-cookien indeholder kun et tilfældigt client_id.', 'trackwp' );
         }
+        $notes[] = __( 'Hvis GA4-batching eller ekstra GA4-id\'er er aktive, kan en begivenhed ligge i en midlertidig kø på serveren i op til 72 timer, før den sendes videre.', 'trackwp' );
+        $notes[] = __( 'Hvis du har gennemført et køb i en WooCommerce-butik, gemmes dit samtykke og de identifikatorer, der knytter købet til din annoncekilde, på ordren i 90 dage.', 'trackwp' );
 
         $data = array(
             'client_id'     => $client_id,
             'consent_state' => $consent_state,
             'notes'         => array_merge( $notes, array(
-                __( 'Ved samtykke-afgivelse gemmes en revisionspost server-side med pseudonymiseret IP (envejshash), user-agent og tidspunkt — den kan ikke slås op via dette endpoint, da den ikke er knyttet til dit client_id.', 'trackwp' ),
+                __( 'Ved samtykke-afgivelse kan der gemmes en revisionspost (samtykkelog) server-side med pseudonymiseret IP (envejshash), user-agent og tidspunkt. Den kan ikke slås op via dette endpoint, da den ikke er knyttet til dit client_id.', 'trackwp' ),
                 __( 'For at slette dit client_id: ryd cookies for dette site i din browser, eller kald DELETE /wp-json/trackwp/v1/my-data.', 'trackwp' ),
             ) ),
         );

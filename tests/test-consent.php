@@ -98,22 +98,74 @@ class TrackWP_Consent_Test extends WP_UnitTestCase {
 
     /* ---------------- effective_consent (K3) ---------------- */
 
+    /**
+     * Put a cookie into $_COOKIE exactly as the server writes it
+     * (TrackWP_Consent::write_consent_cookie is the producer).
+     */
+    private function set_server_written_cookie($statistics, $marketing) {
+        TrackWP_Cookies::reset_sent();
+        TrackWP_Consent::write_consent_cookie(3, 1788256800000, self::ID, $statistics, $marketing, false);
+        $sent = $this->consent_cookies_sent();
+        $this->assertCount(1, $sent, 'write_consent_cookie must produce the cookie');
+        $_COOKIE['trackwp_consent'] = $sent[0]['value'];
+        TrackWP_Cookies::reset_sent();
+    }
+
     public function test_rule1_payload_with_matching_v() {
+        // Changed in 1.11.4: the payload alone no longer grants consent, a valid cookie must agree.
+        $this->set_server_written_cookie(true, false);
         $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => false, 'v' => 3), true);
         $this->assertSame(array('analytics' => true, 'marketing' => false, 'v' => 3, 'source' => 'payload', 'stale' => false), $e);
+    }
+
+    public function test_rule1_payload_true_cookie_false_gives_false() {
+        $this->set_server_written_cookie(false, false);
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
+        $this->assertFalse($e['analytics']);
+        $this->assertFalse($e['marketing']);
+        $this->assertSame('payload', $e['source']);
+    }
+
+    public function test_rule1_payload_true_without_cookie_gives_false() {
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
+        $this->assertFalse($e['analytics']);
+        $this->assertFalse($e['marketing']);
+        $this->assertFalse($e['stale']);
+    }
+
+    public function test_rule1_payload_false_cookie_true_gives_false() {
+        $this->set_server_written_cookie(true, true);
+        $e = TrackWP_Consent::effective_consent(array('analytics' => false, 'marketing' => false, 'v' => 3), true);
+        $this->assertFalse($e['analytics'], 'The payload can still downgrade');
+        $this->assertFalse($e['marketing']);
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => false, 'v' => 3), true);
+        $this->assertTrue($e['analytics']);
+        $this->assertFalse($e['marketing']);
+    }
+
+    public function test_rule1_payload_true_cookie_true_gives_true() {
+        $this->set_server_written_cookie(true, true);
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
+        $this->assertTrue($e['analytics']);
+        $this->assertTrue($e['marketing']);
+        $this->assertSame('payload', $e['source']);
+    }
+
+    public function test_rule1_payload_true_with_stale_or_old_version_cookie_gives_false() {
+        $_COOKIE['trackwp_consent'] = $this->cookie_json(array('stale' => true, 'marketing' => true));
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
+        $this->assertFalse($e['analytics']);
+        $this->assertFalse($e['marketing']);
+        $_COOKIE['trackwp_consent'] = $this->cookie_json(array('v' => 2, 'marketing' => true));
+        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
+        $this->assertFalse($e['analytics']);
+        $this->assertFalse($e['marketing']);
     }
 
     public function test_rule1_string_and_int_booleans_are_false() {
         $e = TrackWP_Consent::effective_consent(array('analytics' => 'true', 'marketing' => 1, 'v' => 3), true);
         $this->assertFalse($e['analytics']);
         $this->assertFalse($e['marketing']);
-    }
-
-    public function test_rule1_payload_wins_over_cookie_no_and() {
-        $_COOKIE['trackwp_consent'] = $this->cookie_json(array('statistics' => false, 'marketing' => false));
-        $e = TrackWP_Consent::effective_consent(array('analytics' => true, 'marketing' => true, 'v' => 3), true);
-        $this->assertTrue($e['analytics']);
-        $this->assertTrue($e['marketing']);
     }
 
     public function test_rule2_differing_v_is_stale() {
@@ -226,7 +278,10 @@ class TrackWP_Consent_Test extends WP_UnitTestCase {
     }
 
     public static function tear_down_after_class() {
+        // Leave the tables as the bootstrap did: later classes (and the
+        // table_exists() cache) expect them to exist.
         TrackWP_Consent_Log::drop_tables();
+        TrackWP_Consent_Log::create_tables();
         parent::tear_down_after_class();
     }
 
@@ -364,6 +419,95 @@ class TrackWP_Consent_Test extends WP_UnitTestCase {
         $_SERVER['HTTP_ORIGIN'] = 'https://evil.example';
         $res = $this->post_log($this->body(1788256800000));
         $this->assertSame(403, $res->get_status());
+    }
+
+    /* ---------------- GA4 queue purge on withdraw / downgrade ---------------- */
+
+    const OTHER_ID = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+
+    private function queued($consent_id, $marketing = true) {
+        return array(
+            'event'              => 'page_view',
+            '_consent_id'        => $consent_id,
+            '_consent_marketing' => $marketing,
+            '_user_data'         => $marketing ? array('sha256_email_address' => str_repeat('a', 64)) : array(),
+        );
+    }
+
+    public function test_withdraw_purges_only_own_ga4_queue_entries() {
+        $legacy = $this->queued('', true);
+        unset($legacy['_consent_id']);
+        set_transient('trackwp_ga4_queue', array($this->queued(self::ID), $this->queued(self::OTHER_ID), $legacy), 3600);
+        $this->post_log($this->body(1788256800000, array('event_type' => 'withdraw')));
+        $queue = get_transient('trackwp_ga4_queue');
+        $this->assertCount(2, $queue);
+        $this->assertSame(self::OTHER_ID, $queue[0]['_consent_id']);
+        $this->assertArrayNotHasKey('_consent_id', $queue[1], 'Entries without _consent_id survive');
+    }
+
+    public function test_full_withdraw_via_delete_purges_own_ga4_queue_entries() {
+        set_transient('trackwp_ga4_queue', array($this->queued(self::ID), $this->queued(self::OTHER_ID)), 3600);
+        $req = new WP_REST_Request('DELETE', '/trackwp/v1/consent');
+        $req->set_query_params(array('consent_id' => self::ID, 'consent_version' => '3', 'ts_ms' => '1788256800000'));
+        rest_get_server()->dispatch($req);
+        $queue = get_transient('trackwp_ga4_queue');
+        $this->assertCount(1, $queue);
+        $this->assertSame(self::OTHER_ID, $queue[0]['_consent_id']);
+    }
+
+    public function test_marketing_downgrade_clears_user_data_but_keeps_event() {
+        set_transient('trackwp_ga4_queue', array($this->queued(self::ID), $this->queued(self::OTHER_ID)), 3600);
+        $this->post_log($this->body(1788256800000, array('event_type' => 'update', 'marketing' => false)));
+        $queue = get_transient('trackwp_ga4_queue');
+        $this->assertCount(2, $queue);
+        $this->assertFalse($queue[0]['_consent_marketing']);
+        $this->assertSame(array(), $queue[0]['_user_data']);
+        $this->assertTrue($queue[1]['_consent_marketing'], 'Other consent_id untouched');
+        $this->assertNotEmpty($queue[1]['_user_data']);
+    }
+
+    public function test_full_accept_does_not_touch_ga4_queue() {
+        $q = array($this->queued(self::ID));
+        set_transient('trackwp_ga4_queue', $q, 3600);
+        $this->post_log($this->body(1788256800000));
+        $this->assertSame($q, get_transient('trackwp_ga4_queue'));
+    }
+
+    public function test_older_choice_does_not_purge_ga4_queue() {
+        $q = array($this->queued(self::ID));
+        set_transient('trackwp_ga4_queue', $q, 3600);
+        $_COOKIE['trackwp_consent'] = $this->cookie_json(array('ts' => '2026-09-01T10:00:00.000Z'));
+        $this->post_log($this->body(1788256800000 - 1, array('event_type' => 'withdraw')));
+        $this->assertSame($q, get_transient('trackwp_ga4_queue'), 'A late older withdraw is ignored like for the cookie');
+    }
+
+    /* ---------------- snapshot_current_banner (fund 8) ---------------- */
+
+    public function test_snapshot_current_banner_stores_for_current_hash_and_never_overwrites() {
+        remove_filter('query', array($this, '_create_temporary_tables'));
+        remove_filter('query', array($this, '_drop_temporary_tables'));
+        // Real (non-temporary) tables persist across tests: start from empty ones so no stale snapshot for this hash exists.
+        TrackWP_Consent_Log::drop_tables();
+        TrackWP_Consent_Log::create_tables();
+        update_option('trackwp_consent', array('consent_version' => 3, 'log_consent' => true, 'description_mode' => 'auto'));
+        $hash = TrackWP_Consent_Profile::banner_hash();
+        // Saving the option now snapshots the banner itself (maybe_auto_bump), so the snapshot exists already.
+        $this->assertNotNull(TrackWP_Consent_Log::get_texts($hash));
+
+        // It already exists for the current hash: INSERT IGNORE stores nothing new.
+        $this->assertFalse(TrackWP_Consent::snapshot_current_banner());
+        $stored = json_decode((string) TrackWP_Consent_Log::get_texts($hash), true);
+        $this->assertSame(3, $stored['consent_version']);
+        $this->assertSame(json_decode(wp_json_encode(TrackWP_Consent_Profile::banner_texts()), true), $stored['banner_texts']);
+        $this->assertSame(json_decode(wp_json_encode(TrackWP_Consent_Profile::material()), true), $stored['material']);
+        $this->assertSame('auto', $stored['style']['description_mode']);
+
+        // Same hash again, now with a changed style value that does not alter the hash: the first snapshot stays.
+        $before = TrackWP_Consent_Log::get_texts($hash);
+        update_option('trackwp_consent', array('consent_version' => 3, 'log_consent' => true, 'description_mode' => 'auto', 'position' => 'top'));
+        $this->assertSame($hash, TrackWP_Consent_Profile::banner_hash());
+        $this->assertFalse(TrackWP_Consent::snapshot_current_banner());
+        $this->assertSame($before, TrackWP_Consent_Log::get_texts($hash));
     }
 
     public function test_stats_counted_once_per_action() {

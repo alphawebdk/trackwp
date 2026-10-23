@@ -16,7 +16,9 @@ export const TEST_PRODUCT_SLUG = 'trackwp-test-product';
 
 export async function addProductToCart(page, baseURL, slug = TEST_PRODUCT_SLUG) {
     await page.goto(new URL(`/product/${slug}/`, baseURL).toString());
+    const posted = page.waitForResponse((r) => r.request().method() === 'POST' && r.url().includes('/product/'));
     await page.click('button.single_add_to_cart_button, button[name="add-to-cart"]');
+    await posted;
 }
 
 export async function goToCheckout(page, baseURL) {
@@ -35,6 +37,26 @@ export async function fillCheckoutForm(page, overrides = {}) {
         ...overrides,
     };
 
+    if (await page.locator('.wp-block-woocommerce-checkout').count()) {
+        // Block checkout: fields re-render on a country change, so pick it first.
+        await page.locator('#email').waitFor({ state: 'visible' });
+        const country = page.locator('select#billing-country');
+        if (await country.count()) await country.selectOption('DK');
+        const blockIds = {
+            email: values.billing_email,
+            'billing-first_name': values.billing_first_name,
+            'billing-last_name': values.billing_last_name,
+            'billing-address_1': values.billing_address_1,
+            'billing-city': values.billing_city,
+            'billing-postcode': values.billing_postcode,
+            'billing-phone': values.billing_phone,
+        };
+        for (const [id, value] of Object.entries(blockIds)) {
+            await page.locator(`#${id}`).fill(value);
+        }
+        return;
+    }
+
     for (const [name, value] of Object.entries(values)) {
         const field = page.locator(`#${name}`);
         if (await field.count()) {
@@ -44,8 +66,12 @@ export async function fillCheckoutForm(page, overrides = {}) {
 }
 
 export async function placeOrder(page) {
-    await page.click('#place_order');
-    await page.waitForURL(/order-received/);
+    if (await page.locator('#place_order').count()) {
+        await page.click('#place_order');
+    } else {
+        await page.click('.wc-block-components-checkout-place-order-button');
+    }
+    await page.waitForURL(/order-received/, { timeout: 20000 });
 }
 
 export async function getOrderIdFromReceivedPage(page) {

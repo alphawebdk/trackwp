@@ -45,6 +45,9 @@ function trackwp_uninstall_site() {
         'trackwp_upgrade_notice',
         'trackwp_upgrade_notice_1_10_1',
         'trackwp_upgrade_notice_meta_takeover',
+        // 1.13.0: license client state and the upgrade grace period.
+        'trackwp_license',
+        'trackwp_license_grace_until',
     );
     foreach ( $options as $option ) {
         delete_option( $option );
@@ -77,9 +80,18 @@ function trackwp_uninstall_site() {
         'trackwp_prune_delivery_log',
         'trackwp_prune_consent_log',
         'trackwp_migrate_consent_log',
+        'trackwp_license_check',
     );
     foreach ( $cron_hooks as $hook ) {
         wp_clear_scheduled_hook( $hook );
+    }
+    // Backup purchase and GA4 refund jobs carry arguments, so they are removed
+    // for every argument set: WP-Cron fallback and Action Scheduler.
+    foreach ( array( 'trackwp_backup_purchase', 'trackwp_ga4_refund' ) as $job_hook ) {
+        wp_unschedule_hook( $job_hook );
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( $job_hook );
+        }
     }
 
     // Plugin tables: delivery log, consent log, consent-text snapshots and

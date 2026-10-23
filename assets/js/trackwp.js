@@ -714,6 +714,21 @@
         }
     }
 
+    // Extra GA4 IDs (configured by render_gtag_head). Only valid G- IDs,
+    // never the primary, no duplicates.
+    function ga4ExtraIds() {
+        var list = config.ga4ExtraIds;
+        if (!Array.isArray(list)) return [];
+        var out = [];
+        for (var i = 0; i < list.length; i++) {
+            var id = list[i];
+            if (typeof id !== 'string' || !/^G-[A-Z0-9]{4,12}$/.test(id)) continue;
+            if (id === config.measurementId || out.indexOf(id) !== -1) continue;
+            out.push(id);
+        }
+        return out;
+    }
+
     // KC9/D5: same guard as fireGoogleAdsConversion — GTM's GA4 event tag
     // owns this via the dataLayer push when the layer is active.
     function fireGa4ClientEvent(eventName, payload, c, eventConfig) {
@@ -723,7 +738,10 @@
         if (!config.measurementId) return;
         if (eventConfig && !sendsTo(eventConfig, 'ga4')) return;
         if (typeof window.gtag !== 'function') return;
-        var params = { send_to: config.measurementId };
+        var sendTo = config.measurementId;
+        var extra = ga4ExtraIds();
+        if (extra.length) sendTo = [config.measurementId].concat(extra);
+        var params = { send_to: sendTo };
         if (payload.value || isTransactionEvent(eventName)) {
             params.value = payload.value || 0;
             params.currency = payload.currency;
@@ -1165,7 +1183,8 @@
         }
     }
 
-    function evaluateCondition(cond, el, cache) {
+    function evaluateCondition(cond, el, cache, ctx) {
+        if (ctx && cond.variable === 'form_id') return evaluateFormIdCondition(cond, el, ctx.pluginFormId || '', ctx.domFormId || '');
         var key = cond.variable + '|' + (cond.param || '');
         if (!Object.prototype.hasOwnProperty.call(cache, key)) cache[key] = computeVariable(cond.variable, cond.param, el);
         var value = cache[key];
@@ -1189,7 +1208,10 @@
             }
             return op === 'has_class' ? hasIt : !hasIt;
         }
-        var str = String(value);
+        return compareString(op, String(value), target);
+    }
+
+    function compareString(op, str, target) {
         switch (op) {
             case 'exists':       return str !== '';
             case 'not_exists':   return str === '';
@@ -1203,12 +1225,40 @@
         }
     }
 
-    function triggerMatches(trg, el) {
+    // Form ID inside sendFormEvent: matches the form's DOM id and the form
+    // plugin's own id (cf7_12, gf_2 ...). Negated operators hold only when no
+    // candidate satisfies the positive operator. Without any candidate and
+    // without an element the condition fails, as before.
+    var NEGATED_OPS = { not_equals: 'equals', not_contains: 'contains', not_exists: 'exists' };
+
+    function evaluateFormIdCondition(cond, el, pluginId, domId) {
+        var ids = [];
+        if (el && el.id) ids.push(String(el.id));
+        else if (!el && domId) ids.push(String(domId));
+        if (pluginId && ids.indexOf(pluginId) === -1) ids.push(pluginId);
+        if (!ids.length) {
+            if (!el) return false;
+            ids = [''];
+        }
+        var op = cond.operator;
+        var target = cond.value || '';
+        var positive = Object.prototype.hasOwnProperty.call(NEGATED_OPS, op) ? NEGATED_OPS[op] : null;
+        for (var i = 0; i < ids.length; i++) {
+            if (positive) {
+                if (compareString(positive, ids[i], target)) return false;
+            } else if (compareString(op, ids[i], target)) {
+                return true;
+            }
+        }
+        return positive !== null;
+    }
+
+    function triggerMatches(trg, el, ctx) {
         var conds = trg.conditions;
         if (!conds || !conds.length) return true;
         var cache = {};
         for (var i = 0; i < conds.length; i++) {
-            if (!evaluateCondition(conds[i], el, cache)) {
+            if (!evaluateCondition(conds[i], el, cache, ctx)) {
                 log('condition failed:', conds[i].variable, conds[i].operator, conds[i].value);
                 return false;
             }
@@ -1241,12 +1291,18 @@
      * reads field values; enhanced data is read here, synchronously, at
      * dispatch time, and only with marketing consent.
      *
-     * @param {{form_id?:string, form_name?:string, plugin?:string, nav?:boolean}} detail
+     * @param {{form_id?:string, form_name?:string, plugin?:string, nav?:boolean, dom_id?:string}} detail
      * @param {Element|null} form
      * @return {number} number of events sent or queued
      */
+    var FORM_PLUGINS = ['cf7', 'wpforms', 'fluentforms', 'gravityforms', 'sureforms'];
+
     function sendFormEvent(detail, form) {
         detail = detail || {};
+        var ctx = {
+            pluginFormId: (detail.plugin !== 'html' && detail.form_id) ? cleanFormId(detail.form_id) : '',
+            domFormId: detail.dom_id ? String(detail.dom_id) : ''
+        };
         var sent = 0;
         for (var i = 0; i < events.length; i++) {
             var evt = events[i];
@@ -1254,6 +1310,7 @@
             for (var t = 0; t < triggers.length; t++) {
                 var trg = triggers[t];
                 if (trg.type !== 'form_submit') continue;
+                if (trg.plugins_only === true && FORM_PLUGINS.indexOf(detail.plugin) === -1) continue;
                 if (trg.css_selector) {
                     if (!form || typeof form.matches !== 'function') continue;
                     try {
@@ -1262,7 +1319,7 @@
                         continue;
                     }
                 }
-                if (!triggerMatches(trg, form || null)) continue;
+                if (!triggerMatches(trg, form || null, ctx)) continue;
                 if (isDuplicateDispatch(evt.name, form)) break;
                 sendInternal(evt.name, {
                     form_id: detail.form_id || (form && form.id) || '',

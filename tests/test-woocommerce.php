@@ -329,4 +329,129 @@ class TrackWP_WooCommerce_Test extends WP_UnitTestCase {
         $this->assertArrayNotHasKey( 'debug', $config );
         $this->assertIsArray( $config['immediate'] );
     }
+
+    // ------------------------------------------------------------------
+    // Privacy: exporter, eraser, retention (finding 5b, 5c)
+    // ------------------------------------------------------------------
+
+    public function tear_down() {
+        unset( $_COOKIE['trackwp_consent'], $_COOKIE['_ga'], $_COOKIE['_fbp'] );
+        parent::tear_down();
+    }
+
+    /** Order for $email with attribution written by the real producer (save_attribution). */
+    private function order_with_attribution( $email, $with_attribution = true ) {
+        if ( ! class_exists( 'WooCommerce' ) ) {
+            $this->markTestSkipped( 'WooCommerce is not installed.' );
+        }
+        $order = wc_create_order();
+        $order->set_billing_email( $email );
+        $order->save();
+
+        if ( $with_attribution ) {
+            $cfg = get_option( 'trackwp_consent', array() );
+            $_COOKIE['trackwp_consent'] = wp_json_encode( array(
+                'v'          => isset( $cfg['consent_version'] ) ? (int) $cfg['consent_version'] : 1,
+                'ts'         => gmdate( 'Y-m-d\TH:i:s.000\Z' ),
+                'id'         => wp_generate_uuid4(),
+                'necessary'  => true,
+                'statistics' => true,
+                'marketing'  => true,
+            ) );
+            $_COOKIE['_ga']  = 'GA1.1.111.222';
+            $_COOKIE['_fbp'] = 'fb.1.1700000000000.123';
+            ( new TrackWP_WooCommerce( false ) )->save_attribution( $order->get_id() );
+            $this->assertNotEmpty( wc_get_order( $order->get_id() )->get_meta( TrackWP_WooCommerce::ORDER_META_ATTRIBUTION ), 'producer wrote attribution' );
+        }
+        return $order->get_id();
+    }
+
+    private function has_attribution( $order_id ) {
+        return (bool) wc_get_order( $order_id )->get_meta( TrackWP_WooCommerce::ORDER_META_ATTRIBUTION );
+    }
+
+    private function set_order_age_days( $order_id, $days ) {
+        $order = wc_get_order( $order_id );
+        $order->set_date_created( time() - $days * DAY_IN_SECONDS );
+        $order->save();
+    }
+
+    /** @group orders */
+    public function test_privacy_exporter_finds_attribution_on_customers_order() {
+        $mine  = $this->order_with_attribution( 'export@example.org' );
+        $this->order_with_attribution( 'other@example.org' );
+
+        $res = TrackWP_WooCommerce::privacy_exporter( 'export@example.org' );
+        $this->assertTrue( $res['done'] );
+        $this->assertCount( 1, $res['data'] );
+        $this->assertSame( 'trackwp-attribution', $res['data'][0]['group_id'] );
+        $this->assertSame( 'order-' . $mine, $res['data'][0]['item_id'] );
+        $names = wp_list_pluck( $res['data'][0]['data'], 'name' );
+        $this->assertContains( 'consent_marketing', $names );
+        $this->assertContains( 'client_id', $names );
+        $this->assertContains( 'fbp', $names );
+    }
+
+    /** @group orders */
+    public function test_privacy_eraser_removes_attribution_and_spares_other_customers() {
+        $mine  = $this->order_with_attribution( 'erase@example.org' );
+        $other = $this->order_with_attribution( 'keep@example.org' );
+
+        $res = TrackWP_WooCommerce::privacy_eraser( 'erase@example.org' );
+        $this->assertTrue( $res['items_removed'] );
+        $this->assertFalse( $res['items_retained'] );
+        $this->assertTrue( $res['done'] );
+        $this->assertFalse( $this->has_attribution( $mine ) );
+        $this->assertTrue( $this->has_attribution( $other ) );
+    }
+
+    /** @group orders */
+    public function test_prune_attribution_respects_the_90_day_window() {
+        $old    = $this->order_with_attribution( 'p1@example.org' );
+        $recent = $this->order_with_attribution( 'p2@example.org' );
+        $none   = $this->order_with_attribution( 'p3@example.org', false );
+        $this->set_order_age_days( $old, 91 );
+        $this->set_order_age_days( $recent, 89 );
+        $this->set_order_age_days( $none, 91 );
+
+        // At least ours: other tests may leave old attributed orders behind.
+        $this->assertGreaterThanOrEqual( 1, TrackWP_WooCommerce::prune_attribution() );
+        $this->assertFalse( $this->has_attribution( $old ) );
+        $this->assertTrue( $this->has_attribution( $recent ) );
+        $this->assertFalse( $this->has_attribution( $none ) );
+        // Nothing old and attributed is left, so a second run cleans nothing.
+        $this->assertSame( 0, TrackWP_WooCommerce::prune_attribution() );
+    }
+
+    /** @group orders */
+    public function test_privacy_policy_text_is_plain_and_without_em_dash() {
+        $text = TrackWP_WooCommerce::privacy_policy_text();
+        $this->assertStringContainsString( '90', $text );
+        $this->assertStringNotContainsString( "\xE2\x80\x94", $text );
+    }
+
+    /** @group orders */
+    public function test_prune_and_erase_do_not_touch_the_order() {
+        $old  = $this->order_with_attribution( 'quiet1@example.org' );
+        $mine = $this->order_with_attribution( 'quiet2@example.org' );
+        $this->set_order_age_days( $old, 120 );
+        $old_modified  = wc_get_order( $old )->get_date_modified()->getTimestamp();
+        $mine_modified = wc_get_order( $mine )->get_date_modified()->getTimestamp();
+        sleep( 2 );
+
+        $updates = 0;
+        $count   = function () use ( &$updates ) {
+            ++$updates;
+        };
+        add_action( 'woocommerce_update_order', $count );
+        TrackWP_WooCommerce::prune_attribution();
+        TrackWP_WooCommerce::privacy_eraser( 'quiet2@example.org' );
+        remove_action( 'woocommerce_update_order', $count );
+
+        $this->assertFalse( $this->has_attribution( $old ) );
+        $this->assertFalse( $this->has_attribution( $mine ) );
+        $this->assertSame( 0, $updates, 'No woocommerce_update_order from prune or erase.' );
+        $this->assertSame( $old_modified, wc_get_order( $old )->get_date_modified()->getTimestamp() );
+        $this->assertSame( $mine_modified, wc_get_order( $mine )->get_date_modified()->getTimestamp() );
+    }
 }

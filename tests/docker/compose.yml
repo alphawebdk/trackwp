@@ -88,6 +88,8 @@ services:
       # (X-TrackWP-Test-Token header check). Test-only, not a real secret.
       TRACKWP_TEST_TOKEN: trackwp-e2e-test-token
       # Consumed by tests/docker/wp/mu-plugins/trackwp-test-mockplatforms.php.
+      # entrypoint.sh writes it to wp-config.php on every start (existing volumes too).
+      TRACKWP_MOCKPLATFORMS_URL: http://mockplatforms:8090
       WORDPRESS_CONFIG_EXTRA: "define('TRACKWP_MOCKPLATFORMS_URL', 'http://mockplatforms:8090');"
     volumes:
       - ../..:/plugin-src:ro
@@ -121,6 +123,7 @@ services:
       TRACKWP_WP_ADMIN_USER: admin
       TRACKWP_WP_ADMIN_PASSWORD: admin
       TRACKWP_TEST_TOKEN: trackwp-e2e-test-token
+      TRACKWP_MOCKPLATFORMS_URL: http://mockplatforms:8090
       WORDPRESS_CONFIG_EXTRA: "define('TRACKWP_MOCKPLATFORMS_URL', 'http://mockplatforms:8090');"
     volumes:
       - ../..:/plugin-src:ro

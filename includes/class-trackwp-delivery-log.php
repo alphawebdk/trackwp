@@ -459,13 +459,14 @@ class TrackWP_Delivery_Log {
     }
 
     /**
-     * Ensure the daily pruning cron is scheduled while logging is on, and
-     * cleared when it is off.
+     * Ensure the daily pruning cron is scheduled while logging is on, or while
+     * stored rows remain after it was switched off (retention still applies;
+     * prune() is table_exists()-guarded). Cleared when neither holds.
      *
      * @return void
      */
     public static function sync_cron() {
-        if ( self::is_enabled() ) {
+        if ( self::is_enabled() || self::table_exists() ) {
             if ( ! wp_next_scheduled(self::CRON_HOOK) ) {
                 wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', self::CRON_HOOK);
             }

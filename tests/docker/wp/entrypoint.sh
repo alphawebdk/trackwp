@@ -49,6 +49,13 @@ if [ ! -f "$WEB_ROOT/wp-config.php" ]; then
         --dbpass="$DB_PASS" --dbhost="$DB_HOST" --allow-root
 fi
 
+# Ensures tests never hit real platforms, also on existing volumes:
+# WORDPRESS_CONFIG_EXTRA only applies when wp-config.php is first created.
+if [ -n "${TRACKWP_MOCKPLATFORMS_URL:-}" ]; then
+    wp config set TRACKWP_MOCKPLATFORMS_URL "$TRACKWP_MOCKPLATFORMS_URL" --type=constant \
+        --path="$WEB_ROOT" --allow-root
+fi
+
 if ! wp core is-installed --path="$WEB_ROOT" --allow-root; then
     wp core install --path="$WEB_ROOT" --url="$SITE_URL" --title="TrackWP E2E" \
         --admin_user="${TRACKWP_WP_ADMIN_USER:-admin}" \
@@ -76,6 +83,10 @@ if [ -n "$WC_VERSION" ] && [ ! -f "$WEB_ROOT/wp-content/plugins/woocommerce/wooc
     fi
 fi
 
+# e2e visits the shop as a guest; WooCommerce turns "coming soon" on for new
+# stores, which hides the shop pages from non-logged-in visitors.
+wp option update woocommerce_coming_soon no --path="$WEB_ROOT" --allow-root || true
+
 if [ ! -L "$WEB_ROOT/wp-content/plugins/trackwp" ] && [ -d /plugin-src ]; then
     rm -rf "$WEB_ROOT/wp-content/plugins/trackwp"
     ln -s /plugin-src "$WEB_ROOT/wp-content/plugins/trackwp"
@@ -88,6 +99,6 @@ if [ -d /mu-plugins ]; then
 fi
 
 wp rewrite structure '/%postname%/' --path="$WEB_ROOT" --allow-root || true
-wp rewrite flush --path="$WEB_ROOT" --allow-root || true
+wp rewrite flush --hard --path="$WEB_ROOT" --allow-root || true
 
 exec "$@"

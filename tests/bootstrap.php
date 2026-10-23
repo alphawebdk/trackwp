@@ -65,6 +65,10 @@ function _trackwp_manually_load_plugin() {
             }
         }, -10 );
     }
+    // License gate: existing tests run with tracking allowed (as in 1.11.x).
+    // test-license.php clears the override per test with force_state_for_tests(null).
+    require_once dirname( __DIR__ ) . '/includes/class-trackwp-license.php';
+    TrackWP_License::force_state_for_tests( true );
     require dirname( __DIR__ ) . '/trackwp.php';
 }
 tests_add_filter( 'muplugins_loaded', '_trackwp_manually_load_plugin' );

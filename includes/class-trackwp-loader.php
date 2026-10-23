@@ -16,6 +16,9 @@ class TrackWP_Loader {
     /** Maximum accepted collect body size in bytes (64 kB). */
     const MAX_BODY_BYTES = 65536;
 
+    /** Click-id parameters removed from non-marketing collect hits and from dl/dr. */
+    const CLICK_IDS = array('gclid', 'dclid', 'gbraid', 'wbraid', 'fbclid', 'msclkid', 'gclgs', 'gclst', 'gcllp');
+
     /** Collect rate limit: requests per 2-second window per client IP. */
     const COLLECT_RATE_LIMIT = 60;
 
@@ -193,8 +196,8 @@ class TrackWP_Loader {
      *
      * The hit must name this site's GA4 property: `tid` must be present in
      * the query string or in the body (gtag batches hits as newline-separated
-     * query strings) and every tid found must equal the configured
-     * Measurement ID. A missing or foreign tid would let third parties pump
+     * query strings) and every tid found must be one of the configured GA4
+     * IDs (primary + extra). A missing or foreign tid would let third parties pump
      * hits through this site. Bodies over 64 kB are refused.
      *
      * @param string $query_string Raw query string.
@@ -207,8 +210,8 @@ class TrackWP_Loader {
         }
 
         $platforms = get_option('trackwp_platforms', array());
-        $expected  = isset($platforms['ga4_measurement_id']) ? (string) $platforms['ga4_measurement_id'] : '';
-        if (!preg_match('/^G-[A-Z0-9]{4,12}$/', $expected)) {
+        $allowed   = TrackWP_GA4::allowed_measurement_ids(is_array($platforms) ? $platforms : array());
+        if (empty($allowed)) {
             return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
         }
 
@@ -236,7 +239,7 @@ class TrackWP_Loader {
             return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
         }
         foreach ($tids as $tid) {
-            if (!is_string($tid) || $tid !== $expected) {
+            if (!is_string($tid) || !in_array($tid, $allowed, true)) {
                 return new WP_Error('rest_forbidden', __('Ukendt måle-id.', 'trackwp'), array('status' => 403));
             }
         }
@@ -246,10 +249,30 @@ class TrackWP_Loader {
     /**
      * Proxy a GA4 collect hit to google-analytics.com.
      *
-     * The query string is passed through untouched (gcs/gcd and every other
-     * Consent Mode parameter keep their exact values) and _uip is appended
-     * from TrackWP_Request_Guard::client_ip(). The client's User-Agent is
-     * forwarded so GA's device/browser reporting stays correct.
+     * The server reads the consent cookie (TrackWP_Consent::parse_cookie()).
+     *
+     * With analytics consent the query string and body are passed through
+     * untouched (gcs/gcd and every other Consent Mode parameter keep their
+     * exact values) and _uip is appended from
+     * TrackWP_Request_Guard::client_ip().
+     *
+     * Without analytics consent (no valid cookie, or statistics=false):
+     * - A hit whose gcs says analytics_storage is granted is NOT forwarded
+     *   (the answer is still 204). gcs has the form "G1" + ad_storage +
+     *   analytics_storage, so analytics_storage is the 4th character:
+     *   G100 and G110 are denied (cookieless ACM pings, forwarded), G101 and
+     *   G111 are granted (dropped; e.g. a hit batched before a withdrawal).
+     * - Everything else is forwarded downgraded: _uip is truncated (IPv4
+     *   last octet 0, IPv6 /48; an invalid IP omits _uip), client supplied
+     *   _uip, uid and up./upn. pairs are removed, without marketing consent
+     *   the click ids are removed too, and dl/dr are scrubbed with
+     *   TrackWP_Privacy::clean_url().
+     * - The User-Agent is forwarded unchanged: Google receives the same UA
+     *   from a direct ACM ping without the proxy, and generalising it would
+     *   break device, browser and bot filtering.
+     *
+     * The client's User-Agent is forwarded so GA's device/browser reporting
+     * stays correct.
      *
      * Requests failing validate_collect() get 403/413. Once validated, the
      * answer is always 204: upstream errors never surface in the browser.
@@ -268,13 +291,63 @@ class TrackWP_Loader {
             return $valid;
         }
 
+        $consent   = TrackWP_Consent::parse_cookie();
+        $analytics = $consent && !empty($consent['statistics']);
+        $marketing = $consent && !empty($consent['marketing']);
+        $client_ip = TrackWP_Request_Guard::client_ip();
+
+        if (!$analytics) {
+            $lines = array_merge(array($query_string), '' === $body ? array() : preg_split('/\r\n|\r|\n/', $body));
+            foreach ($lines as $line) {
+                $granted = false;
+                self::rewrite_pairs($line, function ($key, $pair) use (&$granted) {
+                    $eq = strpos($pair, '=');
+                    if ('gcs' === $key && false !== $eq && preg_match('/^G1[01]1$/', rawurldecode(substr($pair, $eq + 1)))) {
+                        $granted = true;
+                    }
+                    return $pair;
+                });
+                if ($granted) {
+                    // Same 204 as before; the header only tells a debugger why.
+                    return new WP_REST_Response(null, 204, array(
+                        'X-TrackWP-Drop' => $consent ? 'consent_denied' : 'consent_cookie_missing',
+                    ));
+                }
+            }
+
+            $scrub = function ($key, $pair) use ($marketing) {
+                if ('uid' === $key || '_uip' === $key || 0 === strpos($key, 'up.') || 0 === strpos($key, 'upn.')) {
+                    return null;
+                }
+                if (!$marketing && in_array($key, self::CLICK_IDS, true)) {
+                    return null;
+                }
+                if ('dl' === $key || 'dr' === $key) {
+                    $eq    = strpos($pair, '=');
+                    $value = false === $eq ? '' : rawurldecode(substr($pair, $eq + 1));
+                    return substr($pair, 0, false === $eq ? strlen($pair) : $eq) . '=' . rawurlencode(
+                        TrackWP_Privacy::clean_url($value, $marketing ? array() : self::CLICK_IDS)
+                    );
+                }
+                return $pair;
+            };
+            $query_string = self::rewrite_pairs($query_string, $scrub);
+            if ('' !== $body) {
+                $out = array();
+                foreach (preg_split('/\r\n|\r|\n/', $body) as $line) {
+                    $out[] = self::rewrite_pairs($line, $scrub);
+                }
+                $body = implode("\n", $out);
+            }
+            $client_ip = self::truncate_ip($client_ip);
+        }
+
         $url = 'https://www.google-analytics.com' . $upstream_path;
         if ('' !== $query_string) {
             $url .= '?' . $query_string;
         } else {
             $url .= '?';
         }
-        $client_ip = TrackWP_Request_Guard::client_ip();
         if ('' !== $client_ip) {
             $url .= '&_uip=' . rawurlencode($client_ip);
         }
@@ -297,5 +370,53 @@ class TrackWP_Loader {
 
         // Contract (see docblock): a validated hit ALWAYS returns 2xx.
         return new WP_REST_Response(null, 204);
+    }
+
+    /**
+     * Rewrite a querystring pair by pair. wp_parse_str/parse_str are not used
+     * because PHP renames "ep.x" to "ep_x". The key is compared after
+     * rawurldecode; untouched pairs keep their exact bytes.
+     *
+     * @param string   $qs       Querystring.
+     * @param callable $callback function($decoded_key, $raw_pair): string|null (null drops the pair).
+     * @return string
+     */
+    private static function rewrite_pairs($qs, $callback) {
+        if ('' === $qs) {
+            return '';
+        }
+        $out = array();
+        foreach (explode('&', $qs) as $pair) {
+            $eq  = strpos($pair, '=');
+            $key = rawurldecode(false === $eq ? $pair : substr($pair, 0, $eq));
+            $new = call_user_func($callback, $key, $pair);
+            if (null !== $new) {
+                $out[] = $new;
+            }
+        }
+        return implode('&', $out);
+    }
+
+    /**
+     * IPv4 last octet 0, IPv6 /48. Invalid IP gives '' (no _uip).
+     *
+     * @param string $ip IP address.
+     * @return string
+     */
+    private static function truncate_ip($ip) {
+        $bin = '' === $ip ? false : @inet_pton($ip);
+        if (false === $bin) {
+            return '';
+        }
+        // IPv4-mapped IPv6 (::ffff:a.b.c.d) is an IPv4 address: truncate it as one.
+        if (16 === strlen($bin) && substr($bin, 0, 12) === substr((string) inet_pton('::ffff:0.0.0.0'), 0, 12)) {
+            $bin = substr($bin, 12);
+        }
+        if (4 === strlen($bin)) {
+            $bin[3] = "\0";
+        } else {
+            $bin = substr($bin, 0, 6) . str_repeat("\0", 10);
+        }
+        return (string) inet_ntop($bin);
     }
 }

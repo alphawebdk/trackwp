@@ -6,17 +6,12 @@
  * Needs the W0 test endpoint POST /wp-json/trackwp-test/v1/options.
  */
 import { test, expect } from '@playwright/test';
+import { setOptions } from './helpers/test-endpoints.mjs';
 
-async function setOptions(request, baseURL, options) {
-    const res = await request.post(new URL('/wp-json/trackwp-test/v1/options', baseURL).toString(), { data: options });
-    return res.ok();
-}
-
-async function setup(page, context, request, baseURL) {
-    const ok = await setOptions(request, baseURL, {
+async function setup(page, context) {
+    await setOptions({
         trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
     });
-    test.skip(!ok, 'W0 test endpoint /wp-json/trackwp-test/v1/options is missing');
     await page.addInitScript(() => {
         window.__fbq = [];
         window.fbq = function () { window.__fbq.push(Array.prototype.slice.call(arguments)); };
@@ -42,8 +37,8 @@ function lastConsentUpdate(page) {
     });
 }
 
-test('marketing off keeps statistics', async ({ page, context, request, baseURL }) => {
-    await setup(page, context, request, baseURL);
+test('marketing off keeps statistics', async ({ page, context }) => {
+    await setup(page, context);
     const log = page.waitForRequest((r) => r.url().includes('/trackwp/v1/consent-log') && r.postDataJSON().marketing === false);
     await page.evaluate(() => window.trackwpConsent.setChoices({ statistics: true, marketing: false }));
     expect((await log).postDataJSON().event_type).toBe('update');
@@ -60,8 +55,8 @@ test('marketing off keeps statistics', async ({ page, context, request, baseURL 
     expect(upd.ad_personalization).toBe('denied');
 });
 
-test('statistics off keeps marketing', async ({ page, context, request, baseURL }) => {
-    await setup(page, context, request, baseURL);
+test('statistics off keeps marketing', async ({ page, context }) => {
+    await setup(page, context);
     const log = page.waitForRequest((r) => r.url().includes('/trackwp/v1/consent-log') && r.postDataJSON().statistics === false);
     await page.evaluate(() => window.trackwpConsent.setChoices({ statistics: false, marketing: true }));
     expect((await log).postDataJSON().event_type).toBe('update');

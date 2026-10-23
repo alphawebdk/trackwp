@@ -127,6 +127,24 @@ class TrackWP_Purchase_Claim_Flow_Test extends WP_UnitTestCase {
         return rest_get_server()->dispatch( $request );
     }
 
+    /**
+     * Since 1.11.4 a payload consent only counts together with a valid cookie.
+     * The cookie is produced by the server's own writer
+     * (TrackWP_Consent::write_consent_cookie) and read back from the captured
+     * Set-Cookie, so the format is the real one.
+     */
+    private function set_consent_cookie( $statistics, $marketing ) {
+        TrackWP_Cookies::reset_sent();
+        TrackWP_Consent::write_consent_cookie( 1, 1788256800000, '0f8e2c1a-3b4d-4e5f-8a9b-0c1d2e3f4a5b', $statistics, $marketing, false );
+        foreach ( TrackWP_Cookies::sent_cookies() as $c ) {
+            if ( 'trackwp_consent' === $c['name'] ) {
+                $_COOKIE['trackwp_consent'] = $c['value'];
+            }
+        }
+        TrackWP_Cookies::reset_sent();
+        $this->assertNotEmpty( $_COOKIE['trackwp_consent'] );
+    }
+
     private function ga4_reasons() {
         $out = array();
         foreach ( TrackWP_Delivery_Log::get_recent( 100 ) as $row ) {
@@ -140,6 +158,7 @@ class TrackWP_Purchase_Claim_Flow_Test extends WP_UnitTestCase {
     public function test_same_purchase_twice_sends_exactly_one_ga4_hit() {
         $order   = $this->make_order();
         $consent = array( 'analytics' => true, 'marketing' => false, 'v' => 1 );
+        $this->set_consent_cookie( true, false );
 
         $this->post_purchase( $order, $consent );
         $this->assertCount( 1, $this->ga4_requests(), 'First verified purchase is sent' );
@@ -153,6 +172,7 @@ class TrackWP_Purchase_Claim_Flow_Test extends WP_UnitTestCase {
 
     public function test_sent_purchase_uses_order_data_not_client_value() {
         $order = $this->make_order();
+        $this->set_consent_cookie( true, false );
         $this->post_purchase( $order, array( 'analytics' => true, 'marketing' => false, 'v' => 1 ), 99999 );
 
         $ga4 = $this->ga4_requests();
@@ -165,13 +185,56 @@ class TrackWP_Purchase_Claim_Flow_Test extends WP_UnitTestCase {
     public function test_rejected_consent_does_not_claim_then_valid_consent_sends_once() {
         $order = $this->make_order();
 
+        $this->set_consent_cookie( false, false );
         $this->post_purchase( $order, array( 'analytics' => false, 'marketing' => false, 'v' => 1 ) );
         $this->assertCount( 0, $this->ga4_requests() );
         $this->assertFalse( TrackWP_Order_Claims::is_claimed( $order->get_id() ), 'No claim without consent (R9)' );
 
+        $this->set_consent_cookie( true, false );
         $this->post_purchase( $order, array( 'analytics' => true, 'marketing' => false, 'v' => 1 ) );
         $this->assertCount( 1, $this->ga4_requests() );
         $this->assertTrue( TrackWP_Order_Claims::is_claimed( $order->get_id() ) );
+    }
+
+    private function post_enhanced_event( $event_name, $hash ) {
+        $body = array(
+            'event'      => $event_name,
+            'event_id'   => 'evt_' . str_repeat( 'c3', 16 ),
+            'page_url'   => 'https://example.org/tak/',
+            'page_title' => 'Tak',
+            'client_id'  => '123456789.1700000000',
+            'session_id' => '1700000000',
+            'value'      => 150,
+            'enhanced'   => array( 'email_sha256' => $hash ),
+            'consent'    => array( 'analytics' => true, 'marketing' => true, 'v' => 1 ),
+        );
+        $request = new WP_REST_Request( 'POST', '/trackwp/v1/event' );
+        $request->set_header( 'Content-Type', 'application/json' );
+        $request->set_body( wp_json_encode( $body ) );
+        $_SERVER['REMOTE_ADDR'] = '10.' . wp_rand( 0, 255 ) . '.' . wp_rand( 0, 255 ) . '.' . wp_rand( 1, 254 );
+        return rest_get_server()->dispatch( $request );
+    }
+
+    public function test_unverified_purchase_does_not_send_client_supplied_enhanced_data() {
+        $hash = hash( 'sha256', 'kunde@example.dk' );
+        $this->set_consent_cookie( true, true );
+
+        // Control: the same enhanced data on another event IS sent, so the
+        // assertion below can detect it.
+        $this->post_enhanced_event( 'generate_lead', $hash );
+        $control = $this->ga4_requests();
+        $this->assertCount( 1, $control );
+        $this->assertStringContainsString( $hash, $control[0]['body'], 'Control: enhanced reaches GA4 for an ordinary event' );
+
+        // Unverified purchase: no order_ref, no verifiable legacy key.
+        $this->http = array();
+        $this->post_enhanced_event( 'purchase', $hash );
+        $ga4 = $this->ga4_requests();
+        $this->assertCount( 1, $ga4, 'The unverified purchase itself is still sent' );
+        $this->assertStringNotContainsString( $hash, $ga4[0]['body'] );
+        $decoded = json_decode( $ga4[0]['body'], true );
+        $this->assertArrayNotHasKey( 'user_data', $decoded );
+        $this->assertSame( 150.0, (float) $decoded['events'][0]['params']['value'], 'value is kept' );
     }
 
     public function test_stale_consent_does_not_claim() {

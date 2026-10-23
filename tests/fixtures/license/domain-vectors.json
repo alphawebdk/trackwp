@@ -1,0 +1,190 @@
+{
+  "description": "Domain normalization vectors. host null means invalid input (HTTP 400).",
+  "cases": [
+    {
+      "input": "example.dk",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "  Example.DK  ",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "https://www.example.dk/",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "http://user:pw@www.Example.dk:8080/path/x?y=1#z",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "www.example.dk.",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "www.www.example.dk",
+      "host": "www.example.dk",
+      "staging": false
+    },
+    {
+      "input": "shop.example.dk",
+      "host": "shop.example.dk",
+      "staging": false
+    },
+    {
+      "input": "example.dk:443",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "https://example.dk?x=1",
+      "host": "example.dk",
+      "staging": false
+    },
+    {
+      "input": "blå.dk",
+      "host": "xn--bl-zia.dk",
+      "staging": false
+    },
+    {
+      "input": "https://www.blå.dk/side",
+      "host": "xn--bl-zia.dk",
+      "staging": false
+    },
+    {
+      "input": "xn--bl-zia.dk",
+      "host": "xn--bl-zia.dk",
+      "staging": false
+    },
+    {
+      "input": "localhost",
+      "host": "localhost",
+      "staging": true
+    },
+    {
+      "input": "http://localhost:8080",
+      "host": "localhost",
+      "staging": true
+    },
+    {
+      "input": "127.0.0.1",
+      "host": "127.0.0.1",
+      "staging": true
+    },
+    {
+      "input": "http://192.168.1.10:8000/wp",
+      "host": "192.168.1.10",
+      "staging": true
+    },
+    {
+      "input": "[::1]",
+      "host": "::1",
+      "staging": true
+    },
+    {
+      "input": "mysite.local",
+      "host": "mysite.local",
+      "staging": true
+    },
+    {
+      "input": "mysite.test",
+      "host": "mysite.test",
+      "staging": true
+    },
+    {
+      "input": "mysite.localhost",
+      "host": "mysite.localhost",
+      "staging": true
+    },
+    {
+      "input": "staging.example.dk",
+      "host": "staging.example.dk",
+      "staging": true
+    },
+    {
+      "input": "dev.example.dk",
+      "host": "dev.example.dk",
+      "staging": true
+    },
+    {
+      "input": "foo.kinsta.cloud",
+      "host": "foo.kinsta.cloud",
+      "staging": true
+    },
+    {
+      "input": "foo.wpengine.com",
+      "host": "foo.wpengine.com",
+      "staging": true
+    },
+    {
+      "input": "foo.wpenginepowered.com",
+      "host": "foo.wpenginepowered.com",
+      "staging": true
+    },
+    {
+      "input": "foo.cloudwaysapps.com",
+      "host": "foo.cloudwaysapps.com",
+      "staging": true
+    },
+    {
+      "input": "foo.sg-host.com",
+      "host": "foo.sg-host.com",
+      "staging": true
+    },
+    {
+      "input": "devshop.example.dk",
+      "host": "devshop.example.dk",
+      "staging": false
+    },
+    {
+      "input": "notlocalhost.dk",
+      "host": "notlocalhost.dk",
+      "staging": false
+    },
+    {
+      "input": "",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "   ",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "https://",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "exa mple.dk",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "exa_mple$.dk",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "www.",
+      "host": "www",
+      "staging": false
+    },
+    {
+      "input": "..",
+      "host": null,
+      "staging": false
+    },
+    {
+      "input": "a..b.dk",
+      "host": null,
+      "staging": false
+    }
+  ]
+}

@@ -398,6 +398,8 @@
         });
         $typeSelect.on('change', function () {
             trigger.type = $(this).val();
+            if (trigger.type === 'form_submit' && trigger.plugins_only === undefined) trigger.plugins_only = true;
+            if (trigger.type !== 'form_submit') delete trigger.plugins_only;
             // Conditions referencing variables that no longer exist for this
             // trigger type would silently never match — drop them instead.
             trigger.conditions = $.grep(trigger.conditions || [], function (c) {
@@ -497,6 +499,27 @@
                 $box.append(field('cssSelector', 'CSS-selector', 'css_selector', 'text', 'a[href^="tel:"]'));
                 break;
             case 'form_submit':
+                $box.append(field('cssSelector', 'CSS-selector', 'css_selector', 'text', 'form.kontakt'));
+                $box.append($('<p>').append(
+                    $('<label>').append(
+                        $('<input>').attr('type', 'checkbox').prop('checked', trigger.plugins_only === true)
+                            .on('change', function () {
+                                trigger.plugins_only = this.checked;
+                                refreshSummary(index);
+                            }),
+                        document.createTextNode(' ' + ((window.trackwpAdminConfig && trackwpAdminConfig.strings.pluginsOnly) ||
+                            'Kun formular-plugins (Contact Form 7, Gravity Forms, WPForms, Fluent Forms, SureForms)'))
+                    )
+                ));
+                $box.append($('<p>').addClass('description').text(
+                    (window.trackwpAdminConfig && trackwpAdminConfig.strings.pluginsOnlyHelp) ||
+                    'Almindelige HTML-formularer tælles ikke. Bruger du en anden formularløsning (fx Elementor), så slå valget fra.'
+                ));
+                $box.append($('<p>').addClass('description').text(
+                    (window.trackwpAdminConfig && trackwpAdminConfig.strings.formIdHelp) ||
+                    'Udeluk en formular med betingelsen Form ID "does not equal", fx cf7_12, wpforms_34, gf_2, fluent_5 eller srfm_7 (samme værdi som form_id i GA4) eller formularens HTML-id.'
+                ));
+                break;
             case 'file_download':
                 $box.append(field('cssSelector', 'CSS-selector', 'css_selector', 'text', 'form.kontakt'));
                 break;

@@ -63,10 +63,21 @@ class TrackWP_Event_Url_Privacy_Test extends WP_UnitTestCase {
     }
 
     public function test_order_key_and_email_never_reach_ga4_even_with_full_consent() {
+        // effective_consent() needs the payload backed by a valid cookie; take
+        // it from the real producer, at the server version.
+        TrackWP_Cookies::reset_sent();
+        TrackWP_Consent::write_consent_cookie( TrackWP_Consent::server_version(), 1790000000000, '0b6f3c1e-8f4a-4d2b-9c7e-1a2b3c4d5e6f', true, true, false );
+        foreach ( TrackWP_Cookies::sent_cookies() as $cookie ) {
+            if ( 'trackwp_consent' === $cookie['name'] ) {
+                $_COOKIE['trackwp_consent'] = $cookie['value'];
+            }
+        }
+        $this->assertArrayHasKey( 'trackwp_consent', $_COOKIE );
+
         $body = array(
             'event'         => 'form_submit',
             'event_id'      => 'evt_' . str_repeat( 'c3', 16 ),
-            'page_url'      => 'https://example.org/checkout/order-received/12/?key=wc_order_SECRETKEY1&email=kunde%40example.org&utm_source=nyhedsbrev',
+            'page_url'      => 'https://example.org/checkout/order-received/12/?key=wc_order_SECRETKEY1&email=kunde%40example.org&utm_source=nyhedsbrev&phone=PHONEVAL9&navn=NAVNVAL9&ref=010190-1234&tlf2=%2B4512345678&id=12345678',
             'page_referrer' => 'https://example.org/konto/?token=TOPSECRET2&utm_medium=mail',
             'page_title'    => 'Tak kunde@example.org',
             'client_id'     => '123456789.1700000000',
@@ -88,5 +99,11 @@ class TrackWP_Event_Url_Privacy_Test extends WP_UnitTestCase {
         $this->assertStringNotContainsString( 'TOPSECRET2', $ga4[0] );
         $this->assertStringNotContainsString( 'kunde@example.org', $ga4[0] );
         $this->assertStringNotContainsString( 'kunde%40example.org', $ga4[0] );
+        $this->assertStringNotContainsString( 'PHONEVAL9', $ga4[0] );
+        $this->assertStringNotContainsString( 'NAVNVAL9', $ga4[0] );
+        $this->assertStringNotContainsString( '010190-1234', $ga4[0] );
+        $this->assertStringNotContainsString( '4512345678', $ga4[0] );
+        // A plain 8-digit id is not PII and must survive.
+        $this->assertStringContainsString( 'id=12345678', $ga4[0] );
     }
 }

@@ -420,6 +420,48 @@ $has_woocommerce = class_exists('WooCommerce');
                             </p>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">
+                            <?php echo esc_html__('Ekstra Measurement ID\'er', 'trackwp'); ?>
+                        </th>
+                        <td>
+                            <?php
+                            $ga4_extra_rows = ( isset($platforms['ga4_extra_ids']) && is_array($platforms['ga4_extra_ids']) ) ? array_values($platforms['ga4_extra_ids']) : array();
+                            for ( $ga4_extra_i = 0; $ga4_extra_i < TrackWP_GA4::MAX_EXTRA_IDS; $ga4_extra_i++ ) :
+                                $ga4_extra_row    = ( isset($ga4_extra_rows[ $ga4_extra_i ]) && is_array($ga4_extra_rows[ $ga4_extra_i ]) ) ? $ga4_extra_rows[ $ga4_extra_i ] : array();
+                                $ga4_extra_id     = isset($ga4_extra_row['id']) ? (string) $ga4_extra_row['id'] : '';
+                                $ga4_extra_secret = ! empty($ga4_extra_row['api_secret']);
+                                ?>
+                            <p>
+                                <input type="text"
+                                       id="ga4_extra_id_<?php echo (int) $ga4_extra_i; ?>"
+                                       name="trackwp_platforms[ga4_extra_ids][<?php echo (int) $ga4_extra_i; ?>][id]"
+                                       value="<?php echo esc_attr($ga4_extra_id); ?>"
+                                       class="regular-text"
+                                       placeholder="G-XXXXXXXXXX"
+                                       aria-label="<?php echo esc_attr__('Ekstra Measurement ID', 'trackwp'); ?>" />
+                            </p>
+                            <div class="trackwp-password-field">
+                                <input type="password"
+                                       id="ga4_extra_secret_<?php echo (int) $ga4_extra_i; ?>"
+                                       name="trackwp_platforms[ga4_extra_ids][<?php echo (int) $ga4_extra_i; ?>][api_secret]"
+                                       value="<?php echo $ga4_extra_secret ? '••••••••' : ''; ?>"
+                                       class="regular-text"
+                                       placeholder="<?php echo esc_attr__('API Secret (valgfri)', 'trackwp'); ?>"
+                                       aria-label="<?php echo esc_attr__('API Secret (valgfri)', 'trackwp'); ?>"
+                                       autocomplete="new-password" />
+                                <?php if ( $ga4_extra_secret ) : ?>
+                                <button type="button" class="button trackwp-clear-secret" data-target="ga4_extra_secret_<?php echo (int) $ga4_extra_i; ?>">
+                                    <?php echo esc_html__('Ryd', 'trackwp'); ?>
+                                </button>
+                                <?php endif; ?>
+                            </div>
+                            <?php endfor; ?>
+                            <p class="description">
+                                <?php echo esc_html__('Maks 3. Events og sidevisninger sendes også til disse properties via gtag.js. Server-side (Measurement Protocol) sendes kun til ID\'er med egen API secret. Ved GTM ("Jeg bruger GTM" eller GTM-container) ignoreres felterne på klientsiden, så du opretter selv GA4-tags i GTM. Kun aktivt når GA4 er slået til med et gyldigt primært Measurement ID.', 'trackwp'); ?>
+                            </p>
+                        </td>
+                    </tr>
                 </table>
             </div>
 
@@ -1170,6 +1212,17 @@ $has_woocommerce = class_exists('WooCommerce');
                                class="small-text"
                                min="0"
                                max="50" />
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><label for="consent_trigger_position"><?php echo esc_html__('Placering af cookie-knap', 'trackwp'); ?></label></th>
+                    <td>
+                        <?php $trigger_position = ( isset($consent['trigger_position']) && 'left' === $consent['trigger_position'] ) ? 'left' : 'right'; ?>
+                        <select name="trackwp_consent[trigger_position]" id="consent_trigger_position">
+                            <option value="right" <?php selected($trigger_position, 'right'); ?>><?php esc_html_e('Højre (standard)', 'trackwp'); ?></option>
+                            <option value="left" <?php selected($trigger_position, 'left'); ?>><?php esc_html_e('Venstre', 'trackwp'); ?></option>
+                        </select>
+                        <p class="description"><?php esc_html_e('Den lille runde knap nederst på siden, der genåbner cookie-indstillingerne.', 'trackwp'); ?></p>
                     </td>
                 </tr>
             </table>

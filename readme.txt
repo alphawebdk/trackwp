@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.11.2
+Stable tag: 1.13.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -97,6 +97,10 @@ WooCommerce-integration er planlagt til v1.5 med fuld e-commerce event tracking.
 
 Ja. Farver, tekst, stil (centreret pop-up / bjælke i bunden / diskret hjørne-pop-up) og samtykke-kategorier er alle konfigurerbare i admin-panelet.
 
+= Er TrackWP en Google-certificeret CMP? =
+
+Nej. TrackWP er ikke en Google-certificeret CMP og implementerer ikke IAB TCF. Publishers, der viser annoncer via AdSense, Ad Manager eller AdMob i EØS, UK eller Schweiz, skal bruge en certificeret CMP. Almindelige annoncører med GA4 og Google Ads kan bruge TrackWP med Consent Mode v2.
+
 = Hvordan gemmes API-secrets? =
 
 API-secrets gemmes base64-encoded i WordPress' options-tabel. Databasen er beskyttet af WordPress-authentication.
@@ -113,6 +117,67 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.13.0 =
+
+**Licens og opdateringer fra nordium.**
+
+* Ny: TrackWP kræver en licensnøgle. Uden gyldig licens er tracking slået fra (GA4, Google Ads, Meta, GTM, formularer, WooCommerce og første-parts-endpoint). Samtykkebanner, blokering, /my-data og indstillinger virker altid.
+* Ny: siden Licens under TrackWP til at aktivere nøglen, tjekke status og frigive domænet.
+* Ny: eksisterende installationer får 30 dages grace uden licens. Når en nøgle er aktiveret, afgør licensen alene, og grace tæller ikke længere.
+* Ny: opdateringer hentes fra nordium.ai/trackwp i stedet for GitHub.
+* Ny: denne version udgives også på GitHub som bro-release, så eksisterende installationer flytter over til den nye opdateringsserver ved næste opdatering.
+
+**Samtykke og privatliv strammet op.**
+
+* Rettet: samtykke i en payload tæller kun, hvis der findes en gyldig samtykkecookie.
+* Rettet: uverificerede køb sender ikke kundedata.
+* Rettet: collect-proxyen nedgraderer hits uden statistiksamtykke. IP-adressen trunkeres, uid, user properties og klik-id'er fjernes, og hits der påstår granted uden cookie sendes ikke.
+* Rettet: GA4-køen ryddes, når samtykke trækkes tilbage, og er låst mod samtidig afsendelse.
+* Ny: banneret nævner de faktiske modtagere og de felter, der deles.
+* Rettet: teksten på /my-data er ændret, så den passer til det der faktisk gemmes.
+* Ny: WordPress' værktøjer til eksport og sletning af personoplysninger dækker ordreattribution, og der er en foreslået privatlivstekst.
+* Ny: ordreattribution på WooCommerce-ordrer slettes automatisk efter 90 dage.
+* Ny: tilføjes en ny leverandør eller kategori, bliver besøgende automatisk bedt om nyt samtykke. Fjernelser og leverandører, der har været aktive før, udløser ikke et nyt samtykke.
+* Ny: URL-filteret fjerner flere nøgler (fx navn, telefon, adresse, cpr) og værdier der ligner CPR-numre og telefonnumre med landekode.
+* Ny: banneret gemmes som snapshot, hver gang indstillinger gemmes, så en samtykkeversion kan dokumenteres bagud.
+* Rettet: knapperne Accepter og Afvis følger ikke længere temaets knapstil.
+* Ny: advarsel i admin, når samtykkeloggen er slået fra (GDPR art. 7, stk. 1).
+* Rettet: leveringsloggens oprydning fortsætter, også når loggen er slået fra, så længe tabellen findes.
+* Bemærk: ligger REST-URL'en på en anden host end siden, får den ingen samtykkecookie og dermed ingen server-side events.
+* Bemærk: tredjeparts purchase-events uden order_ref mister match-kvalitet.
+* Bemærk: ?name= m.fl. fjernes fra page_location.
+* Bemærk: restrisiko: en klient, der selv sætter Cookie-headeren, kan stadig angive samtykke.
+* Ny: hæves samtykkeversionen automatisk, vises en engangsnotits i admin med de nye leverandører eller kategorier. Notitsen samler alle nye leverandører, indtil den er vist. Nye leverandører i kategorien nødvendige udløser ikke nyt samtykke.
+* Rettet: IPv4-mappede IPv6-adresser (::ffff:a.b.c.d) trunkeres som IPv4.
+* Bemærk: collect-proxyen dropper også hits fra samtykkere, når samtykkecookien ikke når serveren (REST/collect på en anden host, hosts eller CDN'er der fjerner cookies). Leveringsloggen viser årsagen consent_cookie_missing for de platforme, hvis kategori der blev givet samtykke til, og collect-svaret har headeren X-TrackWP-Drop.
+* Bemærk: efter et versionsbump kan sider i ukendte edge-caches tabe hits, indtil første server-event på siden eller cachen udløber.
+* Bemærk: omdøbning af en custom-leverandør tæller som en ny leverandør og udløser nyt samtykke.
+* Bemærk: GA4-events, der allerede er sendt, når samtykket trækkes tilbage, kan ikke kaldes tilbage. Genforsøg respekterer tilbagetrækningen.
+* Bemærk: 10-cifrede tal, der også er et gyldigt CPR-nummer, fjernes fra page_location. Det gælder fx Unix-tidsstempler fra 26.01.2027 til 14.06.2027.
+* Bemærk: prune og sletning af ordreattribution udløser ikke ordreopdateringer (ingen ændret dato, ingen woocommerce_update_order), når HPOS er autoritativ eller kompatibilitetstilstand er slået fra. I kompatibilitetstilstand med posts autoritativt gemmes ordren for at holde begge lagre synkrone. En gammel kopi i det andet ordrelager fra en tidligere synkroniseringsperiode slettes også.
+* Rettet: låsene for GA4-køen og migreringen af samtykkeloggen kører på master-databasen med HyperDB/LudicrousDB.
+* Ny: server-side backup-køb: når en ordre når en betalt status og kunden ikke når kvitteringssiden (fx MobilePay i appen), sender TrackWP købet fra serveren ca. 3 minutter senere ud fra samtykke og identifikatorer gemt ved checkout.
+* Ny: kvitteringssiden og backup deler én atomisk claim pr. ordre, så et køb aldrig sendes to gange fra serveren. Samme event_id og transaction_id bruges begge veje.
+* Ny: samtykke håndhæves på serveren for backup: intet gemt samtykke betyder at intet sendes. GA4 kræver statistik-samtykke og et ægte client_id (intet syntetisk). Meta og Google Ads kræver marketing-samtykke. Senere tilbagetrækning i samtykkeloggen respekteres. Kundens IP fra ordren bruges kun ved det relevante samtykke, aldrig serverens eller gatewayens IP.
+* Ny: GA4-refunds via Measurement Protocol for hele og delvise refusioner med oprindeligt transaction_id og kun det refunderede beløb og de refunderede varer. Kun GA4.
+* Ny: leveringslog-årsager: backup, no_snapshot, no_client_id, event_too_old, browser_seen og no_purchase.
+* Bemærk: har backup kun kunnet sende til nogle platforme (fx kun Meta, fordi GA4 manglede client_id), og vender kunden senere tilbage til kvitteringssiden, sender serveren ikke igen, så den manglende platform får ikke købet. På sites hvor GA4 kører via GTM sender backup GA4 via Measurement Protocol; vender kunden tilbage, deduplikerer GA4 på transaction_id.
+* Ændret: checkout-snapshottet gemmer nu også browserens user agent og er bundet til sin ordre, så kopierede ordredata (fx abonnementsfornyelser) aldrig bruges.
+* Ny: filtre: trackwp_backup_purchase_enabled, trackwp_backup_purchase_statuses (tilføj on-hold her), trackwp_backup_purchase_delay og trackwp_ga4_refunds_enabled.
+* Bemærk: vender kunden tilbage til kvitteringssiden efter at backup har sendt, sender serveren ikke igen. Klient-tags kan stadig fyre, og platformene deduplikerer på event_id, transaction_id og ordre-id.
+* Ny: nye installationer får standardbegivenhederne Telefonklik (tel:), E-mailklik (mailto:) og Lead: formular (GA4 generate_lead, Meta Lead) slået til, samt WhatsApp-klik (GA4 whatsapp_click, Meta Contact) og Find vej via Google Maps (GA4 find_location, Meta FindLocation) slået fra. Eksisterende sites beholder deres begivenheder uændret.
+* Ny: valget "Kun formular-plugins" på formular-triggere. Så tæller kun bekræftede indsendelser fra Contact Form 7, Gravity Forms, WPForms, Fluent Forms og SureForms, ikke almindelige HTML-formularer. Valget er slået til på nye formular-triggere; gemte triggere er uændrede.
+* Ny: FindLocation kan vælges som Meta-begivenhed.
+* Ændret: betingelsen Form ID matcher nu også formular-pluginnets id (fx cf7_12, wpforms_34, gf_2, fluent_5, srfm_7, samme værdi som form_id i GA4) ud over formularens HTML-id. En formular udelukkes med Form ID "does not equal".
+* Rettet: Form ID-betingelser virker også på Gravity Forms og SureForms, hvor formularen kan være fjernet fra siden når bekræftelsen vises (både plugin-id'et, fx gf_2, og formularens HTML-id, fx gform_2, virker).
+* Rettet: formular-lytterne udskrives også når formular-triggeren ikke er begivenhedens første trigger.
+* Bemærk: HTML-fallback-lytteren udskrives kun, når mindst én aktiv formular-trigger tillader almindelige HTML-formularer. Tøm side-cachen efter ændringer.
+
+= 1.11.3 =
+
+* Ny: op til 3 ekstra GA4 Measurement ID'er. Events og sidevisninger sendes også til dem via gtag.js, og server-side (Measurement Protocol) til de ID'er der har egen API secret. Server-side til ekstra ID'er går altid via køen. Ved GTM ignoreres de ekstra ID'er på klientsiden.
+* Bemærk: mangler en ekstra propertys session-cookie, bruges samme session-faldback som for det primære ID.
 
 = 1.11.2 =
 

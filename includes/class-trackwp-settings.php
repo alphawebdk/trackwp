@@ -33,6 +33,32 @@ class TrackWP_Settings {
      */
     private static $bump_consent_to = null;
 
+    /** Option holding the vendor/category keys the visitors have been asked about. */
+    const OPTION_VENDOR_BASELINE = 'trackwp_consent_vendor_baseline';
+    const OPTION_AUTO_BUMP_NOTICE = 'trackwp_consent_autobump_notice';
+
+    /**
+     * Options TrackWP_Consent_Profile::vendor_baseline() reads. A change to any
+     * of them can add a vendor or category, so each one runs maybe_auto_bump().
+     */
+    const AUTO_BUMP_OPTIONS = array(
+        'trackwp_platforms',
+        'trackwp_advanced',
+        'trackwp_woocommerce',
+        'trackwp_consent',
+        'trackwp_blocker',
+        'trackwp_blocker_scan',
+        'trackwp_cookie_declarations',
+    );
+
+    /**
+     * True while TrackWP::maybe_upgrade() runs: an upgrade alone must never
+     * invalidate stored visitor choices, so the auto-bump stays quiet.
+     *
+     * @var bool
+     */
+    private static $auto_bump_suspended = false;
+
     /** KB1 modes. The first entry is the default. */
     const BLOCKER_MODES = array( 'off', 'test', 'on' );
 
@@ -235,6 +261,58 @@ class TrackWP_Settings {
         );
 
         $output['ga4_gtag_enabled'] = ! empty($input['ga4_gtag_enabled']);
+
+        // Ekstra GA4 Measurement ID'er (maks 3), hver med egen valgfri API
+        // secret. Gemmes også når GA4 er slået fra; runtime-helperen
+        // TrackWP_GA4::extra_destinations() afgør om de bruges.
+        $output['ga4_extra_ids'] = array();
+        $current_extra = (isset($current['ga4_extra_ids']) && is_array($current['ga4_extra_ids'])) ? $current['ga4_extra_ids'] : array();
+        $input_extra   = (isset($input['ga4_extra_ids']) && is_array($input['ga4_extra_ids'])) ? $input['ga4_extra_ids'] : array();
+        $primary_upper = strtoupper(trim((string) $output['ga4_measurement_id']));
+        $seen_extra    = array();
+        for ($i = 0; $i < TrackWP_GA4::MAX_EXTRA_IDS; $i++) {
+            $row = (isset($input_extra[$i]) && is_array($input_extra[$i])) ? $input_extra[$i] : array();
+            $raw_id = (isset($row['id']) && is_scalar($row['id'])) ? (string) $row['id'] : '';
+            $extra_id = strtoupper(trim(sanitize_text_field($raw_id)));
+            if ($extra_id === '') {
+                continue;
+            }
+            if (!preg_match('/^G-[A-Z0-9]{4,12}$/', $extra_id)) {
+                add_settings_error(
+                    'trackwp_platforms',
+                    'ga4_extra_id_format_' . $i,
+                    sprintf(
+                        /* translators: %s: the entered ID */
+                        __('Ekstra GA4 Measurement ID "%s" er ikke i G-format og blev ikke gemt.', 'trackwp'),
+                        esc_html($extra_id)
+                    ),
+                    'warning'
+                );
+                continue;
+            }
+            if ($extra_id === $primary_upper || isset($seen_extra[$extra_id])) {
+                continue;
+            }
+            $seen_extra[$extra_id] = true;
+
+            // Den gemte secret følger ID'et, ikke rækkens placering.
+            $current_secret = '';
+            foreach ($current_extra as $current_row) {
+                if (is_array($current_row) && isset($current_row['id']) && strtoupper(trim((string) $current_row['id'])) === $extra_id) {
+                    $current_secret = isset($current_row['api_secret']) ? (string) $current_row['api_secret'] : '';
+                    break;
+                }
+            }
+            $raw_secret = (isset($row['api_secret']) && is_string($row['api_secret'])) ? $row['api_secret'] : '';
+            $secret     = $this->encode_secret_input($raw_secret, $current_secret);
+            if (!empty($input['ga4_extra_secret_' . $i . '_clear']) && (empty($raw_secret) || $raw_secret === '••••••••')) {
+                $secret = '';
+            }
+            $output['ga4_extra_ids'][] = array(
+                'id'         => $extra_id,
+                'api_secret' => $secret,
+            );
+        }
 
         // Google Ads
         $output['google_ads_enabled']       = !empty($input['google_ads_enabled']);
@@ -510,6 +588,9 @@ class TrackWP_Settings {
 
         $output['border_radius'] = isset($input['border_radius']) ? absint($input['border_radius']) : 8;
 
+        // Flydende cookie-knap: 'right' (standard) eller 'left'. Alt andet = right.
+        $output['trigger_position'] = ( isset($input['trigger_position']) && 'left' === $input['trigger_position'] ) ? 'left' : 'right';
+
         // Text fields
         foreach (array('heading', 'description', 'accept_text', 'reject_text', 'customize_text', 'save_text') as $text_key) {
             $output[$text_key] = sanitize_text_field(isset($input[$text_key]) ? $input[$text_key] : '');
@@ -739,6 +820,12 @@ class TrackWP_Settings {
         // written, so read the new value from $output, not from the DB.
         if ( ! empty($output['delivery_log_enabled']) ) {
             TrackWP_Delivery_Log::create_table();
+            if ( ! wp_next_scheduled(TrackWP_Delivery_Log::CRON_HOOK) ) {
+                wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', TrackWP_Delivery_Log::CRON_HOOK);
+            }
+        } elseif ( TrackWP_Delivery_Log::table_exists() ) {
+            // Logging is off, but stored rows still fall under the retention
+            // period: keep pruning them (same as the consent log).
             if ( ! wp_next_scheduled(TrackWP_Delivery_Log::CRON_HOOK) ) {
                 wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', TrackWP_Delivery_Log::CRON_HOOK);
             }
@@ -1208,7 +1295,7 @@ class TrackWP_Settings {
      * Export all trackwp_* settings as a JSON-serializable array.
      * Secrets are kept in their stored (base64) form — re-importable but not human-readable.
      *
-     * @param bool $include_secrets Default false — strips ga4_api_secret / meta_access_token.
+     * @param bool $include_secrets Default false, strips ga4_api_secret / meta_access_token and the api_secret of each ga4_extra_ids row.
      * @return array
      */
     public static function export_settings( $include_secrets = false ) {
@@ -1222,6 +1309,13 @@ class TrackWP_Settings {
 
         if ( ! $include_secrets ) {
             unset( $platforms['ga4_api_secret'], $platforms['meta_access_token'], $platforms['google_ads_developer_token'], $platforms['google_ads_oauth_client_secret'], $platforms['google_ads_oauth_refresh_token'] );
+            if ( isset( $platforms['ga4_extra_ids'] ) && is_array( $platforms['ga4_extra_ids'] ) ) {
+                foreach ( $platforms['ga4_extra_ids'] as $k => $extra_row ) {
+                    if ( is_array( $extra_row ) ) {
+                        unset( $platforms['ga4_extra_ids'][ $k ]['api_secret'] );
+                    }
+                }
+            }
         }
 
         return array(
@@ -1818,6 +1912,98 @@ class TrackWP_Settings {
     }
 
     /**
+     * Hook maybe_auto_bump() on every option that feeds the vendor baseline.
+     * Called once from TrackWP::init_hooks().
+     *
+     * @return void
+     */
+    public static function register_auto_bump_hooks() {
+        foreach ( self::AUTO_BUMP_OPTIONS as $option ) {
+            add_action( 'update_option_' . $option, array( __CLASS__, 'maybe_auto_bump' ) );
+            add_action( 'add_option_' . $option, array( __CLASS__, 'maybe_auto_bump' ) );
+        }
+    }
+
+    /**
+     * Pause or resume the auto-bump (used around the upgrade routine).
+     *
+     * @param bool $suspended True to pause.
+     * @return void
+     */
+    public static function suspend_auto_bump( $suspended ) {
+        self::$auto_bump_suspended = (bool) $suspended;
+    }
+
+    /**
+     * Store the vendor baseline as the union of what is stored and what is
+     * active now. Never shrinks, never bumps.
+     *
+     * @return void
+     */
+    public static function sync_vendor_baseline() {
+        if ( ! class_exists( 'TrackWP_Consent_Profile' ) || ! method_exists( 'TrackWP_Consent_Profile', 'vendor_baseline' ) ) {
+            return;
+        }
+        $current = TrackWP_Consent_Profile::vendor_baseline();
+        $stored  = get_option( self::OPTION_VENDOR_BASELINE, false );
+        $union   = is_array( $stored ) ? array_values( array_unique( array_merge( $stored, $current ) ) ) : $current;
+        sort( $union, SORT_STRING );
+        if ( $union !== $stored ) {
+            update_option( self::OPTION_VENDOR_BASELINE, $union, false );
+        }
+    }
+
+    /**
+     * update_option_* / add_option_* callback: a vendor or category that
+     * visitors have never been asked about raises consent_version, so they
+     * get a fresh banner. The baseline only grows: removals and the return of
+     * a key seen before do not bump, so a flapping scanner cannot cause
+     * repeated consent waves. Independent of reconsent_on_policy_change.
+     *
+     * The baseline is saved BEFORE bumping. bump_consent_version() updates
+     * trackwp_consent, which fires this callback again; by then the diff is
+     * empty, so there is no loop.
+     *
+     * @return void
+     */
+    public static function maybe_auto_bump() {
+        if ( self::$auto_bump_suspended ) {
+            return;
+        }
+        if ( ! class_exists( 'TrackWP_Consent_Profile' ) || ! method_exists( 'TrackWP_Consent_Profile', 'vendor_baseline' ) ) {
+            return;
+        }
+        $current = TrackWP_Consent_Profile::vendor_baseline();
+        $stored  = get_option( self::OPTION_VENDOR_BASELINE, false );
+
+        if ( ! is_array( $stored ) ) {
+            // No baseline yet: record it without bumping.
+            update_option( self::OPTION_VENDOR_BASELINE, $current, false );
+        } elseif ( array() !== array_diff( $current, $stored ) ) {
+            $added = array_values( array_diff( $current, $stored ) );
+            self::sync_vendor_baseline();
+            self::bump_consent_version();
+            // Keep keys from an earlier bump the admin has not seen yet.
+            $prev = get_option( self::OPTION_AUTO_BUMP_NOTICE, false );
+            if ( is_array( $prev ) && isset( $prev['keys'] ) && is_array( $prev['keys'] ) ) {
+                $added = array_values( array_unique( array_merge( $prev['keys'], $added ) ) );
+            }
+            update_option(
+                self::OPTION_AUTO_BUMP_NOTICE,
+                array(
+                    'keys' => $added,
+                    'ts'   => time(),
+                ),
+                false
+            );
+        }
+
+        if ( class_exists( 'TrackWP_Consent' ) && method_exists( 'TrackWP_Consent', 'snapshot_current_banner' ) ) {
+            TrackWP_Consent::snapshot_current_banner();
+        }
+    }
+
+    /**
      * admin_post_trackwp_bump_consent. Requires manage_options and the
      * trackwp_bump_consent nonce.
      */
@@ -1869,9 +2055,11 @@ class TrackWP_Settings {
         self::notice_missing_ads_label( $platforms );
         self::notice_ga4_double_counting( $platforms );
         self::notice_missing_tables( $consent );
+        self::notice_consent_log_off( $consent );
 
         // 1.11.0: blocking and Meta takeover.
         self::notice_consent_bumped();
+        self::notice_consent_auto_bumped();
         self::notice_blocker( $consent );
         self::notice_meta_takeover( $platforms );
     }
@@ -1891,6 +2079,37 @@ class TrackWP_Settings {
                     /* translators: %d: new consent version */
                     __( 'Samtykkeversionen er nu %d. Alle besøgende bliver bedt om samtykke igen. Kendte cache-plugins er tømt. Tøm også cachen i dit CDN eller hos dit webhotel.', 'trackwp' ),
                     absint( $_GET['trackwp_bumped'] )
+                )
+            )
+        );
+    }
+
+    /**
+     * One-time notice after maybe_auto_bump() raised the consent version.
+     * The stored message is deleted once it has been shown.
+     */
+    private static function notice_consent_auto_bumped() {
+        $data = get_option( self::OPTION_AUTO_BUMP_NOTICE, false );
+        if ( false === $data ) {
+            return;
+        }
+        delete_option( self::OPTION_AUTO_BUMP_NOTICE );
+        if ( ! is_array( $data ) || empty( $data['keys'] ) || ! is_array( $data['keys'] ) ) {
+            return;
+        }
+        $names = array();
+        foreach ( $data['keys'] as $key ) {
+            $names[] = preg_replace( '/^[vc]:/', '', (string) $key );
+        }
+        $when = ! empty( $data['ts'] ) ? wp_date( 'Y-m-d H:i', (int) $data['ts'] ) : '';
+        self::render_notice(
+            'warning',
+            esc_html(
+                sprintf(
+                    /* translators: 1: new vendor/category keys, 2: date and time */
+                    __( 'Samtykkeversionen blev hævet automatisk, fordi der er tilføjet en ny leverandør eller kategori: %1$s (%2$s). Besøgende bliver bedt om nyt samtykke.', 'trackwp' ),
+                    implode( ', ', $names ),
+                    $when
                 )
             )
         );
@@ -2251,6 +2470,20 @@ class TrackWP_Settings {
         self::render_notice(
             'warning',
             esc_html__( 'GA4-import til Google Ads er slået til, OG der er konfigureret en direkte Google Ads-konverteringshandling. Bruges begge til det samme mål, tælles konverteringen dobbelt. Brug kun én kilde pr. mål.', 'trackwp' )
+        );
+    }
+
+    /**
+     * Warning while the consent log is off: without it the site owner must be
+     * able to document the consents on their own (GDPR art. 7(1)). No blocking.
+     */
+    private static function notice_consent_log_off( $consent ) {
+        if ( ! empty( $consent['log_consent'] ) ) {
+            return;
+        }
+        self::render_notice(
+            'warning',
+            esc_html__( 'Uden samtykkelog skal du selv kunne dokumentere indhentede samtykker (GDPR art. 7, stk. 1).', 'trackwp' )
         );
     }
 

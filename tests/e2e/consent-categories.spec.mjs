@@ -7,14 +7,11 @@
  */
 import { test, expect } from '@playwright/test';
 import { addProductToCart, goToCheckout, fillCheckoutForm, placeOrder } from './helpers/checkout.mjs';
+import { setOptions, resetTrackWP } from './helpers/test-endpoints.mjs';
+import { stubExternal } from './helpers/stub-external.mjs';
 
 const ANALYTICS_FIELDS = ['client_id', 'session_id', '_ga', 'ga_session_cookies', 'engaged_ms', 'page_referrer'];
 const MARKETING_FIELDS = ['fbp', 'fbc', 'gclid', 'gbraid', 'wbraid', 'enhanced'];
-
-async function setOptions(request, baseURL, options) {
-    const res = await request.post(new URL('/wp-json/trackwp-test/v1/options', baseURL).toString(), { data: options });
-    return res.ok();
-}
 
 const CASES = [
     { name: 'statistics only', choice: { statistics: true, marketing: false } },
@@ -23,12 +20,17 @@ const CASES = [
 ];
 
 for (const c of CASES) {
-    test(`${c.name}: fields and cookies follow K2/K7`, async ({ page, request, baseURL }) => {
-        const ok = await setOptions(request, baseURL, {
-            trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
+    test(`${c.name}: fields and cookies follow K2/K7`, async ({ page, baseURL }) => {
+        await stubExternal(page.context());
+        await resetTrackWP();
+        await setOptions({
+            trackwp_platforms: { ga4_enabled: true, ga4_gtag_enabled: true, ga4_measurement_id: 'G-TEST123456', meta_enabled: true, meta_pixel_id: '123456789012345', meta_pixel_client_enabled: true },
+            trackwp_woocommerce: { enabled: true },
             trackwp_advanced: { customer_data_sharing: true, first_party_cookie_enabled: true },
+            woocommerce_cheque_settings: { enabled: 'yes' },
+            woocommerce_default_country: 'DK',
+            trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
         });
-        test.skip(!ok, 'W0 test endpoint /wp-json/trackwp-test/v1/options is missing');
 
         const bodies = [];
         page.on('request', (r) => {

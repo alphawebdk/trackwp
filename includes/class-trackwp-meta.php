@@ -291,8 +291,21 @@ class TrackWP_Meta {
             isset($event_data['meta_event_name']) ? $event_data['meta_event_name'] : ''
         );
 
+        $ctx = (isset($event_data['_server_ctx']) && is_array($event_data['_server_ctx']))
+            ? $event_data['_server_ctx']
+            : null;
+
+        if ($ctx !== null) {
+            // Server-originated: never the request IP, only the order's customer IP with marketing consent.
+            $ip = (self::consent_flag($event_data, 'marketing') && isset($ctx['customer_ip']) && is_string($ctx['customer_ip']))
+                ? $ctx['customer_ip']
+                : '';
+            $ip = filter_var($ip, FILTER_VALIDATE_IP) ? $ip : '';
+        } else {
+            $ip = self::client_ip();
+        }
         $user_data = array(
-            'client_ip_address' => self::client_ip(),
+            'client_ip_address' => $ip,
             'client_user_agent' => isset($event_data['user_agent']) ? (string) $event_data['user_agent'] : '',
         );
         if ($user_data['client_ip_address'] === '') {
@@ -309,7 +322,12 @@ class TrackWP_Meta {
 
         // Customer data (hashed PII + external_id) only when sharing is on.
         if (TrackWP_Hash::customer_data_sharing_enabled()) {
-            $external_id = self::resolve_external_id($event_data);
+            if ($ctx !== null) {
+                $external_id = (!empty($event_data['external_id']) && is_string($event_data['external_id'])
+                    && preg_match('/^[a-f0-9]{64}$/', $event_data['external_id'])) ? $event_data['external_id'] : '';
+            } else {
+                $external_id = self::resolve_external_id($event_data);
+            }
             if ($external_id !== '') {
                 $user_data['external_id'] = array($external_id);
             }
@@ -337,7 +355,7 @@ class TrackWP_Meta {
 
         $event_entry = array(
             'event_name'       => $meta_event,
-            'event_time'       => time(),
+            'event_time'       => ($ctx !== null && !empty($ctx['event_time']) && (int) $ctx['event_time'] > 0) ? (int) $ctx['event_time'] : time(),
             'event_id'         => isset($event_data['event_id']) ? (string) $event_data['event_id'] : '',
             'event_source_url' => isset($event_data['page_url']) ? (string) $event_data['page_url'] : '',
             'action_source'    => 'website',

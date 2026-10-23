@@ -436,6 +436,44 @@
     border-color: var(--twp-accent, #30D3C0);
 }
 
+/*
+ * Defensive: Accept and Reject keep identical weight even when a theme styles
+ * `button` globally. !important only on properties the admin does not control
+ * (never color, background, border-color or radius). Values equal the ones set
+ * above, so a neutral theme renders unchanged. Opacity is skipped on :hover so
+ * the hover effect still works; [hidden] buttons are left alone.
+ */
+#trackwp-consent-banner .trackwp-consent__btn--accept:not([hidden]),
+#trackwp-consent-banner .trackwp-consent__btn--reject:not([hidden]),
+#trackwp-consent-drawer .trackwp-consent__btn--accept:not([hidden]),
+#trackwp-consent-drawer .trackwp-consent__btn--reject:not([hidden]) {
+    display: inline-flex !important;
+    visibility: visible !important;
+    padding: 10px 20px !important;
+    min-height: 0 !important;
+    border-width: 2px !important;
+    border-style: solid !important;
+    font-size: 14px !important;
+    font-weight: 600 !important;
+    line-height: 1.2 !important;
+    text-transform: none !important;
+    letter-spacing: normal !important;
+}
+
+#trackwp-consent-banner .trackwp-consent__btn--accept:not([hidden]):not(:hover),
+#trackwp-consent-banner .trackwp-consent__btn--reject:not([hidden]):not(:hover),
+#trackwp-consent-drawer .trackwp-consent__btn--accept:not([hidden]):not(:hover),
+#trackwp-consent-drawer .trackwp-consent__btn--reject:not([hidden]):not(:hover) {
+    opacity: 1 !important;
+}
+
+/* Bottombar uses compact buttons (see rule above). */
+#trackwp-consent-banner.trackwp-consent--style-bottombar .trackwp-consent__btn--accept:not([hidden]),
+#trackwp-consent-banner.trackwp-consent--style-bottombar .trackwp-consent__btn--reject:not([hidden]) {
+    padding: 8px 16px !important;
+    font-size: 13px !important;
+}
+
 /* First-layer text: one paragraph per block. */
 .trackwp-consent__description p {
     margin: 0 0 8px;
@@ -720,10 +758,11 @@ body:has(.trackwp-consent--style-bottombar) #trackwp-consent-overlay {
 .trackwp-consent-trigger {
     position: fixed;
     bottom: 20px;
-    left: 20px;
+    right: 20px;
+    left: auto;
     z-index: 9998;
-    width: 44px;
-    height: 44px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
     background: var(--twp-accent, var(--accent, #30D3C0));
     color: #fff;
@@ -731,7 +770,7 @@ body:has(.trackwp-consent--style-bottombar) #trackwp-consent-overlay {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
     border: none;
     padding: 0;
     transition: transform 0.2s ease, box-shadow 0.2s ease;
@@ -740,7 +779,12 @@ body:has(.trackwp-consent--style-bottombar) #trackwp-consent-overlay {
 
 .trackwp-consent-trigger:hover {
     transform: scale(1.05);
-    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25);
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25);
+}
+
+.trackwp-consent-trigger--left {
+    left: 20px;
+    right: auto;
 }
 
 .trackwp-consent-trigger:focus {
@@ -754,23 +798,21 @@ body:has(.trackwp-consent--style-bottombar) #trackwp-consent-overlay {
 }
 
 .trackwp-consent-trigger svg {
-    width: 24px;
-    height: 24px;
+    width: 12px;
+    height: 12px;
     display: block;
     fill: currentColor;
 }
 
-/* Mobile: smaller floating trigger */
+/* Mobile: tighter edge offset */
 @media (max-width: 480px) {
     .trackwp-consent-trigger {
-        width: 40px;
-        height: 40px;
         bottom: 16px;
-        left: 16px;
+        right: 16px;
     }
 
-    .trackwp-consent-trigger svg {
-        width: 20px;
-        height: 20px;
+    .trackwp-consent-trigger--left {
+        left: 16px;
+        right: auto;
     }
 }

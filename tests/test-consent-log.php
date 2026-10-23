@@ -26,7 +26,10 @@ class TrackWP_Consent_Log_Test extends WP_UnitTestCase {
     }
 
     public static function tear_down_after_class() {
+        // Leave the tables as the bootstrap did: later classes (and the
+        // table_exists() cache) expect them to exist.
         TrackWP_Consent_Log::drop_tables();
+        TrackWP_Consent_Log::create_tables();
         parent::tear_down_after_class();
     }
 

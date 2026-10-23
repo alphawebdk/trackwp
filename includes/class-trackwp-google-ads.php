@@ -169,7 +169,8 @@ class TrackWP_Google_Ads {
                 $found[$field] = $event_data[$field];
             }
         }
-        if (!isset($found['gclid']) && !empty($_COOKIE['_gcl_aw'])) {
+        // A server-originated event (backup) never reads the current request's cookies.
+        if (!isset($found['gclid']) && !isset($event_data['_server_ctx']) && !empty($_COOKIE['_gcl_aw'])) {
             $raw   = sanitize_text_field(wp_unslash($_COOKIE['_gcl_aw']));
             $parts = explode('.', $raw);
             // Expected format: GCL.<timestamp>.<gclid>
@@ -336,9 +337,15 @@ class TrackWP_Google_Ads {
             $currency = 'DKK';
         }
 
+        $event_time = time();
+        if (isset($event_data['_server_ctx']) && is_array($event_data['_server_ctx'])
+            && !empty($event_data['_server_ctx']['event_time']) && (int) $event_data['_server_ctx']['event_time'] > 0) {
+            $event_time = (int) $event_data['_server_ctx']['event_time'];
+        }
+
         $conversion = array(
             'conversionAction'   => "customers/{$customer_id_clean}/conversionActions/{$action_id}",
-            'conversionDateTime' => gmdate('Y-m-d H:i:sP'),
+            'conversionDateTime' => gmdate('Y-m-d H:i:sP', $event_time),
             // R15: Ads uses value (value_basis), never value_ga4.
             'conversionValue'    => floatval(isset($event_data['value']) ? $event_data['value'] : 0),
             'currencyCode'       => $currency,

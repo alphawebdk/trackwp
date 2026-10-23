@@ -1,7 +1,7 @@
 {
   "name": "trackwp",
   "private": true,
-  "version": "1.11.2",
+  "version": "1.13.0",
   "description": "TrackWP plugin build pipeline",
   "scripts": {
     "build": "node build.mjs",

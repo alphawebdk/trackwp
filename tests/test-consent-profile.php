@@ -120,6 +120,61 @@ class TrackWP_Consent_Profile_Test extends WP_UnitTestCase {
         $this->assertStringContainsString('kodet form', TrackWP_Consent_Profile::default_texts()['description']);
     }
 
+    public function test_coded_data_sentence_ga4_server_side_names_google_only() {
+        $this->platforms(true, false, false, array('ga4_api_secret' => 'c2VjcmV0'));
+        $d = TrackWP_Consent_Profile::default_texts()['data_types'];
+        $this->assertStringContainsString('e-mail, telefonnummer og navn', $d);
+        $this->assertStringContainsString('sendes til Google i kodet form', $d);
+        $this->assertStringNotContainsString('Meta', $d);
+        $this->assertStringNotContainsString('postnummer', $d);
+        $this->assertStringNotContainsString('uden kodning', $d);
+        $this->assertStringNotContainsString('anonymiser', $d);
+
+        // Sharing off: no sentence at all.
+        update_option('trackwp_advanced', array('customer_data_sharing' => false));
+        $this->assertStringNotContainsString('kodet form', TrackWP_Consent_Profile::default_texts()['data_types']);
+    }
+
+    public function test_coded_data_sentence_meta_includes_city_zip_and_country() {
+        $this->platforms(false, false, true);
+        $d = TrackWP_Consent_Profile::default_texts()['data_types'];
+        $this->assertStringContainsString('e-mail, telefonnummer, navn, by, postnummer og land', $d);
+        $this->assertStringContainsString('sendes til Meta i kodet form', $d);
+        $this->assertStringNotContainsString('Google', $d);
+        $this->assertStringNotContainsString('uden kodning', $d);
+    }
+
+    public function test_coded_data_sentence_google_ads_states_uncoded_zip_and_country() {
+        $this->platforms(false, true);
+        $d = TrackWP_Consent_Profile::default_texts()['data_types'];
+        $this->assertStringContainsString('e-mail, telefonnummer, navn, postnummer og land', $d);
+        $this->assertStringNotContainsString(', by,', $d);
+        $this->assertStringContainsString('Postnummer og land sendes til Google uden kodning.', $d);
+
+        update_option('trackwp_advanced', array('customer_data_sharing' => false));
+        $d = TrackWP_Consent_Profile::default_texts()['data_types'];
+        $this->assertStringNotContainsString('kodet form', $d);
+        $this->assertStringNotContainsString('uden kodning', $d);
+    }
+
+    public function test_vendor_baseline_is_sorted_unique_and_lists_vendors_and_categories() {
+        $this->assertSame(array(), TrackWP_Consent_Profile::vendor_baseline());
+
+        $this->platforms(true, true, true);
+        $b = TrackWP_Consent_Profile::vendor_baseline();
+        $this->assertSame(
+            array('c:marketing', 'c:statistics', 'v:ga4', 'v:google_ads', 'v:meta'),
+            $b
+        );
+        $sorted = $b;
+        sort($sorted, SORT_STRING);
+        $this->assertSame($sorted, $b);
+
+        // Removing a platform removes its key; text changes do not matter.
+        $this->platforms(true);
+        $this->assertSame(array('c:statistics', 'v:ga4'), TrackWP_Consent_Profile::vendor_baseline());
+    }
+
     public function test_gtm_without_vendors_uses_placeholder_and_warns() {
         $this->platforms(false, false, false, array('gtm_enabled' => true, 'gtm_container_id' => 'GTM-ABC123'));
         $vendors = TrackWP_Consent_Profile::active_vendors();
@@ -681,5 +736,17 @@ class TrackWP_Consent_Profile_Test extends WP_UnitTestCase {
         $this->assertStringContainsString('tk_ai', implode(',', wp_list_pluck($scan['statistics'], 'cookies')));
         $this->assertStringContainsString('__kla_id', implode(',', wp_list_pluck($scan['marketing'], 'cookies')));
         $this->assertStringContainsString('sbjs_first', implode(',', wp_list_pluck($scan['marketing'], 'cookies')));
+    }
+
+    public function test_vendor_baseline_leaves_out_necessary_vendors() {
+        $this->platforms(true);
+        $add = function ($vendors) {
+            $vendors['shop_session'] = array('key' => 'shop_session', 'name' => 'Shop', 'category' => 'necessary', 'cookies' => 'x', 'placeholder' => false, 'via_gtm' => false, 'via_blocker' => false, 'blocked' => false, 'server_only' => false);
+            return $vendors;
+        };
+        add_filter('trackwp_consent_profile_vendors', $add);
+        $this->assertArrayHasKey('shop_session', TrackWP_Consent_Profile::active_vendors());
+        $this->assertSame(array('c:statistics', 'v:ga4'), TrackWP_Consent_Profile::vendor_baseline());
+        remove_filter('trackwp_consent_profile_vendors', $add);
     }
 }

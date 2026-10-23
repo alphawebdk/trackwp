@@ -367,6 +367,10 @@ class TrackWP_Consent_Log {
             return 'no_table';
         }
 
+        // HyperDB / LudicrousDB: GET_LOCK and RELEASE_LOCK must hit the same (master) server.
+        if (method_exists($wpdb, 'send_reads_to_masters')) {
+            $wpdb->send_reads_to_masters();
+        }
         $got = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 0)', self::MIGRATION_LOCK));
         if ('1' !== (string) $got) {
             return 'locked';

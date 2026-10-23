@@ -22,6 +22,10 @@
  *         {order_id, order_received_url}.
  *   POST  /wp-json/trackwp-test/v1/orders/(?P<id>\d+)/status  body: {status}
  *         Changes an existing order's status.
+ *   POST  /wp-json/trackwp-test/v1/backup/run  body: {order_id}
+ *         Runs TrackWP_Purchase_Backup::run_purchase() for the order (what the
+ *         Action Scheduler job does) and returns {order_id, was_scheduled}:
+ *         whether a trackwp_backup_purchase job was queued before the run.
  *   POST  /wp-json/trackwp-test/v1/reset
  *         Resets every TrackWP settings option to "not set" (so code falls
  *         back to its own inline defaults, the only place those defaults
@@ -184,6 +188,35 @@ function trackwp_test_handle_order_status( $request ) {
 }
 
 /**
+ * POST /trackwp-test/v1/backup/run
+ *
+ * @param WP_REST_Request $request Request.
+ * @return WP_REST_Response
+ */
+function trackwp_test_handle_backup_run( $request ) {
+    if ( ! class_exists( 'TrackWP_Purchase_Backup' ) || ! function_exists( 'as_has_scheduled_action' ) ) {
+        return new WP_REST_Response( array( 'error' => 'TrackWP backup or Action Scheduler is not available' ), 400 );
+    }
+
+    $body     = $request->get_json_params();
+    $order_id = isset( $body['order_id'] ) ? (int) $body['order_id'] : 0;
+    if ( $order_id <= 0 ) {
+        return new WP_REST_Response( array( 'error' => 'order_id is required' ), 400 );
+    }
+
+    $was_scheduled = (bool) as_has_scheduled_action( 'trackwp_backup_purchase', array( $order_id ), 'trackwp' );
+    TrackWP_Purchase_Backup::run_purchase( $order_id );
+
+    return new WP_REST_Response(
+        array(
+            'order_id'      => $order_id,
+            'was_scheduled' => $was_scheduled,
+        ),
+        200
+    );
+}
+
+/**
  * POST /trackwp-test/v1/reset
  *
  * @return WP_REST_Response
@@ -205,15 +238,30 @@ function trackwp_test_handle_reset( $request ) {
         'trackwp_cookie_declarations',
         'trackwp_woocommerce',
         'trackwp_consent_material_hash',
+        'trackwp_consent_vendor_baseline',
+        'trackwp_consent_autobump_notice',
     );
     foreach ( $settings_options as $option_name ) {
         delete_option( $option_name );
     }
 
+    // e2e visits the shop as a guest; WooCommerce "coming soon" hides the shop
+    // pages from non-logged-in visitors, so keep it off after every reset.
+    update_option( 'woocommerce_coming_soon', 'no' );
+
     if ( class_exists( 'TrackWP_Order_Claims' ) ) {
         $table = TrackWP_Order_Claims::table_name();
         // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- table name from a class constant, no user input.
         $wpdb->query( "TRUNCATE TABLE {$table}" );
+    }
+
+    // Pending Action Scheduler jobs from earlier tests would otherwise fire
+    // minutes later in the middle of another test.
+    foreach ( array( 'trackwp_backup_purchase', 'trackwp_ga4_refund' ) as $hook ) {
+        if ( function_exists( 'as_unschedule_all_actions' ) ) {
+            as_unschedule_all_actions( $hook );
+        }
+        wp_unschedule_hook( $hook );
     }
 
     if ( class_exists( 'TrackWP_Consent_Log' ) ) {
@@ -265,6 +313,16 @@ add_action(
                         },
                     ),
                 ),
+            )
+        );
+
+        register_rest_route(
+            'trackwp-test/v1',
+            '/backup/run',
+            array(
+                'methods'             => 'POST',
+                'callback'            => 'trackwp_test_handle_backup_run',
+                'permission_callback' => 'trackwp_test_check_token',
             )
         );
 

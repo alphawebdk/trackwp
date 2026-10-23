@@ -3,7 +3,7 @@
  * Plugin Name: TrackWP
  * Plugin URI: https://trackwp.com
  * Description: Server-side tracking proxy with built-in cookie consent and Consent Mode v2. Supports GA4, Google Ads, and Meta.
- * Version: 1.11.2
+ * Version: 1.13.0
  * Author: TrackWP
  * Author URI: https://trackwp.com
  * License: GPLv2 or later
@@ -12,48 +12,34 @@
  * Domain Path: /languages
  * Requires PHP: 7.4
  * Requires at least: 6.0
- * Update URI: https://github.com/alphawebdk/trackwp
+ * Update URI: https://nordium.ai/trackwp/
  */
 
 defined('ABSPATH') || exit;
 
-define('TRACKWP_VERSION', '1.11.2');
+define('TRACKWP_VERSION', '1.13.0');
 define('TRACKWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRACKWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
 
 /**
- * Self-hosted updates via GitHub Releases (public repo alphawebdk/trackwp).
+ * Updates from the TrackWP license server (nordium.ai/trackwp).
  *
- * Plugin Update Checker polls the repo's latest release and serves its ZIP
- * asset through WordPress' standard update flow (update notice + one-click
- * update in wp-admin, wp-cron twice-daily checks).
- *
- * The repo is PUBLIC (since 2026-07-23), so no authentication is needed on
- * client sites. A token is still honoured — define TRACKWP_GITHUB_TOKEN in
- * wp-config.php or use the 'trackwp_github_token' filter — which is useful if
- * the repo ever goes private again, or to lift GitHub's unauthenticated rate
- * limit when many sites share one outbound IP.
+ * Plugin Update Checker polls the server's update-info endpoint and serves the
+ * ZIP through WordPress' standard update flow. The license key travels in the
+ * Authorization header and the domain as a query argument (callbacks are
+ * strings, so TrackWP_License is only autoloaded when they run).
  */
 if (file_exists(TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php')) {
     require_once TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php';
 
     $trackwp_update_checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-        'https://github.com/alphawebdk/trackwp/',
+        'https://nordium.ai/trackwp/api/update-info',
         __FILE__,
         'trackwp'
     );
-    // Use the ZIP attached to the GitHub Release (built by build pipeline),
-    // not the auto-generated source tarball (which lacks minified assets' guarantees).
-    $trackwp_update_checker->getVcsApi()->enableReleaseAssets('/trackwp.*\.zip/i');
-
-    $trackwp_token = apply_filters(
-        'trackwp_github_token',
-        defined('TRACKWP_GITHUB_TOKEN') ? TRACKWP_GITHUB_TOKEN : ''
-    );
-    if (!empty($trackwp_token)) {
-        $trackwp_update_checker->setAuthentication($trackwp_token);
-    }
+    $trackwp_update_checker->addQueryArgFilter(['TrackWP_License', 'puc_query_args']);
+    $trackwp_update_checker->addHttpRequestArgFilter(['TrackWP_License', 'puc_http_args']);
 }
 
 /**
@@ -161,16 +147,32 @@ final class TrackWP {
         // GA4 batch flush — must be registered at bootstrap so the callback
         // exists in WP-Cron requests (no TrackWP_GA4 instance exists there).
         add_action('trackwp_flush_ga4', [$this, 'flush_ga4_queue']);
+        // Server-side backup purchase and GA4 refund jobs (Action Scheduler or
+        // WP-Cron): the callbacks must exist in those requests. String callbacks,
+        // so the class is only autoloaded when a job runs.
+        add_action('trackwp_backup_purchase', ['TrackWP_Purchase_Backup', 'run_purchase']);
+        add_action('trackwp_ga4_refund', ['TrackWP_Purchase_Backup', 'run_refund'], 10, 2);
         // Delivery-log pruning — registered at bootstrap for the same reason as
         // the GA4 flush: the callback must exist in WP-Cron requests.
         add_action(TrackWP_Delivery_Log::CRON_HOOK, ['TrackWP_Delivery_Log', 'prune']);
         // Consent-log pruning and the chunked 1.10.1 consent-log migration.
         // String callbacks: the class is only autoloaded when the cron fires.
         add_action(self::CRON_PRUNE_CONSENT_LOG, ['TrackWP_Consent_Log', 'prune']);
+        // WooCommerce order attribution: 90-day retention on the same daily job.
+        add_action(self::CRON_PRUNE_CONSENT_LOG, ['TrackWP_WooCommerce', 'prune_attribution']);
         add_action(self::CRON_MIGRATE_CONSENT_LOG, [$this, 'run_consent_log_migration']);
         // Keep cron jobs in step with the settings whenever they are saved.
         add_action('update_option_trackwp_advanced', [$this, 'sync_cron_jobs']);
         add_action('update_option_trackwp_consent', [$this, 'sync_cron_jobs']);
+        // A vendor or category visitors were never asked about raises
+        // consent_version; also snapshots the banner for the current hash.
+        TrackWP_Settings::register_auto_bump_hooks();
+        // WordPress privacy tools (Tools > Export/Erase Personal Data) and the
+        // suggested privacy policy text. WooCommerce loads after TrackWP, so
+        // its presence is checked when the filters run, not here.
+        add_filter('wp_privacy_personal_data_exporters', [$this, 'register_privacy_exporter']);
+        add_filter('wp_privacy_personal_data_erasers', [$this, 'register_privacy_eraser']);
+        add_action('admin_init', [$this, 'add_privacy_policy_content']);
         // Blocker rules saved: recompile the cached rule set and purge page
         // caches, so no cached page keeps the old markup (KB7, §3.5).
         add_action('update_option_trackwp_blocker', [$this, 'on_blocker_saved']);
@@ -179,11 +181,17 @@ final class TrackWP {
         // constructor, which runs on 'init'. Registered here, unconditionally,
         // so it exists before fb4woo initialises; the callback itself returns
         // false only when TrackWP can actually deliver Pixel + CAPI.
-        add_filter('facebook_for_woocommerce_integration_pixel_enabled', ['TrackWP_Meta_Takeover', 'filter_pixel_enabled']);
+        // Without a license TrackWP delivers nothing, so Meta for WooCommerce
+        // keeps its own pixel (no gap).
+        if (TrackWP_License::tracking_allowed()) {
+            add_filter('facebook_for_woocommerce_integration_pixel_enabled', ['TrackWP_Meta_Takeover', 'filter_pixel_enabled']);
+        }
         // 1.10.1 upgrade side effects: purge known page caches, flag a CDN notice.
         add_action('trackwp_upgraded_1_10_1', [$this, 'purge_known_page_caches']);
         add_action('admin_notices', [$this, 'render_upgrade_notice']);
         add_action('admin_post_trackwp_dismiss_upgrade_notice', [$this, 'handle_dismiss_upgrade_notice']);
+        // License client: recurring check, admin page and notices.
+        TrackWP_License::register_hooks();
         // D1: one-time notice when Meta delivery flips on during the 1.11.1
         // upgrade because the CAPI token requirement is dropped (KC16).
         add_action('admin_notices', [$this, 'render_meta_takeover_notice']);
@@ -210,6 +218,47 @@ final class TrackWP {
     }
 
     /**
+     * wp_privacy_personal_data_exporters filter (WooCommerce only).
+     *
+     * @param array $exporters Registered exporters.
+     * @return array
+     */
+    public function register_privacy_exporter($exporters) {
+        if ( class_exists('WooCommerce') ) {
+            $exporters['trackwp-attribution'] = array(
+                'exporter_friendly_name' => __('TrackWP order attribution', 'trackwp'),
+                'callback'               => ['TrackWP_WooCommerce', 'privacy_exporter'],
+            );
+        }
+        return $exporters;
+    }
+
+    /**
+     * wp_privacy_personal_data_erasers filter (WooCommerce only).
+     *
+     * @param array $erasers Registered erasers.
+     * @return array
+     */
+    public function register_privacy_eraser($erasers) {
+        if ( class_exists('WooCommerce') ) {
+            $erasers['trackwp-attribution'] = array(
+                'eraser_friendly_name' => __('TrackWP order attribution', 'trackwp'),
+                'callback'             => ['TrackWP_WooCommerce', 'privacy_eraser'],
+            );
+        }
+        return $erasers;
+    }
+
+    /**
+     * Suggested privacy policy text (Settings > Privacy > Policy Guide).
+     */
+    public function add_privacy_policy_content() {
+        if ( function_exists('wp_add_privacy_policy_content') ) {
+            wp_add_privacy_policy_content('TrackWP', TrackWP_WooCommerce::privacy_policy_text());
+        }
+    }
+
+    /**
      * admin-post handler — empty the delivery log.
      */
     public function handle_clear_delivery_log() {
@@ -230,6 +279,7 @@ final class TrackWP {
             'ga4_enabled'                    => false,
             'ga4_measurement_id'             => '',
             'ga4_api_secret'                 => '',
+            'ga4_extra_ids'                  => array(),
             'ga4_gtag_enabled'               => true,
             'google_ads_enabled'             => false,
             'google_ads_conversion_id'       => '',
@@ -249,47 +299,7 @@ final class TrackWP {
             'gtm_container_id'               => '',
         ]);
 
-        add_option('trackwp_events', [
-            [
-                'enabled'      => true,
-                'name'         => 'phone_click',
-                'display_name' => __('Telefonklik', 'trackwp'),
-                'trigger_type' => 'css_click',
-                'css_selector' => 'a[href^="tel:"]',
-                'value'        => 0,
-                'currency'     => 'DKK',
-                'ads_label'    => '',
-                'meta_event'   => 'Contact',
-                'send_to'      => ['ga4' => true, 'google_ads' => true, 'meta' => true],
-            ],
-            [
-                'enabled'      => true,
-                'name'         => 'email_click',
-                'display_name' => __('E-mailklik', 'trackwp'),
-                'trigger_type' => 'css_click',
-                'css_selector' => 'a[href^="mailto:"]',
-                'value'        => 0,
-                'currency'     => 'DKK',
-                'ads_label'    => '',
-                'meta_event'   => 'Contact',
-                'send_to'      => ['ga4' => true, 'google_ads' => true, 'meta' => true],
-            ],
-            [
-                'enabled'      => true,
-                'name'         => 'form_submit',
-                'display_name' => __('Formularindsendelse', 'trackwp'),
-                'trigger_type' => 'form_submit',
-                // Empty on purpose: the generic 'form_submit' event is bound by
-                // TrackWP_Forms (which covers the known form plugins). A
-                // selector here would only matter for a renamed copy.
-                'css_selector' => '',
-                'value'        => 0,
-                'currency'     => 'DKK',
-                'ads_label'    => '',
-                'meta_event'   => 'Lead',
-                'send_to'      => ['ga4' => true, 'google_ads' => true, 'meta' => true],
-            ],
-        ]);
+        add_option('trackwp_events', TrackWP_Events::get_install_defaults());
 
         add_option('trackwp_consent', [
             'banner_style'              => 'dialog',
@@ -298,6 +308,7 @@ final class TrackWP {
             'accent_color'              => '#30D3C0',
             'button_text_color'         => '#274A45',
             'border_radius'             => 8,
+            'trigger_position'          => 'right',
             'heading'                   => __('Vi bruger cookies', 'trackwp'),
             'description'               => __('Vi bruger cookies til at forbedre din oplevelse og analysere trafik. Vælg dine præferencer nedenfor.', 'trackwp'),
             'accept_text'               => __('Accepter alle', 'trackwp'),
@@ -337,6 +348,12 @@ final class TrackWP {
         add_option('trackwp_cookie_declarations', array());
 
         add_option('trackwp_version', '1.0.0');
+
+        // License check twice a day (token lives 7 days; the license client
+        // also re-schedules this from wp-admin if it ever goes missing).
+        if (!wp_next_scheduled(TrackWP_License::CRON_HOOK)) {
+            wp_schedule_event(time() + HOUR_IN_SECONDS, 'twicedaily', TrackWP_License::CRON_HOOK);
+        }
 
         // Tables are created here as well as in the 1.10.1 upgrade block, so a
         // fresh install has them before the first consent or purchase arrives.
@@ -405,6 +422,10 @@ final class TrackWP {
         if ( version_compare($stored, TRACKWP_VERSION, '>=') ) {
             return;
         }
+
+        // An upgrade alone must not invalidate stored visitor choices: the
+        // vendor auto-bump stays quiet until the baseline is recorded below.
+        TrackWP_Settings::suspend_auto_bump(true);
 
         if ( version_compare($stored, '1.1.0', '<') ) {
             $platforms = get_option('trackwp_platforms', array());
@@ -585,6 +606,26 @@ final class TrackWP {
 
         if ( version_compare($stored, '1.11.1', '<') ) {
             $this->upgrade_1_11_1($stored);
+        }
+
+        // 1.13.0: tracking needs a license. Sites upgrading from an earlier
+        // version and without a stored key get 30 days of grace; new installs
+        // (stored 1.0.0) get none.
+        if ( version_compare($stored, '1.13.0', '<') && version_compare($stored, '1.0.0', '>') ) {
+            $license = get_option(TrackWP_License::OPTION, array());
+            if ( ( !is_array($license) || empty($license['key']) ) && !get_option(TrackWP_License::GRACE_OPT) ) {
+                update_option(TrackWP_License::GRACE_OPT, time() + 30 * DAY_IN_SECONDS, false);
+                TrackWP_License::reset_cache();
+            }
+        }
+
+        // Baseline for the vendor/category auto-bump (1.11.4). Recorded
+        // without bumping, and grown to include anything this upgrade added,
+        // so existing sites keep their visitors' stored choices.
+        TrackWP_Settings::sync_vendor_baseline();
+        TrackWP_Settings::suspend_auto_bump(false);
+        if ( method_exists('TrackWP_Consent', 'snapshot_current_banner') ) {
+            TrackWP_Consent::snapshot_current_banner();
         }
 
         $this->sync_cron_jobs();
@@ -1175,7 +1216,7 @@ final class TrackWP {
      * Render Google Tag Manager <head> snippet — wp_head pri 5.
      */
     public function render_gtm_head() {
-        if ( is_admin() ) {
+        if ( is_admin() || ! TrackWP_License::tracking_allowed() ) {
             return;
         }
         $platforms = get_option('trackwp_platforms', array());
@@ -1217,12 +1258,37 @@ final class TrackWP {
     }
 
     /**
+     * Extra GA4 Measurement IDs configured via gtag.js. The one source for
+     * both render_gtag_head() and frontend_config(), so the client only
+     * sends to IDs that were actually configured. Empty on the GTM route.
+     *
+     * @param array $platforms
+     * @param array $advanced
+     * @return array
+     */
+    private static function gtag_ga4_extra_ids($platforms, $advanced) {
+        $platforms = is_array($platforms) ? $platforms : array();
+        $advanced  = is_array($advanced) ? $advanced : array();
+        if ( ! empty($platforms['gtm_enabled']) || ! empty($advanced['uses_gtm']) ) {
+            return array();
+        }
+        if ( empty($platforms['ga4_enabled']) || empty($platforms['ga4_gtag_enabled']) ) {
+            return array();
+        }
+        $ids = array();
+        foreach ( TrackWP_GA4::extra_destinations($platforms) as $dest ) {
+            $ids[] = $dest['id'];
+        }
+        return $ids;
+    }
+
+    /**
      * Render gtag.js loader + config for GA4 (page views/sessions) and
      * Google Ads (client-side conversions). Skipped when GTM is enabled
      * or "I use GTM" is checked.
      */
     public function render_gtag_head() {
-        if ( is_admin() ) {
+        if ( is_admin() || ! TrackWP_License::tracking_allowed() ) {
             return;
         }
         $platforms = get_option('trackwp_platforms', array());
@@ -1236,6 +1302,10 @@ final class TrackWP {
             $ga4_id = isset($platforms['ga4_measurement_id']) ? $platforms['ga4_measurement_id'] : '';
             if ( preg_match('/^G-[A-Z0-9]{4,12}$/', $ga4_id) ) {
                 $ids[] = $ga4_id;
+                // Extra GA4 IDs: same cfg(), transport_url and consent path.
+                foreach ( self::gtag_ga4_extra_ids($platforms, $advanced) as $extra_ga4_id ) {
+                    $ids[] = $extra_ga4_id;
+                }
             }
         }
         if ( ! empty($platforms['google_ads_enabled']) ) {
@@ -1376,7 +1446,7 @@ final class TrackWP {
     }
 
     public function render_meta_pixel() {
-        if ( is_admin() ) {
+        if ( is_admin() || ! TrackWP_License::tracking_allowed() ) {
             return;
         }
         if ( ! self::client_meta_pixel_will_render() ) {
@@ -1423,7 +1493,7 @@ final class TrackWP {
      * Render Google Tag Manager <noscript> iframe — wp_body_open pri 5.
      */
     public function render_gtm_noscript() {
-        if ( is_admin() ) {
+        if ( is_admin() || ! TrackWP_License::tracking_allowed() ) {
             return;
         }
         $platforms = get_option('trackwp_platforms', array());
@@ -1471,11 +1541,20 @@ final class TrackWP {
 
         // Remove the pending GA4 batch-flush cron event.
         wp_clear_scheduled_hook('trackwp_flush_ga4');
+        wp_clear_scheduled_hook(TrackWP_License::CRON_HOOK);
         // Stop pruning while deactivated (the table itself survives; uninstall drops it).
         wp_clear_scheduled_hook(TrackWP_Delivery_Log::CRON_HOOK);
         wp_clear_scheduled_hook(self::CRON_PRUNE_CONSENT_LOG);
         // A pending migration resumes via maybe_upgrade()/activate on reactivation.
         wp_clear_scheduled_hook(self::CRON_MIGRATE_CONSENT_LOG);
+        // Backup purchase and GA4 refund jobs carry arguments: remove every
+        // argument set, WP-Cron fallback and Action Scheduler (as in uninstall.php).
+        foreach ( array('trackwp_backup_purchase', 'trackwp_ga4_refund') as $job_hook ) {
+            wp_unschedule_hook($job_hook);
+            if ( function_exists('as_unschedule_all_actions') ) {
+                as_unschedule_all_actions($job_hook);
+            }
+        }
     }
 
     /**
@@ -1509,10 +1588,16 @@ final class TrackWP {
 
     public function init() {
         $this->consent = new TrackWP_Consent();
-        $this->forms   = new TrackWP_Forms();
         new TrackWP_Cookie_Scanner();
-        // Registers nothing unless WooCommerce is active; see the class docblock.
-        $this->woocommerce = new TrackWP_WooCommerce();
+        // Form, WooCommerce and purchase-backup tracking only with a license.
+        // Consent, scanner and blocker always run.
+        if (TrackWP_License::tracking_allowed()) {
+            $this->forms   = new TrackWP_Forms();
+            // Registers nothing unless WooCommerce is active; see the class docblock.
+            $this->woocommerce = new TrackWP_WooCommerce();
+            // Backup purchase scheduling and refund hooks; no-op without an enabled WooCommerce integration.
+            TrackWP_Purchase_Backup::register_hooks();
+        }
         // Blocking until consent. The class decides what to hook: observe
         // mode for the scanner always (S12), rewriting only in test/on mode
         // on WP 6.5+ (§3.1, KB12).
@@ -1533,8 +1618,10 @@ final class TrackWP {
         $proxy = new TrackWP_Proxy();
         $proxy->register_routes();
 
-        $loader = new TrackWP_Loader();
-        $loader->register_routes();
+        if (TrackWP_License::tracking_allowed()) {
+            $loader = new TrackWP_Loader();
+            $loader->register_routes();
+        }
 
         // POST /trackwp/v1/blocker/scan (§3.4).
         $scanner = new TrackWP_Blocker_Scanner();
@@ -1589,6 +1676,9 @@ final class TrackWP {
                 'scrollDepth'   => __('Scrolldybde (%)', 'trackwp'),
                 'timeSeconds'   => __('Sekunder', 'trackwp'),
                 'jsEvent'       => __('JavaScript-eventnavn', 'trackwp'),
+                'pluginsOnly'     => __('Kun formular-plugins (Contact Form 7, Gravity Forms, WPForms, Fluent Forms, SureForms)', 'trackwp'),
+                'pluginsOnlyHelp' => __('Almindelige HTML-formularer tælles ikke. Bruger du en anden formularløsning (fx Elementor), så slå valget fra.', 'trackwp'),
+                'formIdHelp'      => __('Udeluk en formular med betingelsen Form ID "does not equal", fx cf7_12, wpforms_34, gf_2, fluent_5 eller srfm_7 (samme værdi som form_id i GA4) eller formularens HTML-id.', 'trackwp'),
             ),
         ));
 
@@ -1652,15 +1742,19 @@ final class TrackWP {
         // choice synchronously, so deferring costs no consent state).
         self::enqueue_deferred_script('trackwp-consent', self::asset_url('assets/js/consent.js'), [], false);
 
-        // Tracking script — depends on consent, footer, deferred.
-        self::enqueue_deferred_script('trackwp-tracking', self::asset_url('assets/js/trackwp.js'), ['trackwp-consent'], true);
+        // Tracking script: depends on consent, footer, deferred. Only with a license.
+        if (TrackWP_License::tracking_allowed()) {
+            self::enqueue_deferred_script('trackwp-tracking', self::asset_url('assets/js/trackwp.js'), ['trackwp-consent'], true);
+        }
 
         // Configs are printed as JSON right before each script, so booleans
         // and numbers keep their types. wp_localize_script() casts every
         // top-level scalar to a string (false became "", 0 became "0"),
         // which turned opt-outs like customerDataSharing into truthy values.
         wp_add_inline_script('trackwp-consent', 'window.trackwpConsentConfig=' . self::json_for_script(self::consent_config()) . ';', 'before');
-        wp_add_inline_script('trackwp-tracking', 'window.trackwpConfig=' . self::json_for_script(self::frontend_config()) . ';', 'before');
+        if (TrackWP_License::tracking_allowed()) {
+            wp_add_inline_script('trackwp-tracking', 'window.trackwpConfig=' . self::json_for_script(self::frontend_config()) . ';', 'before');
+        }
     }
 
     /**
@@ -1705,6 +1799,7 @@ final class TrackWP {
             'restUrl'   => rest_url(),
             'events'    => $client_events,
             'measurementId' => isset($platforms['ga4_measurement_id']) ? sanitize_text_field($platforms['ga4_measurement_id']) : '',
+            'ga4ExtraIds'   => array_values(self::gtag_ga4_extra_ids($platforms, $advanced)),
             'googleAds' => [
                 'conversionId' => isset($ads_config['conversionId']) ? $ads_config['conversionId'] : '',
                 'labels'       => isset($ads_config['conversionLabels']) ? $ads_config['conversionLabels'] : [],

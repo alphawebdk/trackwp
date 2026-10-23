@@ -1117,6 +1117,34 @@ class TrackWP_Consent_Profile {
     }
 
     /**
+     * Sorted, unique snapshot of what a visitor consented to: 'v:'.key for each
+     * active vendor and 'c:'.category for each active category. Used to detect
+     * a NEW vendor or category (re-consent); necessary vendors are left out; texts and cookies are not part of it.
+     *
+     * Reads the options trackwp_platforms, trackwp_advanced, trackwp_woocommerce
+     * (when WooCommerce is loaded), trackwp_consent, trackwp_blocker,
+     * trackwp_blocker_scan and trackwp_cookie_declarations.
+     *
+     * @return string[]
+     */
+    public static function vendor_baseline() {
+        $out = array();
+        foreach (self::active_vendors() as $key => $vendor) {
+            // Strictly necessary vendors need no consent, so a new one is no re-consent.
+            if (isset($vendor['category']) && 'necessary' === $vendor['category']) {
+                continue;
+            }
+            $out[] = 'v:' . $key;
+        }
+        foreach (self::active_categories() as $cat) {
+            $out[] = 'c:' . $cat;
+        }
+        $out = array_values(array_unique($out));
+        sort($out, SORT_STRING);
+        return $out;
+    }
+
+    /**
      * False when the site only uses strictly necessary technologies. The
      * banner then renders an information notice instead of a consent dialog.
      *
@@ -1295,19 +1323,40 @@ class TrackWP_Consent_Profile {
             /* translators: %s: list of data types */
             $t['data_types'] = sprintf(__('Det drejer sig om oplysninger som %s.', 'trackwp'), self::join_list($types));
 
+            // Recipients of coded customer data (TrackWP_Hash::customer_data_sharing_enabled()
+            // plus marketing consent gate all of it). Google: GA4 server-side user_data
+            // (needs the GA4 API secret, as TrackWP_GA4::is_enabled()) and Google Ads
+            // enhanced conversions. Meta: advanced matching and Conversions API.
+            $ga4_server      = $s['ga4'] && self::str(self::opt('trackwp_platforms'), 'ga4_api_secret') !== '';
             $hash_recipients = array();
-            if ($s['google_ads']) {
+            if ($s['google_ads'] || $ga4_server) {
                 $hash_recipients[] = 'Google';
             }
             if ($s['meta']) {
                 $hash_recipients[] = 'Meta';
             }
             if ($s['customer_data_sharing'] && $hash_recipients) {
+                $fields = array(
+                    __('e-mail', 'trackwp'),
+                    __('telefonnummer', 'trackwp'),
+                    __('navn', 'trackwp'),
+                );
+                if ($s['meta']) {
+                    $fields[] = __('by', 'trackwp');
+                }
+                if ($s['meta'] || $s['google_ads']) {
+                    $fields[] = __('postnummer', 'trackwp');
+                    $fields[] = __('land', 'trackwp');
+                }
                 $t['data_types'] .= ' ' . sprintf(
-                    /* translators: %s: recipients, e.g. "Google og Meta" */
-                    __('Indtaster du e-mail eller telefonnummer i en formular eller ved et køb, kan de sendes til %s i kodet form, som stadig gør det muligt for modtageren at genkende dig.', 'trackwp'),
+                    /* translators: 1: list of fields, e.g. "e-mail, telefonnummer og navn", 2: recipients, e.g. "Google og Meta" */
+                    __('Indtaster du oplysninger som %1$s i en formular eller ved et køb, kan de sendes til %2$s i kodet form, som stadig gør det muligt for modtageren at genkende dig.', 'trackwp'),
+                    self::join_list($fields),
                     self::join_list($hash_recipients)
                 );
+                if ($s['google_ads']) {
+                    $t['data_types'] .= ' ' . __('Postnummer og land sendes til Google uden kodning.', 'trackwp');
+                }
             }
         }
 

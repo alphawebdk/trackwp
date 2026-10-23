@@ -46,8 +46,10 @@ class TrackWP_Consent {
     public function render_consent_trigger() {
         if (is_admin()) return;
         if (!apply_filters('trackwp_show_consent_trigger', true)) return;
-        echo '<button type="button" class="trackwp-consent-trigger" aria-label="' . esc_attr__('Cookie-indstillinger', 'trackwp') . '">';
-        echo '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="24" height="24">';
+        $config   = get_option('trackwp_consent', array());
+        $position = (is_array($config) && isset($config['trigger_position']) && 'left' === $config['trigger_position']) ? 'left' : 'right';
+        echo '<button type="button" class="trackwp-consent-trigger trackwp-consent-trigger--' . esc_attr($position) . '" aria-label="' . esc_attr__('Cookie-indstillinger', 'trackwp') . '">';
+        echo '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="12" height="12">';
         echo '<path d="M12 2a10 10 0 1 0 10 10v-.5a2.5 2.5 0 0 1-3.78-2.86 2.5 2.5 0 0 1-2.86-3.78A2.5 2.5 0 0 1 11.5 2H12zM7.5 8a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm4 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm5-3a1 1 0 1 1 0 2 1 1 0 0 1 0-2z"/>';
         echo '</svg>';
         echo '</button>';
@@ -193,14 +195,29 @@ class TrackWP_Consent {
      * Effective consent for a server-side event (K3 with R1/R2).
      *
      * 1. consent has key 'v' (array_key_exists, R1) and v is the integer
-     *    server version: analytics/marketing = (value === true). source=payload.
+     *    server version: analytics = payload analytics === true AND a valid
+     *    cookie (parse_cookie) with statistics; marketing likewise with the
+     *    cookie's marketing. The payload can still downgrade a category the
+     *    cookie allows. source=payload.
      * 2. consent has key 'v' and it is an integer other than the server
      *    version: all false, stale=true (caller answers stale_version).
      * 3. consent missing, not an array, or without 'v': cookie fallback via
      *    parse_cookie() (version-checked). source=cookie, or none without a
      *    valid cookie.
      * 4. Anything else (e.g. v present but not an integer): all false.
-     * No AND with the cookie.
+     *
+     * Why branch 1 now requires the cookie too (1.11.4): BESLUTNINGER-1.10.1
+     * section 2 advised against a hard AND because the first flush after an
+     * accept could be lost. That fear does not hold for the current JS:
+     * consent.js (applyChoice, lines 447-453) writes the cookie synchronously
+     * before trackwp:consent_updated, which triggers the flush in
+     * trackwp.js:1452, so every later /event call carries the cookie. A payload
+     * alone (curl, a script, a forged body) no longer grants consent.
+     *
+     * Residual risk: both the cookie and the payload come from the client. A
+     * client that sets the Cookie header itself can still claim consent. Only
+     * signed server state could close that; it was rejected because it does
+     * not work with full-page caching.
      *
      * @param mixed $payload_consent     Raw JSON-decoded consent (never sanitized).
      * @param bool  $payload_has_consent Whether the payload contained `consent`.
@@ -218,9 +235,12 @@ class TrackWP_Consent {
             if ($v !== $server_v) {
                 return array('analytics' => false, 'marketing' => false, 'v' => $v, 'source' => 'payload', 'stale' => true);
             }
+            $cookie = self::parse_cookie();
             return array(
-                'analytics' => isset($payload_consent['analytics']) && true === $payload_consent['analytics'],
-                'marketing' => isset($payload_consent['marketing']) && true === $payload_consent['marketing'],
+                'analytics' => isset($payload_consent['analytics']) && true === $payload_consent['analytics']
+                    && null !== $cookie && true === $cookie['statistics'],
+                'marketing' => isset($payload_consent['marketing']) && true === $payload_consent['marketing']
+                    && null !== $cookie && true === $cookie['marketing'],
                 'v'         => $v,
                 'source'    => 'payload',
                 'stale'     => false,
@@ -432,6 +452,13 @@ class TrackWP_Consent {
             if ($has_body_ts && null !== $consent_version && !$stale) {
                 $cookie_written = self::write_consent_cookie($consent_version, $ts_ms, $consent_id, $statistics, $marketing, $personalisation);
             }
+            // Queued GA4 events of this consent_id must not outlive a withdrawal
+            // or a downgrade (full withdraw has statistics=marketing=false).
+            if ((!$statistics || !$marketing)
+                && class_exists('TrackWP_GA4')
+                && method_exists('TrackWP_GA4', 'purge_queued_for_consent')) {
+                TrackWP_GA4::purge_queued_for_consent($consent_id, $statistics, $marketing);
+            }
         }
 
         if (!empty($config['log_consent'])) {
@@ -618,6 +645,47 @@ class TrackWP_Consent {
             TrackWP_Consent_Log::snapshot_texts($banner_hash, wp_json_encode($content));
         } catch (\Throwable $e) {
             return;
+        }
+    }
+
+    /**
+     * Store an immutable snapshot of the banner as it is rendered right now
+     * (version, texts, material() and style), keyed by the current
+     * banner_hash(). Meant for the admin save hooks, so a version exists in
+     * the log even before the first visitor answers it. Computed in the site
+     * locale, so the admin's own language cannot give another hash than the
+     * frontend. An existing snapshot is never overwritten
+     * (TrackWP_Consent_Log::snapshot_texts is INSERT IGNORE).
+     *
+     * @return bool True when a new snapshot was written.
+     */
+    public static function snapshot_current_banner() {
+        if (!class_exists('TrackWP_Consent_Profile')
+            || !is_callable(array('TrackWP_Consent_Profile', 'banner_hash'))
+            || !is_callable(array('TrackWP_Consent_Profile', 'banner_texts'))
+            || !is_callable(array('TrackWP_Consent_Profile', 'material'))) {
+            return false;
+        }
+        $switched = function_exists('switch_to_locale') ? switch_to_locale(get_locale()) : false;
+        try {
+            $hash = (string) TrackWP_Consent_Profile::banner_hash();
+            if ('' === $hash) {
+                return false;
+            }
+            $style   = get_option('trackwp_consent', array());
+            $content = array(
+                'consent_version' => self::server_version(),
+                'banner_texts'    => TrackWP_Consent_Profile::banner_texts(),
+                'material'        => TrackWP_Consent_Profile::material(),
+                'style'           => is_array($style) ? $style : array(),
+            );
+            return TrackWP_Consent_Log::snapshot_texts($hash, wp_json_encode($content));
+        } catch (\Throwable $e) {
+            return false;
+        } finally {
+            if ($switched && function_exists('restore_previous_locale')) {
+                restore_previous_locale();
+            }
         }
     }
 

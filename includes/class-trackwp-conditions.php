@@ -259,6 +259,13 @@ class TrackWP_Conditions {
             }
         }
 
+        // Only form_submit triggers may restrict themselves to the form
+        // plugins. The key is emitted only when true, so stored triggers keep
+        // their shape and a missing key means the old behaviour.
+        if ( 'form_submit' === $type && ! empty( $trigger['plugins_only'] ) && filter_var( $trigger['plugins_only'], FILTER_VALIDATE_BOOLEAN ) ) {
+            $out['plugins_only'] = true;
+        }
+
         return $out;
     }
 

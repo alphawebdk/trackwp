@@ -7,21 +7,17 @@
  * Needs the W0 test endpoint POST /wp-json/trackwp-test/v1/options.
  */
 import { test, expect } from '@playwright/test';
+import { setOptions, resetTrackWP } from './helpers/test-endpoints.mjs';
 
 const GOOGLE = /google-analytics\.com|googletagmanager\.com|doubleclick\.net|google\.com\/(ccm|pagead)|googleadservices\.com/;
 const EMAIL_PATTERNS = [/jens(\.|%2E)?hansen(@|%40|%2540)example/i, /pii(@|%40|%2540)example/i, /ref(@|%40|%2540)example/i];
 
-async function setOptions(request, baseURL, options) {
-    const res = await request.post(new URL('/wp-json/trackwp-test/v1/options', baseURL).toString(), { data: options });
-    return res.ok();
-}
-
-test('no e-mail reaches Google before or after accept', async ({ page, request, baseURL }) => {
-    const ok = await setOptions(request, baseURL, {
-        trackwp_platforms: { ga4_enabled: true, ga4_measurement_id: 'G-TEST123456' },
+test('no e-mail reaches Google before or after accept', async ({ page }) => {
+    await resetTrackWP();
+    await setOptions({
+        trackwp_platforms: { ga4_enabled: true, ga4_gtag_enabled: true, ga4_measurement_id: 'G-TEST123456' },
         trackwp_consent: { enabled: true, consent_version: 1 },
     });
-    test.skip(!ok, 'W0 test endpoint /wp-json/trackwp-test/v1/options is missing');
 
     const seen = [];
     await page.route(GOOGLE, async (route) => {
@@ -38,8 +34,9 @@ test('no e-mail reaches Google before or after accept', async ({ page, request, 
     // term, with an e-mail in the path and in an arbitrary query parameter.
     await page.goto('/?note=ref%40example.com');
     const target = '/pii%40example.com/?s=jens.hansen%40example.com&foo=pii%40example.com#mail=pii@example.com';
+    const nav = page.waitForURL(/\/pii%40example\.com\/\?s=/, { waitUntil: 'load' });
     await page.evaluate((href) => { window.location.href = href; }, target);
-    await page.waitForLoadState('load');
+    await nav;
 
     const cfg = await page.evaluate(() => {
         var dl = window.dataLayer || [];

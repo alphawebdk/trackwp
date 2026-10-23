@@ -8,30 +8,29 @@
  * Needs the W0 test endpoint POST /wp-json/trackwp-test/v1/options.
  */
 import { test, expect } from '@playwright/test';
+import { setOptions, resetTrackWP } from './helpers/test-endpoints.mjs';
+import { stubExternal } from './helpers/stub-external.mjs';
 
 const EVENTS = [{
     name: 'lead', enabled: true, value: 0, currency: 'DKK', meta_event: 'Lead',
     send_to: { ga4: true, meta: true, google_ads: true },
-    triggers: [{ type: 'form_submit', css_selector: '', conditions: [] }],
+    firing_triggers: [{ type: 'form_submit', css_selector: '', conditions: [] }],
 }];
-
-async function setOptions(request, baseURL, options) {
-    const res = await request.post(new URL('/wp-json/trackwp-test/v1/options', baseURL).toString(), { data: options });
-    return res.ok();
-}
 
 async function consentOf(context) {
     const c = (await context.cookies()).find((x) => x.name === 'trackwp_consent');
     return c ? JSON.parse(decodeURIComponent(c.value)) : null;
 }
 
-test.beforeEach(async ({ request, baseURL }) => {
-    const ok = await setOptions(request, baseURL, {
-        trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
+test.beforeEach(async ({ context }) => {
+    await stubExternal(context);
+    await resetTrackWP();
+    await setOptions({
+        trackwp_platforms: { ga4_enabled: true, ga4_gtag_enabled: true, ga4_measurement_id: 'G-TEST123456', meta_enabled: true, meta_pixel_id: '123456789012345', meta_pixel_client_enabled: true },
         trackwp_advanced: { customer_data_sharing: true, first_party_cookie_enabled: true },
         trackwp_events: EVENTS,
+        trackwp_consent: { enabled: true, consent_version: 1, require_active_consent: true },
     });
-    test.skip(!ok, 'W0 test endpoint /wp-json/trackwp-test/v1/options is missing');
 });
 
 test('withdraw during hashing and keepalive', async ({ page }) => {

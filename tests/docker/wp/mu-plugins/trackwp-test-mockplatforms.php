@@ -11,6 +11,26 @@
  */
 
 if ( ! defined( 'TRACKWP_MOCKPLATFORMS_URL' ) ) {
+    // Fail closed: tests must never reach real platforms. Without a mock URL,
+    // block every request to the platform hosts instead of letting it through.
+    add_filter(
+        'pre_http_request',
+        function ( $pre, $parsed_args, $url ) {
+            $host = wp_parse_url( $url, PHP_URL_HOST );
+            $blocked = array(
+                'www.google-analytics.com',
+                'region1.google-analytics.com',
+                'graph.facebook.com',
+                'googleads.googleapis.com',
+            );
+            if ( is_string( $host ) && in_array( strtolower( $host ), $blocked, true ) ) {
+                return new WP_Error( 'trackwp_test_blocked', 'Blocked: tests must not reach real platform ' . $host );
+            }
+            return $pre;
+        },
+        10,
+        3
+    );
     return;
 }
 

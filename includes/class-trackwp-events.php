@@ -18,7 +18,8 @@ class TrackWP_Events {
     }
 
     /**
-     * Default events created on plugin activation.
+     * Runtime fallback events, used when the trackwp_events option does not
+     * exist. Not the first-activation seed: see get_install_defaults().
      */
     public static function get_defaults() {
         return array(
@@ -364,6 +365,81 @@ class TrackWP_Events {
     }
 
     /**
+     * Events seeded once by activate() on a fresh install. get_defaults() stays
+     * the runtime fallback for sites without the option; this is only the
+     * first-activation seed, in full validate_event shape.
+     *
+     * @return array
+     */
+    public static function get_install_defaults() {
+        $send_to = array( 'ga4' => true, 'google_ads' => true, 'meta' => true );
+        $click   = function ( $name, $display, $enabled, $selector, $meta ) use ( $send_to ) {
+            return array(
+                'enabled'         => $enabled,
+                'name'            => $name,
+                'display_name'    => $display,
+                'trigger_type'    => 'css_click',
+                'css_selector'    => $selector,
+                'url_match'       => '',
+                'scroll_depth'    => 0,
+                'time_seconds'    => 0,
+                'js_event'        => '',
+                'firing_triggers' => array(
+                    array(
+                        'type'         => 'css_click',
+                        'css_selector' => $selector,
+                        'url_match'    => '',
+                        'scroll_depth' => 0,
+                        'time_seconds' => 0,
+                        'js_event'     => '',
+                        'conditions'   => array(),
+                    ),
+                ),
+                'value'           => 0,
+                'currency'        => 'DKK',
+                'ads_label'       => '',
+                'meta_event'      => $meta,
+                'send_to'         => $send_to,
+            );
+        };
+
+        return array(
+            $click( 'phone_click', __( 'Telefonklik', 'trackwp' ), true, 'a[href^="tel:"]', 'Contact' ),
+            $click( 'email_click', __( 'E-mailklik', 'trackwp' ), true, 'a[href^="mailto:"]', 'Contact' ),
+            array(
+                'enabled'         => true,
+                'name'            => 'generate_lead',
+                'display_name'    => __( 'Lead: formular', 'trackwp' ),
+                'trigger_type'    => 'form_submit',
+                'css_selector'    => '',
+                'url_match'       => '',
+                'scroll_depth'    => 0,
+                'time_seconds'    => 0,
+                'js_event'        => '',
+                'firing_triggers' => array(
+                    array(
+                        'type'         => 'form_submit',
+                        'css_selector' => '',
+                        'url_match'    => '',
+                        'scroll_depth' => 0,
+                        'time_seconds' => 0,
+                        'js_event'     => '',
+                        'conditions'   => array(),
+                        'plugins_only' => true,
+                    ),
+                ),
+                'value'           => 0,
+                'currency'        => 'DKK',
+                'ads_label'       => '',
+                'meta_event'      => 'Lead',
+                'send_to'         => $send_to,
+            ),
+            $click( 'whatsapp_click', __( 'WhatsApp-klik', 'trackwp' ), false, 'a[href*="//wa.me/"], a[href*="//api.whatsapp.com/"], a[href^="whatsapp:"]', 'Contact' ),
+            $click( 'find_location', __( 'Find vej (Google Maps)', 'trackwp' ), false, 'a[href*="maps.google."], a[href*="//www.google."][href*="/maps"], a[href*="//google."][href*="/maps"], a[href*="maps.app.goo.gl"], a[href*="goo.gl/maps"]', 'FindLocation' ),
+        );
+    }
+
+    /**
      * Standard Meta event types for admin select.
      */
     public static function get_meta_event_types() {
@@ -378,6 +454,7 @@ class TrackWP_Events {
             'AddPaymentInfo'       => 'AddPaymentInfo',
             'CompleteRegistration' => 'CompleteRegistration',
             'Search'               => 'Search',
+            'FindLocation'         => 'FindLocation',
             'Subscribe'            => 'Subscribe',
             'CustomEvent'          => __('Tilpasset begivenhed', 'trackwp'),
         );

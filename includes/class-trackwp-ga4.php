@@ -21,6 +21,122 @@ class TrackWP_GA4 {
     }
 
     /**
+     * Max number of extra GA4 Measurement IDs.
+     */
+    const MAX_EXTRA_IDS = 3;
+
+    /**
+     * Runtime list of extra GA4 destinations (the only source for it).
+     *
+     * Empty unless GA4 is enabled with a valid primary Measurement ID.
+     * IDs are trimmed, uppercased, validated, deduplicated, never equal to
+     * the primary and capped at MAX_EXTRA_IDS.
+     *
+     * @param array|null $platforms trackwp_platforms; read from the option when null.
+     * @return array List of array('id' => 'G-...', 'api_secret' => '<encoded or empty>').
+     */
+    public static function extra_destinations($platforms = null) {
+        $p = is_array($platforms) ? $platforms : get_option('trackwp_platforms', array());
+        if (!is_array($p) || empty($p['ga4_enabled'])) {
+            return array();
+        }
+        // Same primary check as render_gtag_head() and allowed_measurement_ids()
+        // (no normalisation), so extra IDs are never active without the primary.
+        $primary = isset($p['ga4_measurement_id']) ? $p['ga4_measurement_id'] : '';
+        if (!is_string($primary) || !preg_match('/^G-[A-Z0-9]{4,12}$/', $primary)) {
+            return array();
+        }
+        if (empty($p['ga4_extra_ids']) || !is_array($p['ga4_extra_ids'])) {
+            return array();
+        }
+        $out  = array();
+        $seen = array($primary => true);
+        foreach ($p['ga4_extra_ids'] as $row) {
+            if (count($out) >= self::MAX_EXTRA_IDS) {
+                break;
+            }
+            if (!is_array($row) || !isset($row['id']) || !is_scalar($row['id'])) {
+                continue;
+            }
+            $id = strtoupper(trim((string) $row['id']));
+            if (!preg_match('/^G-[A-Z0-9]{4,12}$/', $id) || isset($seen[$id])) {
+                continue;
+            }
+            $seen[$id] = true;
+            $out[]     = array(
+                'id'         => $id,
+                'api_secret' => (isset($row['api_secret']) && is_string($row['api_secret'])) ? $row['api_secret'] : '',
+            );
+        }
+        return $out;
+    }
+
+    /**
+     * Measurement IDs the first-party collect endpoint accepts: the primary
+     * (format check only, as before) plus the runtime extra IDs.
+     *
+     * @param array|null $platforms
+     * @return array Empty when the primary ID is invalid.
+     */
+    public static function allowed_measurement_ids($platforms = null) {
+        $p       = is_array($platforms) ? $platforms : get_option('trackwp_platforms', array());
+        $primary = (is_array($p) && isset($p['ga4_measurement_id'])) ? $p['ga4_measurement_id'] : '';
+        if (!is_string($primary) || !preg_match('/^G-[A-Z0-9]{4,12}$/', $primary)) {
+            return array();
+        }
+        $ids = array($primary);
+        foreach (self::extra_destinations($p) as $dest) {
+            if (!in_array($dest['id'], $ids, true)) {
+                $ids[] = $dest['id'];
+            }
+        }
+        return $ids;
+    }
+
+    /**
+     * Primary Measurement ID as configured.
+     *
+     * @return string
+     */
+    private function primary_id() {
+        return isset($this->config['ga4_measurement_id']) ? (string) $this->config['ga4_measurement_id'] : '';
+    }
+
+    /**
+     * Stored (encoded) API secret for a destination. The primary secret is
+     * only returned for the primary ID, never for an extra ID.
+     *
+     * @param string $measurement_id
+     * @return string Empty when the destination has no secret or is unknown.
+     */
+    private function secret_for($measurement_id) {
+        if ($measurement_id === $this->primary_id()) {
+            return isset($this->config['ga4_api_secret']) ? (string) $this->config['ga4_api_secret'] : '';
+        }
+        foreach (self::extra_destinations($this->config) as $dest) {
+            if ($dest['id'] === $measurement_id) {
+                return $dest['api_secret'];
+            }
+        }
+        return '';
+    }
+
+    /**
+     * Extra destinations that have their own API secret (MP fan-out).
+     *
+     * @return array List of Measurement IDs.
+     */
+    private function extra_mp_ids() {
+        $ids = array();
+        foreach (self::extra_destinations($this->config) as $dest) {
+            if ($dest['api_secret'] !== '') {
+                $ids[] = $dest['id'];
+            }
+        }
+        return $ids;
+    }
+
+    /**
      * Validate a GA4 client_id format.
      * Accepts either GA1.<n>.<n>.<n> or <n>.<n>.
      *
@@ -133,14 +249,15 @@ class TrackWP_GA4 {
      *     the MP `session_id` param must be numeric, so non-numeric values
      *     (e.g. legacy "ses_<hex>" client format) are rejected.
      *
-     * @param array $event_data
+     * @param array       $event_data
+     * @param string|null $measurement_id Target ID for the match step (default: primary).
      * @return string
      */
-    private function derive_session_id($event_data) {
+    private function derive_session_id($event_data, $measurement_id = null) {
         // 1) New contract: array of cookies.
         if (!empty($event_data['ga_session_cookies']) && is_array($event_data['ga_session_cookies'])) {
             $cookies = $event_data['ga_session_cookies'];
-            $mp_id   = isset($this->config['ga4_measurement_id']) ? $this->config['ga4_measurement_id'] : '';
+            $mp_id   = ($measurement_id !== null) ? $measurement_id : $this->primary_id();
 
             if ($this->is_valid_mp_id($mp_id)) {
                 $target = substr($mp_id, 2); // strip "G-" prefix
@@ -237,6 +354,12 @@ class TrackWP_GA4 {
     const QUEUE_TTL = 262800;
 
     /**
+     * Lifetime of a withdrawal record (trackwp_ga4_withdrawn).
+     * Residual risk: events already sent to Google cannot be recalled.
+     */
+    const FLIGHT_TTL = 900;
+
+    /**
      * Build a K1 result array.
      */
     private static function result($status, $reason, $http_code = 0, $attempts = 0, $detail = '') {
@@ -253,17 +376,29 @@ class TrackWP_GA4 {
     /**
      * MP collect URL, or '' when the configuration is unusable.
      *
+     * Without arguments: primary ID and primary secret. For an extra ID the
+     * caller passes that ID and its own encoded secret; the primary secret
+     * is never used as a fallback.
+     *
+     * @param string|null $measurement_id
+     * @param string|null $encoded_secret
      * @return string
      */
-    private function collect_url() {
-        $measurement_id = isset($this->config['ga4_measurement_id']) ? $this->config['ga4_measurement_id'] : '';
+    private function collect_url($measurement_id = null, $encoded_secret = null) {
+        if ($measurement_id === null) {
+            $measurement_id = $this->primary_id();
+            $encoded_secret = isset($this->config['ga4_api_secret']) ? $this->config['ga4_api_secret'] : '';
+        }
         if (!$this->is_valid_mp_id($measurement_id)) {
             $this->log_capi_error('mp_skipped: measurement_id must be G- format', '');
             return '';
         }
+        if (!is_string($encoded_secret) || $encoded_secret === '') {
+            return '';
+        }
         return add_query_arg(array(
             'measurement_id' => $measurement_id,
-            'api_secret'     => TrackWP_Hash::decode($this->config['ga4_api_secret']),
+            'api_secret'     => TrackWP_Hash::decode($encoded_secret),
         ), 'https://www.google-analytics.com/mp/collect');
     }
 
@@ -384,6 +519,21 @@ class TrackWP_GA4 {
         $event_data['_consent_marketing'] = $marketing;
         $event_data['_consent_analytics'] = $analytics;
 
+        // Consent id of the cookie, so a later withdrawal can find this event.
+        $ctx = self::server_ctx($event_data);
+        $event_data['_consent_id'] = '';
+        if ($ctx !== null) {
+            // Server-originated event: the id comes from the stored snapshot, never the request.
+            if (!empty($ctx['consent_id']) && is_string($ctx['consent_id'])) {
+                $event_data['_consent_id'] = $ctx['consent_id'];
+            }
+        } elseif (class_exists('TrackWP_Consent')) {
+            $cookie = TrackWP_Consent::parse_cookie();
+            if (is_array($cookie) && !empty($cookie['id']) && is_string($cookie['id'])) {
+                $event_data['_consent_id'] = $cookie['id'];
+            }
+        }
+
         $event_data['_user_data'] = array();
         if ($marketing && TrackWP_Hash::customer_data_sharing_enabled()
             && !empty($event_data['enhanced']) && is_array($event_data['enhanced'])) {
@@ -392,7 +542,12 @@ class TrackWP_GA4 {
         unset($event_data['enhanced']);
 
         $event_data['_user_id'] = '';
-        if (!empty($this->advanced['ga4_user_id_enabled']) && class_exists('TrackWP_Request_Guard')) {
+        if ($ctx !== null) {
+            if (!empty($ctx['user_id_hash']) && is_string($ctx['user_id_hash'])) {
+                $event_data['_user_id']         = $ctx['user_id_hash'];
+                $event_data['_user_properties'] = array('logged_in' => array('value' => 'true'));
+            }
+        } elseif (!empty($this->advanced['ga4_user_id_enabled']) && class_exists('TrackWP_Request_Guard')) {
             $uid = (int) TrackWP_Request_Guard::current_user_id();
             if ($uid > 0) {
                 $event_data['_user_id']         = hash('sha256', $uid . ':' . get_site_url());
@@ -403,7 +558,12 @@ class TrackWP_GA4 {
         $event_data['_ip_override'] = '';
         $event_data['_user_agent']  = '';
         if ($analytics) {
-            $ip = class_exists('TrackWP_Request_Guard') ? (string) TrackWP_Request_Guard::client_ip() : '';
+            if ($ctx !== null) {
+                // Never the request IP: only the customer IP stored with the order.
+                $ip = isset($ctx['customer_ip']) && is_string($ctx['customer_ip']) ? $ctx['customer_ip'] : '';
+            } else {
+                $ip = class_exists('TrackWP_Request_Guard') ? (string) TrackWP_Request_Guard::client_ip() : '';
+            }
             if (filter_var($ip, FILTER_VALIDATE_IP)) {
                 $event_data['_ip_override'] = $ip;
             }
@@ -414,6 +574,18 @@ class TrackWP_GA4 {
 
         $event_data['_snapshot'] = 1;
         return $event_data;
+    }
+
+    /**
+     * Server-originated context (set by the backup layer, never by a request).
+     *
+     * @param array $event_data
+     * @return array|null Context array, or null for a normal request event.
+     */
+    private static function server_ctx($event_data) {
+        return (isset($event_data['_server_ctx']) && is_array($event_data['_server_ctx']))
+            ? $event_data['_server_ctx']
+            : null;
     }
 
     /**
@@ -432,8 +604,12 @@ class TrackWP_GA4 {
             return self::result('skipped', 'not_configured', 0, 0, 'invalid measurement_id');
         }
 
+        // Extra IDs with their own secret always go through the queue, so
+        // they do not use the shared proxy budget of Meta and Ads.
+        $extra_ids = $this->extra_mp_ids();
+
         if (!empty($this->advanced['batching_enabled'])) {
-            $this->queue_event($event_data);
+            $this->queue_event($event_data, empty($extra_ids) ? null : array_merge(array($this->primary_id()), $extra_ids));
             return self::result('queued', 'batched');
         }
 
@@ -442,7 +618,12 @@ class TrackWP_GA4 {
         $body       = $this->build_body($event_data, $client_id, false);
 
         $deadline = microtime(true) + (($budget === null) ? self::DEFAULT_BUDGET : max(0.0, (float) $budget));
-        return $this->dispatch($url, $body, $deadline);
+        $result   = $this->dispatch($url, $body, $deadline);
+
+        if (!empty($extra_ids)) {
+            $this->queue_event($event_data, $extra_ids);
+        }
+        return $result;
     }
 
     /**
@@ -479,9 +660,10 @@ class TrackWP_GA4 {
      * @param array  $event_data Output of snapshot().
      * @param string $client_id
      * @param bool   $with_timestamp Add timestamp_micros from _queued_at_us.
+     * @param string|null $measurement_id Destination ID for the session match (default: primary).
      * @return array
      */
-    public function build_body($event_data, $client_id, $with_timestamp = false) {
+    public function build_body($event_data, $client_id, $with_timestamp = false, $measurement_id = null) {
         $event_data = $this->snapshot($event_data);
         $event_name = isset($event_data['event']) ? $event_data['event'] : '';
 
@@ -519,7 +701,7 @@ class TrackWP_GA4 {
             }
         }
 
-        $session_id = $this->derive_session_id($event_data);
+        $session_id = $this->derive_session_id($event_data, $measurement_id);
         if ($session_id !== '') {
             $params['session_id'] = $session_id;
         }
@@ -550,6 +732,11 @@ class TrackWP_GA4 {
         );
         if ($with_timestamp && !empty($event_data['_queued_at_us'])) {
             $event['timestamp_micros'] = (int) $event_data['_queued_at_us'];
+        }
+        $ctx = self::server_ctx($event_data);
+        if ($ctx !== null && !empty($ctx['event_time']) && (int) $ctx['event_time'] > 0) {
+            // The real event time wins over the queue time, direct and queued.
+            $event['timestamp_micros'] = (int) $ctx['event_time'] * 1000000;
         }
 
         $body = array(
@@ -618,20 +805,24 @@ class TrackWP_GA4 {
      * The queue stays a transient without a DELETE claim in 1.10.1
      * (BESLUTNINGER §7.5); the outbox replaces it in 1.11.0.
      *
-     * @param array $event_data
+     * @param array      $event_data
+     * @param array|null $destinations Measurement IDs to send to (default: primary only).
      * @return void
      */
-    public function queue_event($event_data) {
+    public function queue_event($event_data, $destinations = null) {
         $event_data                  = $this->snapshot($event_data);
+        $event_data['_destinations'] = is_array($destinations) ? array_values($destinations) : array($this->primary_id());
         $event_data['_queued_at']    = time();
         $event_data['_queued_at_us'] = (int) floor(microtime(true) * 1000000);
 
-        $queue = get_transient('trackwp_ga4_queue');
+        $locked = self::lock();
+        $queue  = get_transient('trackwp_ga4_queue');
         if (!is_array($queue)) {
             $queue = array();
         }
         $queue[] = $event_data;
         set_transient('trackwp_ga4_queue', $queue, self::QUEUE_TTL);
+        self::unlock($locked);
 
         // Flushing inline would exceed the public request budget (K1), so a
         // full queue is flushed by an immediate cron run instead.
@@ -643,6 +834,144 @@ class TrackWP_GA4 {
             }
             wp_schedule_single_event(time() + $delay, 'trackwp_flush_ga4');
         }
+    }
+
+    /**
+     * Try to take the queue lock (MySQL named lock, 2 s timeout).
+     *
+     * Returns false when the lock is not available (timeout, or a database
+     * without GET_LOCK such as SQLite); callers then continue without a lock,
+     * which is the behaviour from before the lock existed.
+     *
+     * @return bool True when the lock is held and must be released.
+     */
+    private static function lock() {
+        global $wpdb;
+        if (!isset($wpdb) || !is_object($wpdb) || !method_exists($wpdb, 'get_var')) {
+            return false;
+        }
+        // HyperDB / LudicrousDB: GET_LOCK and RELEASE_LOCK must hit the same
+        // (master) server.
+        if (method_exists($wpdb, 'send_reads_to_masters')) {
+            $wpdb->send_reads_to_masters();
+        }
+        $previous = $wpdb->suppress_errors(true);
+        $got      = $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, %d)', $wpdb->prefix . 'trackwp_ga4_q', 2));
+        $wpdb->suppress_errors($previous);
+        return ((string) $got === '1');
+    }
+
+    /**
+     * Release the queue lock taken by lock().
+     *
+     * @param bool $locked Return value of lock().
+     * @return void
+     */
+    private static function unlock($locked) {
+        global $wpdb;
+        if (!$locked) {
+            return;
+        }
+        $previous = $wpdb->suppress_errors(true);
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)', $wpdb->prefix . 'trackwp_ga4_q'));
+        $wpdb->suppress_errors($previous);
+    }
+
+    /**
+     * Apply a consent withdrawal or downgrade to queued, not yet sent events.
+     *
+     * Only events carrying the given _consent_id are touched; events without
+     * _consent_id (queued before it existed) are left alone.
+     * - !$statistics: the event is removed.
+     * - otherwise !$marketing: the event loses its marketing flag and user_data.
+     *
+     * @param string $consent_id
+     * @param bool   $statistics
+     * @param bool   $marketing
+     * @return int Number of changed (removed or downgraded) events.
+     */
+    public static function purge_queued_for_consent($consent_id, $statistics, $marketing) {
+        if (!is_string($consent_id) || $consent_id === '') {
+            return 0;
+        }
+        $locked = self::lock();
+        try {
+            // Remember the withdrawal for FLIGHT_TTL: a flush may have taken the
+            // queue and re-queue it on failure; requeue_failed() applies the
+            // record to events queued before it.
+            $withdrawn = get_transient('trackwp_ga4_withdrawn');
+            if (!is_array($withdrawn)) {
+                $withdrawn = array();
+            }
+            $old_s = isset($withdrawn[$consent_id]) ? !empty($withdrawn[$consent_id]['s']) : true;
+            $old_m = isset($withdrawn[$consent_id]) ? !empty($withdrawn[$consent_id]['m']) : true;
+            unset($withdrawn[$consent_id]);
+            $withdrawn[$consent_id] = array(
+                's' => ($old_s && $statistics),
+                'm' => ($old_m && $marketing),
+                't' => (int) floor(microtime(true) * 1000000),
+            );
+            while (count($withdrawn) > 1000) {
+                reset($withdrawn);
+                unset($withdrawn[key($withdrawn)]);
+            }
+            set_transient('trackwp_ga4_withdrawn', $withdrawn, self::FLIGHT_TTL);
+
+            $queue = get_transient('trackwp_ga4_queue');
+            if (empty($queue) || !is_array($queue)) {
+                return 0;
+            }
+
+            $changed = 0;
+            $kept    = array();
+            foreach ($queue as $event_data) {
+                if (!is_array($event_data) || !isset($event_data['_consent_id']) || $event_data['_consent_id'] !== $consent_id) {
+                    $kept[] = $event_data;
+                    continue;
+                }
+                $result = self::apply_consent_change($event_data, $statistics, $marketing);
+                if ($result === null) {
+                    $changed++;
+                    continue;
+                }
+                if ($result !== $event_data) {
+                    $changed++;
+                }
+                $kept[] = $result;
+            }
+
+            if ($changed > 0) {
+                if (empty($kept)) {
+                    delete_transient('trackwp_ga4_queue');
+                } else {
+                    set_transient('trackwp_ga4_queue', $kept, self::QUEUE_TTL);
+                }
+            }
+            return $changed;
+        } finally {
+            self::unlock($locked);
+        }
+    }
+
+    /**
+     * The consent rule for one queued event.
+     *
+     * @param array $event_data
+     * @param bool  $statistics
+     * @param bool  $marketing
+     * @return array|null Null when the event must be removed, otherwise the
+     *                    event (without marketing flag and user_data when
+     *                    marketing was withdrawn).
+     */
+    private static function apply_consent_change($event_data, $statistics, $marketing) {
+        if (!$statistics) {
+            return null;
+        }
+        if (!$marketing && !empty($event_data['_consent_marketing'])) {
+            $event_data['_consent_marketing'] = false;
+            $event_data['_user_data']         = array();
+        }
+        return $event_data;
     }
 
     /**
@@ -669,24 +998,26 @@ class TrackWP_GA4 {
 
     /**
      * Split queued events into MP request bodies (R18 key, max 25 events,
-     * max 130 kB). Each returned item: array('body' => array, 'events' => array).
+     * max 130 kB). Each returned item: array('body' => array, 'events' => array,
+     * 'keys' => array of the events' keys in $queue).
      *
-     * @param array $queue
+     * @param array       $queue
+     * @param string|null $measurement_id Destination ID (default: primary).
      * @return array
      */
-    public function build_batches($queue) {
+    public function build_batches($queue, $measurement_id = null) {
         $groups = array();
-        foreach ($queue as $event_data) {
+        foreach ($queue as $qkey => $event_data) {
             if (!is_array($event_data)) {
                 continue;
             }
             $cid    = $this->resolve_client_id($event_data);
-            $single = $this->build_body($event_data, $cid, true);
+            $single = $this->build_body($event_data, $cid, true, $measurement_id);
             $key    = self::batch_key($single);
             if (!isset($groups[$key])) {
                 $groups[$key] = array();
             }
-            $groups[$key][] = array('single' => $single, 'event' => $event_data);
+            $groups[$key][] = array('single' => $single, 'event' => $event_data, 'key' => $qkey);
         }
 
         $batches = array();
@@ -695,16 +1026,17 @@ class TrackWP_GA4 {
             foreach ($items as $item) {
                 $candidate = $current;
                 if ($candidate === null) {
-                    $candidate = array('body' => $item['single'], 'events' => array($item['event']));
+                    $candidate = array('body' => $item['single'], 'events' => array($item['event']), 'keys' => array($item['key']));
                 } else {
                     $candidate['body']['events'][] = $item['single']['events'][0];
                     $candidate['events'][]         = $item['event'];
+                    $candidate['keys'][]           = $item['key'];
                 }
                 $too_many = count($candidate['body']['events']) > self::BATCH_MAX_EVENTS;
                 $too_big  = strlen((string) wp_json_encode($candidate['body'])) > self::BATCH_MAX_BYTES;
                 if ($current !== null && ($too_many || $too_big)) {
                     $batches[] = $current;
-                    $current   = array('body' => $item['single'], 'events' => array($item['event']));
+                    $current   = array('body' => $item['single'], 'events' => array($item['event']), 'keys' => array($item['key']));
                 } else {
                     $current = $candidate;
                 }
@@ -725,40 +1057,100 @@ class TrackWP_GA4 {
      * REQUEUE_MAX_AGE; `unknown` (timeout) is dropped to avoid double
      * counting; 4xx is dropped and logged.
      *
+     * Each entry is sent to the IDs in its `_destinations` (an entry without
+     * it, e.g. queued by 1.11.2, means primary only). A failed event is
+     * re-queued only for the destinations that failed.
+     *
      * @return array List of K1 results, one per batch.
      */
     public function flush_queue() {
-        $queue = get_transient('trackwp_ga4_queue');
+        $locked = self::lock();
+        $queue  = get_transient('trackwp_ga4_queue');
         if (empty($queue) || !is_array($queue)) {
             delete_transient('trackwp_ga4_queue');
+            self::unlock($locked);
             return array();
         }
         if (!$this->is_enabled()) {
+            self::unlock($locked);
             return array();
         }
         $url = $this->collect_url();
         if ($url === '') {
+            self::unlock($locked);
             return array();
         }
 
         delete_transient('trackwp_ga4_queue');
+        // Released before dispatch: the lock is never held during HTTP and
+        // requeue_failed() takes its own lock.
+        self::unlock($locked);
+
+        return $this->dispatch_taken_queue($queue, $url);
+    }
+
+    /**
+     * Dispatch a queue taken by flush_queue() and re-queue retryable failures.
+     *
+     * @param array  $queue
+     * @param string $url   Primary collect URL.
+     * @return array List of K1 results.
+     */
+    private function dispatch_taken_queue($queue, $url) {
+        $primary = $this->primary_id();
+        $by_dest = array();
+        foreach ($queue as $qkey => $event_data) {
+            if (!is_array($event_data)) {
+                continue;
+            }
+            $dests = (!empty($event_data['_destinations']) && is_array($event_data['_destinations']))
+                ? array_values(array_unique($event_data['_destinations']))
+                : array($primary);
+            foreach ($dests as $dest) {
+                if (!is_string($dest)) {
+                    continue;
+                }
+                $by_dest[$dest][$qkey] = $event_data;
+            }
+        }
 
         $results = array();
         $failed  = array();
-        foreach ($this->build_batches($queue) as $batch) {
-            $result    = $this->dispatch($url, $batch['body'], microtime(true) + self::CRON_BUDGET);
-            $results[] = $result;
-            $retryable = $result['status'] === 'failed'
-                && in_array($result['reason'], array('http_5xx', 'http_429', 'transport'), true);
-            if ($retryable) {
-                $failed = array_merge($failed, $batch['events']);
-            } elseif ($result['status'] === 'unknown') {
-                $this->log_capi_error('batch outcome unknown (' . count($batch['events']) . ' events) -- dropped to avoid double counting', '');
+        foreach ($by_dest as $dest => $events) {
+            $dest = (string) $dest;
+            if ($dest !== $primary && !in_array($dest, wp_list_pluck(self::extra_destinations($this->config), 'id'), true)) {
+                // E.g. the primary ID was changed or the extra ID removed after queueing.
+                $this->log_capi_error('mp_skipped ' . $dest . ': destination no longer configured (' . count($events) . ' events)', '');
+                continue;
+            }
+            $dest_url = ($dest === $primary) ? $url : $this->collect_url($dest, $this->secret_for($dest));
+            if ($dest_url === '') {
+                $this->log_capi_error('mp_skipped extra ' . $dest . ': no api_secret (' . count($events) . ' events)', '');
+                continue;
+            }
+            foreach ($this->build_batches($events, $dest) as $batch) {
+                $result    = $this->dispatch($dest_url, $batch['body'], microtime(true) + self::CRON_BUDGET);
+                $results[] = $result;
+                $retryable = $result['status'] === 'failed'
+                    && in_array($result['reason'], array('http_5xx', 'http_429', 'transport'), true);
+                if ($retryable) {
+                    foreach ($batch['keys'] as $qkey) {
+                        $failed[$qkey][] = $dest;
+                    }
+                } elseif ($result['status'] === 'unknown') {
+                    $this->log_capi_error('batch outcome unknown for ' . $dest . ' (' . count($batch['events']) . ' events) -- dropped to avoid double counting', '');
+                }
             }
         }
 
         if (!empty($failed)) {
-            $this->requeue_failed($failed);
+            $retry = array();
+            foreach ($failed as $qkey => $dests) {
+                $event_data                  = $queue[$qkey];
+                $event_data['_destinations'] = array_values(array_unique($dests));
+                $retry[]                     = $event_data;
+            }
+            $this->requeue_failed($retry);
         }
         return $results;
     }
@@ -782,11 +1174,38 @@ class TrackWP_GA4 {
             return;
         }
 
-        $queue = get_transient('trackwp_ga4_queue');
-        if (!is_array($queue)) {
-            $queue = array();
+        $locked = self::lock();
+        try {
+            $withdrawn = get_transient('trackwp_ga4_withdrawn');
+            if (is_array($withdrawn) && !empty($withdrawn)) {
+                $filtered = array();
+                foreach ($keep as $event_data) {
+                    $cid = isset($event_data['_consent_id']) ? $event_data['_consent_id'] : null;
+                    if (is_string($cid) && isset($withdrawn[$cid])
+                        && (isset($event_data['_queued_at_us']) ? (int) $event_data['_queued_at_us'] : 0)
+                            < (isset($withdrawn[$cid]['t']) ? (int) $withdrawn[$cid]['t'] : PHP_INT_MAX)) {
+                        $event_data = self::apply_consent_change($event_data, !empty($withdrawn[$cid]['s']), !empty($withdrawn[$cid]['m']));
+                        if ($event_data === null) {
+                            continue;
+                        }
+                    }
+                    $filtered[] = $event_data;
+                }
+                $keep = $filtered;
+            }
+            if (!empty($keep)) {
+                $queue = get_transient('trackwp_ga4_queue');
+                if (!is_array($queue)) {
+                    $queue = array();
+                }
+                set_transient('trackwp_ga4_queue', array_merge($keep, $queue), self::QUEUE_TTL);
+            }
+        } finally {
+            self::unlock($locked);
         }
-        set_transient('trackwp_ga4_queue', array_merge($keep, $queue), self::QUEUE_TTL);
+        if (empty($keep)) {
+            return;
+        }
 
         if (!wp_next_scheduled('trackwp_flush_ga4')) {
             wp_schedule_single_event(time() + 60, 'trackwp_flush_ga4');

@@ -17,7 +17,11 @@
  *    sale is attributed to the session that produced it. A server-side
  *    dispatch on a status transition runs outside the visitor's request,
  *    where every one of those is missing. The cost is orders whose customer
- *    never reaches the order-received page (documented gap until 1.11.0).
+ *    never reaches the order-received page. That gap is covered by a
+ *    server-side backup (TrackWP_Purchase_Backup): about 3 minutes after the
+ *    order is paid it sends the purchase from the consent and identifiers
+ *    saved at checkout, through the same atomic claim as the page, and only
+ *    when the browser has not already handled the order (browser_seen).
  *
  * 3. The SERVER is authoritative for the purchase itself (PLAN-1.10.1-v4 K5).
  *    The page hands the browser an HMAC-signed order_ref; when /event receives
@@ -285,6 +289,40 @@ class TrackWP_WooCommerce {
     }
 
     /**
+     * Deterministic event_id for a refund (one per WC_Order_Refund id).
+     *
+     * @param int $refund_id Refund id.
+     * @return string evt_ + 32 hex.
+     */
+    public static function refund_event_id_for( $refund_id ) {
+        return 'evt_' . substr( hash_hmac( 'sha256', 'refund|' . (int) $refund_id, wp_salt( 'auth' ) ), 0, 32 );
+    }
+
+    /**
+     * The checkout snapshot of an order, or null when it cannot be trusted.
+     *
+     * Valid when it is an array with a consent array and either carries this
+     * order's id (oid) or, for snapshots saved before oid existed, the order
+     * was created by a real checkout. Copies on renewal or admin orders fail.
+     *
+     * @param WC_Order $order Order.
+     * @return array|null
+     */
+    public static function valid_snapshot( $order ) {
+        if ( ! $order instanceof WC_Order ) {
+            return null;
+        }
+        $snap = $order->get_meta( self::ORDER_META_ATTRIBUTION, true );
+        if ( ! is_array( $snap ) || ! isset( $snap['consent'] ) || ! is_array( $snap['consent'] ) ) {
+            return null;
+        }
+        if ( isset( $snap['oid'] ) ) {
+            return (int) $snap['oid'] === (int) $order->get_id() ? $snap : null;
+        }
+        return in_array( (string) $order->get_created_via(), array( 'checkout', 'store-api' ), true ) ? $snap : null;
+    }
+
+    /**
      * Signed order reference: "<order_id>.<24 hex HMAC>". Proves the sender
      * was shown this order's order-received page with a valid order key.
      *
@@ -534,6 +572,77 @@ class TrackWP_WooCommerce {
     }
 
     /**
+     * Build the GA4 refund data for one WC_Order_Refund: the original
+     * transaction_id, only the refunded lines and amounts (all positive), and
+     * the same item_id and value basis as the purchase.
+     *
+     * @param WC_Order        $order  Parent order.
+     * @param WC_Order_Refund $refund Refund.
+     * @return array event_id, currency, value, ecommerce.
+     */
+    public function build_refund_data( $order, $refund ) {
+        $settings    = $this->settings();
+        $include_tax = $this->value_includes_tax( $settings['value_basis'] );
+
+        $items     = array();
+        $value_ga4 = 0.0;
+        foreach ( $refund->get_items() as $line ) {
+            if ( ! $line instanceof WC_Order_Item_Product ) {
+                continue;
+            }
+            $value_ga4 += abs( (float) $line->get_total() );
+            $item       = $this->build_item_from_line_values(
+                $line,
+                max( 1, abs( (int) $line->get_quantity() ) ),
+                abs( (float) $line->get_subtotal() ),
+                abs( (float) $line->get_subtotal_tax() ),
+                abs( (float) $line->get_total() ),
+                abs( (float) $line->get_total_tax() ),
+                $include_tax
+            );
+            if ( ! empty( $item ) ) {
+                $items[] = $item;
+            }
+        }
+
+        // Amount-only refund (no lines): scale the amount down to the net
+        // product revenue, so it balances against the purchase's value_ga4.
+        if ( empty( $items ) ) {
+            $order_total = (float) $order->get_total();
+            if ( $order_total > 0 ) {
+                $lines_net = 0.0;
+                foreach ( $order->get_items() as $line ) {
+                    if ( $line instanceof WC_Order_Item_Product ) {
+                        $lines_net += (float) $line->get_total();
+                    }
+                }
+                $value_ga4 = abs( (float) $refund->get_amount() ) * $lines_net / $order_total;
+            }
+        }
+
+        $ecommerce = array(
+            'transaction_id' => (string) $order->get_order_number(),
+            'items'          => $items,
+            'value_ga4'      => round( max( 0, $value_ga4 ), 2 ),
+        );
+        $tax      = abs( (float) $refund->get_total_tax() );
+        $shipping = abs( (float) $refund->get_shipping_total() );
+        if ( $tax > 0 ) {
+            $ecommerce['tax'] = round( $tax, 2 );
+        }
+        if ( $shipping > 0 ) {
+            $ecommerce['shipping'] = round( $shipping, 2 );
+        }
+
+        return array(
+            'event_id'  => self::refund_event_id_for( $refund->get_id() ),
+            'currency'  => (string) $order->get_currency(),
+            'value'     => $ecommerce['value_ga4'],
+            'ecommerce' => $ecommerce,
+        );
+    }
+
+    /**
      * Raw billing data in the K2a `enhanced` shape. Normalisation and hashing
      * are left to TrackWP_Hash::normalize_enhanced() on the way out.
      *
@@ -720,8 +829,10 @@ class TrackWP_WooCommerce {
      * Store consent and identifiers on the order at checkout (K5, R13).
      *
      * Nothing is stored without analytics or marketing consent. Only the
-     * category that was consented to contributes identifiers. Read by 1.11.0
-     * (fallback delivery); 1.10.1 only captures it.
+     * category that was consented to contributes identifiers. Read by the
+     * server-side backup purchase and GA4 refunds (valid_snapshot()). Holds
+     * consent, captured_at, oid (the order id), context.ua (user agent) and the
+     * marketing / analytics identifiers.
      *
      * @param int|WC_Order $order_or_id woocommerce_checkout_order_processed
      *                                  passes an id, the Store API hook an order.
@@ -750,7 +861,17 @@ class TrackWP_WooCommerce {
                 'ts'        => isset( $consent['ts'] ) && is_scalar( $consent['ts'] ) ? substr( (string) $consent['ts'], 0, 40 ) : '',
             ),
             'captured_at' => gmdate( 'Y-m-d\TH:i:s\Z' ),
+            // Binds the snapshot to this order: copied order meta (for example
+            // a subscription renewal) carries another oid and is not used.
+            'oid'         => (int) $order->get_id(),
         );
+
+        // Meta needs client_user_agent for action_source=website; the backup
+        // has no request to read it from.
+        $user_agent = substr( (string) wc_get_user_agent(), 0, 500 );
+        if ( '' !== $user_agent ) {
+            $attribution['context'] = array( 'ua' => $user_agent );
+        }
 
         if ( $marketing ) {
             $marketing_ids = array_merge(
@@ -776,6 +897,329 @@ class TrackWP_WooCommerce {
         // HPOS-safe: CRUD setter plus save(), never update_post_meta.
         $order->update_meta_data( self::ORDER_META_ATTRIBUTION, $attribution );
         $order->save();
+    }
+
+    // ------------------------------------------------------------------
+    // Privacy: export, erase, retention and policy text for the attribution
+    // ------------------------------------------------------------------
+
+    /** Days the attribution meta is kept on an order. */
+    const ATTRIBUTION_RETENTION_DAYS = 90;
+
+    /** Orders handled per page by the exporter and eraser. */
+    const PRIVACY_PAGE_SIZE = 10;
+
+    /** Orders fetched per prune batch. */
+    const PRUNE_BATCH_SIZE = 200;
+
+    /** Max prune batches per run. */
+    const PRUNE_MAX_BATCHES = 5;
+
+    /**
+     * Orders billed to an email address, one page.
+     *
+     * @param string $email Customer email.
+     * @param int    $page  1-based page.
+     * @return WC_Order[]
+     */
+    private static function orders_for_email( $email, $page ) {
+        if ( ! function_exists( 'wc_get_orders' ) || ! is_email( $email ) ) {
+            return array();
+        }
+        $orders = wc_get_orders(
+            array(
+                'billing_email' => $email,
+                'limit'         => self::PRIVACY_PAGE_SIZE,
+                'page'          => max( 1, (int) $page ),
+                'orderby'       => 'ID',
+                'order'         => 'ASC',
+                'return'        => 'objects',
+            )
+        );
+        return is_array( $orders ) ? $orders : array();
+    }
+
+    /**
+     * Flatten the stored attribution into name/value pairs for the exporter.
+     *
+     * @param array $attribution Stored meta value.
+     * @return array[]
+     */
+    private static function attribution_export_rows( $attribution ) {
+        $rows = array();
+        $add  = function ( $name, $value ) use ( &$rows ) {
+            if ( is_bool( $value ) ) {
+                $value = $value ? 'yes' : 'no';
+            }
+            if ( is_scalar( $value ) && '' !== (string) $value ) {
+                $rows[] = array( 'name' => $name, 'value' => (string) $value );
+            }
+        };
+
+        $consent = isset( $attribution['consent'] ) && is_array( $attribution['consent'] ) ? $attribution['consent'] : array();
+        foreach ( array( 'analytics', 'marketing', 'v', 'id', 'ts' ) as $key ) {
+            if ( isset( $consent[ $key ] ) ) {
+                $add( 'consent_' . $key, $consent[ $key ] );
+            }
+        }
+        foreach ( array( 'marketing', 'analytics', 'context' ) as $group ) {
+            if ( isset( $attribution[ $group ] ) && is_array( $attribution[ $group ] ) ) {
+                foreach ( $attribution[ $group ] as $key => $value ) {
+                    $add( (string) $key, $value );
+                }
+            }
+        }
+        if ( isset( $attribution['captured_at'] ) ) {
+            $add( 'captured_at', $attribution['captured_at'] );
+        }
+        return $rows;
+    }
+
+    /**
+     * WordPress personal data exporter.
+     *
+     * @param string $email Customer email.
+     * @param int    $page  1-based page.
+     * @return array
+     */
+    public static function privacy_exporter( $email, $page = 1 ) {
+        $export = array();
+        $orders = self::orders_for_email( $email, $page );
+
+        foreach ( $orders as $order ) {
+            if ( ! $order instanceof WC_Order ) {
+                continue;
+            }
+            $attribution = $order->get_meta( self::ORDER_META_ATTRIBUTION, true );
+            if ( ! is_array( $attribution ) || empty( $attribution ) ) {
+                continue;
+            }
+            $export[] = array(
+                'group_id'    => 'trackwp-attribution',
+                'group_label' => __( 'TrackWP order attribution', 'trackwp' ),
+                'item_id'     => 'order-' . $order->get_id(),
+                'data'        => self::attribution_export_rows( $attribution ),
+            );
+        }
+
+        return array(
+            'data' => $export,
+            'done' => count( $orders ) < self::PRIVACY_PAGE_SIZE,
+        );
+    }
+
+    /**
+     * WordPress personal data eraser.
+     *
+     * @param string $email Customer email.
+     * @param int    $page  1-based page.
+     * @return array
+     */
+    public static function privacy_eraser( $email, $page = 1 ) {
+        $removed  = 0;
+        $messages = array();
+        $orders   = self::orders_for_email( $email, $page );
+
+        foreach ( $orders as $order ) {
+            if ( ! $order instanceof WC_Order || ! $order->meta_exists( self::ORDER_META_ATTRIBUTION ) ) {
+                continue;
+            }
+            self::delete_attribution_meta_quietly( $order );
+            ++$removed;
+            /* translators: %d: order number */
+            $messages[] = sprintf( __( 'Removed TrackWP attribution data from order %d.', 'trackwp' ), $order->get_id() );
+        }
+
+        return array(
+            'items_removed'  => $removed > 0,
+            'items_retained' => false,
+            'messages'       => $messages,
+            'done'           => count( $orders ) < self::PRIVACY_PAGE_SIZE,
+        );
+    }
+
+    /**
+     * Remove the attribution meta without an order update: no date_modified
+     * change and no woocommerce_update_order (webhooks, ERP sync). Uses
+     * delete_meta_data() + save_meta_data(). The HPOS store would otherwise
+     * run a full order save() after a meta change (see
+     * OrdersTableDataStore::after_meta_change), so that is switched off for
+     * this one call; the legacy post store does not save the order. With data
+     * sync off, a stale copy in the non-authoritative store is deleted directly
+     * (this one meta key, this one order).
+     *
+     * @param WC_Order $order Order.
+     * @return void
+     */
+    private static function delete_attribution_meta_quietly( $order ) {
+        // Posts authoritative + HPOS compatibility sync on: WC only mirrors a
+        // change to the HPOS tables on woocommerce_update_order, so a quiet
+        // delete would leave the meta in wp_wc_orders_meta. Correct erasure
+        // beats avoiding webhooks there, so save the order. If OrderUtil is
+        // missing, $hpos is false and the sync option alone decides: 'yes'
+        // takes the save path, anything else the quiet path.
+        $util = '\Automattic\WooCommerce\Utilities\OrderUtil';
+        $hpos = class_exists( $util )
+            && method_exists( $util, 'custom_orders_table_usage_is_enabled' )
+            && $util::custom_orders_table_usage_is_enabled();
+        $sync = 'yes' === get_option( 'woocommerce_custom_orders_table_data_sync_enabled' );
+        if ( ! $hpos && $sync ) {
+            $order->delete_meta_data( self::ORDER_META_ATTRIBUTION );
+            $order->save();
+            return;
+        }
+        $filter   = 'woocommerce_orders_table_datastore_should_save_after_meta_change';
+        $callback = array( __CLASS__, 'skip_save_after_meta_change' );
+        add_filter( $filter, $callback, PHP_INT_MAX );
+        try {
+            $order->delete_meta_data( self::ORDER_META_ATTRIBUTION );
+            $order->save_meta_data();
+        } finally {
+            remove_filter( $filter, $callback, PHP_INT_MAX );
+        }
+
+        // Sync is off: WC does not touch the non-authoritative store, so a
+        // stale copy may remain there. Delete just that one key for this order.
+        if ( ! $sync ) {
+            if ( $hpos ) {
+                delete_post_meta( $order->get_id(), self::ORDER_META_ATTRIBUTION );
+            } else {
+                global $wpdb;
+                $table = self::hpos_meta_table();
+                if ( '' !== $table ) {
+                    $wpdb->delete(
+                        $table,
+                        array(
+                            'order_id' => $order->get_id(),
+                            'meta_key' => self::ORDER_META_ATTRIBUTION, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+                        ),
+                        array( '%d', '%s' )
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Filter callback: tells the HPOS store not to run a full order save after
+     * a meta change. A named callback so remove_filter() cannot remove another
+     * plugin's identical core callback at the same priority.
+     *
+     * @return bool
+     */
+    public static function skip_save_after_meta_change() {
+        return false;
+    }
+
+    /**
+     * HPOS meta table names already found in this process (see hpos_meta_table).
+     *
+     * @var array<string,bool>
+     */
+    private static $hpos_tables = array();
+
+    /**
+     * Forget the cached HPOS meta table lookup. For tests that create or drop
+     * the table inside one PHP process; production never needs it.
+     *
+     * @return void
+     */
+    public static function reset_hpos_table_cache() {
+        self::$hpos_tables = array();
+    }
+
+    /**
+     * Name of the HPOS meta table, or '' when it does not exist. A found table
+     * is cached for the request; a miss is checked again (the table can be
+     * created later).
+     *
+     * @return string
+     */
+    private static function hpos_meta_table() {
+        global $wpdb;
+        $found_tables = &self::$hpos_tables;
+        $store = '\Automattic\WooCommerce\Internal\DataStores\Orders\OrdersTableDataStore';
+        $name  = ( class_exists( $store ) && is_callable( array( $store, 'get_meta_table_name' ) ) )
+            ? $store::get_meta_table_name()
+            : $wpdb->prefix . 'wc_orders_meta';
+        if ( isset( $found_tables[ $name ] ) ) {
+            return $name;
+        }
+        $found = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $name ) ) );
+        if ( is_string( $found ) && strtolower( $found ) === strtolower( $name ) ) {
+            $found_tables[ $name ] = true;
+            return $name;
+        }
+        return '';
+    }
+
+    /**
+     * Delete attribution meta from orders older than the retention period.
+     *
+     * @return int Number of orders cleaned.
+     */
+    public static function prune_attribution() {
+        if ( ! function_exists( 'wc_get_orders' ) ) {
+            return 0;
+        }
+        $cutoff = time() - self::ATTRIBUTION_RETENTION_DAYS * DAY_IN_SECONDS;
+        $count  = 0;
+
+        for ( $batch = 0; $batch < self::PRUNE_MAX_BATCHES; $batch++ ) {
+            // No paging: cleaned orders drop out of the EXISTS query.
+            $ids = wc_get_orders(
+                array(
+                    // meta_key/meta_compare, not meta_query: the legacy postmeta
+                    // order store ignores meta_query, HPOS honours both.
+                    'meta_key'     => self::ORDER_META_ATTRIBUTION,
+                    'meta_compare' => 'EXISTS',
+                    'date_created' => '<' . $cutoff,
+                    'limit'        => self::PRUNE_BATCH_SIZE,
+                    'return'       => 'ids',
+                )
+            );
+            if ( empty( $ids ) || ! is_array( $ids ) ) {
+                break;
+            }
+            $done = 0;
+            foreach ( $ids as $id ) {
+                $order = wc_get_order( $id );
+                if ( ! $order instanceof WC_Order || ! $order->meta_exists( self::ORDER_META_ATTRIBUTION ) ) {
+                    continue;
+                }
+                self::delete_attribution_meta_quietly( $order );
+                ++$done;
+            }
+            $count += $done;
+            if ( count( $ids ) < self::PRUNE_BATCH_SIZE || 0 === $done ) {
+                break;
+            }
+        }
+        return $count;
+    }
+
+    /**
+     * Suggested privacy policy text for the WordPress policy guide.
+     *
+     * @return string HTML.
+     */
+    public static function privacy_policy_text() {
+        $days = (int) self::ATTRIBUTION_RETENTION_DAYS;
+        $html  = '<h2>' . esc_html__( 'TrackWP', 'trackwp' ) . '</h2>';
+        $html .= '<p>' . esc_html__( 'This site uses TrackWP to measure visits and, if enabled, to report purchases to advertising and analytics services. TrackWP stores the following on the server.', 'trackwp' ) . '</p>';
+        $html .= '<ul>';
+        $html .= '<li>' . esc_html__( 'A consent log with the visitor choice, its version and a timestamp.', 'trackwp' ) . '</li>';
+        $html .= '<li>' . esc_html(
+            sprintf(
+                /* translators: %d: number of days */
+                __( 'For WooCommerce orders: the consent choice and, where consent was given, advertising click identifiers and analytics identifiers, saved on the order for %d days and then deleted.', 'trackwp' ),
+                $days
+            )
+        ) . '</li>';
+        $html .= '<li>' . esc_html__( 'A temporary queue of analytics events, kept for a short time until it is sent.', 'trackwp' ) . '</li>';
+        $html .= '</ul>';
+        $html .= '<p>' . esc_html__( 'Depending on the setup, data is shared with Google (Analytics, Ads) and Meta. Which recipients apply is shown in the cookie banner, where the visitor can change the choice at any time.', 'trackwp' ) . '</p>';
+        return $html;
     }
 
     /**
@@ -1680,8 +2124,33 @@ class TrackWP_WooCommerce {
      * @return array
      */
     private function build_item_from_order_line( $line, $include_tax ) {
-        $quantity = max( 1, (int) $line->get_quantity() );
-        $product  = $line->get_product();
+        return $this->build_item_from_line_values(
+            $line,
+            max( 1, (int) $line->get_quantity() ),
+            (float) $line->get_subtotal(),
+            (float) $line->get_subtotal_tax(),
+            (float) $line->get_total(),
+            (float) $line->get_total_tax(),
+            $include_tax
+        );
+    }
+
+    /**
+     * Build a GA4 item from an order line with the amounts given by the
+     * caller. Purchase passes the line's own values; refunds pass absolute
+     * values, so both produce the same item_id and shape.
+     *
+     * @param WC_Order_Item_Product $line         Order (or refund) line.
+     * @param int                   $quantity     Quantity (>= 1).
+     * @param float                 $subtotal     Line subtotal excluding tax.
+     * @param float                 $subtotal_tax Tax on the subtotal.
+     * @param float                 $total        Line total excluding tax.
+     * @param float                 $total_tax    Tax on the total.
+     * @param bool                  $include_tax  Whether amounts should include tax.
+     * @return array
+     */
+    private function build_item_from_line_values( $line, $quantity, $subtotal, $subtotal_tax, $total, $total_tax, $include_tax ) {
+        $product = $line->get_product();
 
         $fallback_id = $line->get_variation_id() ? $line->get_variation_id() : $line->get_product_id();
 
@@ -1695,15 +2164,7 @@ class TrackWP_WooCommerce {
             'quantity'  => $quantity,
         );
 
-        $this->add_price_and_discount(
-            $item,
-            (float) $line->get_subtotal(),
-            (float) $line->get_subtotal_tax(),
-            (float) $line->get_total(),
-            (float) $line->get_total_tax(),
-            $quantity,
-            $include_tax
-        );
+        $this->add_price_and_discount( $item, $subtotal, $subtotal_tax, $total, $total_tax, $quantity, $include_tax );
 
         if ( $product instanceof WC_Product ) {
             $this->add_sku( $item, $product );

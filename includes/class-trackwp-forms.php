@@ -34,6 +34,28 @@ class TrackWP_Forms {
      * @return bool
      */
     public static function has_form_submit_trigger($events = null) {
+        return self::scan_form_submit_triggers($events, false);
+    }
+
+    /**
+     * Whether any enabled event has a form_submit trigger that is NOT limited
+     * to the form plugins, so the plain HTML-form fallback is needed.
+     *
+     * @param array|null $events Events option (defaults to trackwp_events).
+     * @return bool
+     */
+    public static function needs_html_fallback($events = null) {
+        return self::scan_form_submit_triggers($events, true);
+    }
+
+    /**
+     * Shared scan for the two public helpers above.
+     *
+     * @param array|null $events   Events option (defaults to trackwp_events).
+     * @param bool       $open_only Only count triggers without plugins_only.
+     * @return bool
+     */
+    private static function scan_form_submit_triggers($events, $open_only) {
         if (!is_array($events)) {
             $events = get_option('trackwp_events', array());
         }
@@ -44,17 +66,36 @@ class TrackWP_Forms {
             if (!is_array($event) || empty($event['enabled'])) {
                 continue;
             }
-            if (!empty($event['triggers']) && is_array($event['triggers'])) {
-                foreach ($event['triggers'] as $trigger) {
-                    if (is_array($trigger) && isset($trigger['type']) && 'form_submit' === $trigger['type']) {
-                        return true;
-                    }
+            foreach (self::triggers_of($event) as $trigger) {
+                if (!is_array($trigger) || !isset($trigger['type']) || 'form_submit' !== $trigger['type']) {
+                    continue;
                 }
-            } elseif (isset($event['trigger_type']) && 'form_submit' === $event['trigger_type']) {
-                return true;
+                if (!$open_only || empty($trigger['plugins_only'])) {
+                    return true;
+                }
             }
         }
         return false;
+    }
+
+    /**
+     * The firing triggers of a stored event: firing_triggers, else triggers,
+     * else the single flat trigger_type, else none.
+     *
+     * @param array $event
+     * @return array
+     */
+    private static function triggers_of($event) {
+        if (!empty($event['firing_triggers']) && is_array($event['firing_triggers'])) {
+            return $event['firing_triggers'];
+        }
+        if (!empty($event['triggers']) && is_array($event['triggers'])) {
+            return $event['triggers'];
+        }
+        if (!empty($event['trigger_type'])) {
+            return array(array('type' => $event['trigger_type']));
+        }
+        return array();
     }
 
     /**
@@ -63,7 +104,8 @@ class TrackWP_Forms {
      */
     public function output_form_listeners() {
         if (is_admin()) return;
-        if (!self::has_form_submit_trigger()) return;
+        $events = get_option('trackwp_events', array());
+        if (!self::has_form_submit_trigger($events)) return;
 
         ?>
 <script>
@@ -86,12 +128,13 @@ class TrackWP_Forms {
         return name.substring(0, NAME_MAX);
     }
 
-    function send(formId, form, name, plugin, nav) {
+    function send(formId, form, name, plugin, nav, domId) {
         window.trackwp.sendFormEvent({
             form_id: String(formId || ''),
             form_name: formName(form, name),
             plugin: plugin,
-            nav: !!nav
+            nav: !!nav,
+            dom_id: domId || ''
         }, form || null);
     }
 
@@ -139,7 +182,7 @@ class TrackWP_Forms {
     if (typeof jQuery !== 'undefined') {
         jQuery(document).on('gform_confirmation_loaded', function(event, formId) {
             var id = String(formId || '').replace(/[^0-9]/g, '');
-            send('gf_' + id, document.getElementById('gform_' + id), '', 'gravityforms', false);
+            send('gf_' + id, document.getElementById('gform_' + id), '', 'gravityforms', false, 'gform_' + id);
         });
     }
     <?php endif; ?>
@@ -153,10 +196,11 @@ class TrackWP_Forms {
         var rawId = domId.replace(/^srfm-form-/, '').replace(/[^A-Za-z0-9_\-]/g, '');
         var form = (domId && document.getElementById(domId)) ||
             document.querySelector('.srfm-form[form-id="' + rawId + '"]');
-        send('srfm_' + rawId, form, '', 'sureforms', false);
+        send('srfm_' + rawId, form, '', 'sureforms', false, domId);
     });
     <?php endif; ?>
 
+    <?php if (self::needs_html_fallback($events)) : ?>
     // HTML fallback: any form not handled above.
     document.addEventListener('submit', function(e) {
         var form = e.target;
@@ -179,6 +223,7 @@ class TrackWP_Forms {
         // A non-AJAX submit navigates: dispatch synchronously.
         send(formId, form, '', 'html', true);
     }, true);
+    <?php endif; ?>
 
     } // end init()
 
