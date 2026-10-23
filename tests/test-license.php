@@ -164,15 +164,16 @@ class Test_TrackWP_License extends WP_UnitTestCase {
         $this->assertFalse( TrackWP_License::tracking_allowed( time() ) );
     }
 
-    public function test_grace_does_not_override_a_signed_negative_status_when_a_key_is_stored() {
+    public function test_grace_ends_on_signed_decision_but_not_on_unknown() {
         update_option( TrackWP_License::GRACE_OPT, time() + 1000 );
-        foreach ( array( 'disabled', 'expired', 'unknown', 'limit' ) as $name ) {
-            $this->store( $this->token( $name ) );
+        foreach ( array( 'disabled', 'expired', 'limit' ) as $name ) {
+            $this->store( $this->token( $name ), '' );
             $this->assertFalse( TrackWP_License::tracking_allowed( $this->fx['now'] ), $name );
         }
-        // A stored key with a token that does not verify is decided by the token too.
-        $this->store( $this->token( 'forged_status' ) );
-        $this->assertFalse( TrackWP_License::tracking_allowed( $this->fx['now'] ) );
+        $this->store( $this->token( 'unknown' ), '' );
+        $this->assertTrue( TrackWP_License::tracking_allowed( time() ), 'unknown' );
+        $this->store( $this->token( 'forged_status' ), '' );
+        $this->assertTrue( TrackWP_License::tracking_allowed( time() ), 'forged_status' );
     }
 
     public function test_grace_still_allows_without_key_or_without_token() {
@@ -182,52 +183,6 @@ class Test_TrackWP_License extends WP_UnitTestCase {
         $this->assertTrue( TrackWP_License::tracking_allowed( time() ), 'empty key and token' );
         $this->store( '', 'TWP-TEST' );
         $this->assertTrue( TrackWP_License::tracking_allowed( time() ), 'key but no token yet' );
-    }
-
-    public function not_active_statuses() {
-        return array(
-            'disabled' => array( 'disabled' ),
-            'limit'    => array( 'limit' ),
-            'unknown'  => array( 'unknown' ),
-            'expired'  => array( 'expired' ),
-        );
-    }
-
-    /**
-     * @dataProvider not_active_statuses
-     */
-    public function test_activating_a_non_active_key_is_not_stored_and_grace_continues( $status ) {
-        update_option( TrackWP_License::GRACE_OPT, time() + 1000 );
-        $this->assertTrue( TrackWP_License::tracking_allowed() );
-        $this->mock_http( $this->token_answer( $status ) );
-        $res = TrackWP_License::activate( 'TWP-AAAA' );
-        $this->assertWPError( $res );
-        $this->assertSame( 'trackwp_license_' . $status, $res->get_error_code() );
-        $o = get_option( TrackWP_License::OPTION );
-        $this->assertSame( '', $o['key'] );
-        $this->assertSame( '', $o['token'] );
-        $this->assertNotSame( '', $o['last_error'] );
-        $this->assertTrue( TrackWP_License::tracking_allowed( time() ), 'grace goes on' );
-    }
-
-    public function test_failed_activation_keeps_the_previous_license() {
-        $this->store( $this->token( 'active' ), 'TWP-OLD' );
-        $this->mock_http( $this->token_answer( 'limit' ) );
-        $this->assertWPError( TrackWP_License::activate( 'TWP-NEW' ) );
-        $o = get_option( TrackWP_License::OPTION );
-        $this->assertSame( TrackWP_Hash::encode( 'TWP-OLD' ), $o['key'] );
-        $this->assertSame( $this->token( 'active' ), $o['token'] );
-    }
-
-    public function test_deactivate_does_not_reopen_grace_after_an_activation() {
-        update_option( TrackWP_License::GRACE_OPT, time() + 1000 );
-        $this->mock_http( $this->token_answer( 'active' ) );
-        $this->assertIsArray( TrackWP_License::activate( 'TWP-AAAA' ) );
-        $this->assertSame( 0, TrackWP_License::grace_until() );
-        $this->mock_http( self::http( 200, '{"ok":true}' ) );
-        $this->assertTrue( TrackWP_License::deactivate() );
-        $this->assertSame( 0, TrackWP_License::grace_until() );
-        $this->assertFalse( TrackWP_License::tracking_allowed( time() ) );
     }
 
     // --- host ----------------------------------------------------------
@@ -246,14 +201,25 @@ class Test_TrackWP_License extends WP_UnitTestCase {
 
     // --- maybe_refresh -------------------------------------------------
 
-    // maybe_refresh() schedules the recurring check when a key is stored, so
-    // the schedule shows whether it ran.
+    // maybe_refresh() schedules the recurring check (key or not), so the
+    // schedule shows whether it ran.
     public function test_maybe_refresh_runs_for_an_administrator() {
         wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
         $this->store( $this->token( 'active' ) );
         wp_clear_scheduled_hook( TrackWP_License::CRON_HOOK );
         TrackWP_License::maybe_refresh();
         $this->assertNotFalse( wp_next_scheduled( TrackWP_License::CRON_HOOK ) );
+    }
+
+    public function test_maybe_refresh_schedules_without_a_key() {
+        wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+        delete_option( TrackWP_License::OPTION );
+        $this->mock_http( $this->token_answer( 'active' ) );
+        wp_clear_scheduled_hook( TrackWP_License::CRON_HOOK );
+        TrackWP_License::maybe_refresh();
+        $this->assertNotFalse( wp_next_scheduled( TrackWP_License::CRON_HOOK ) );
+        $this->assertSame( 1, $this->mock, 'no valid token: checks at once' );
+        wp_clear_scheduled_hook( TrackWP_License::CRON_HOOK );
     }
 
     public function test_maybe_refresh_skips_ajax_and_users_without_manage_options() {
@@ -340,36 +306,114 @@ class Test_TrackWP_License extends WP_UnitTestCase {
         $this->assertFalse( TrackWP_License::tracking_allowed( $this->fx['now'] ) );
     }
 
-    public function test_activate_stores_encoded_key_and_token() {
-        $this->mock_http( $this->token_answer( 'active' ) );
-        $this->assertSame( array( 'status' => 'active' ), TrackWP_License::activate( '  TWP-AAAA  ' ) );
-        $o = get_option( TrackWP_License::OPTION );
-        $this->assertSame( TrackWP_Hash::encode( 'TWP-AAAA' ), $o['key'] );
+    public function test_check_without_key_sends_domain_only() {
+        $seen = array();
+        $this->mock = 0;
+        add_filter(
+            'pre_http_request',
+            function ( $pre, $args, $url ) use ( &$seen ) {
+                $this->mock++;
+                $seen = array( 'args' => $args, 'url' => $url );
+                return $this->token_answer( 'active' );
+            },
+            10,
+            3
+        );
+        $this->assertSame( array( 'status' => 'active' ), TrackWP_License::check() );
+        $this->assertSame( 1, $this->mock );
+        $this->assertSame( '/check', substr( $seen['url'], -6 ) );
+        $this->assertArrayNotHasKey( 'Authorization', $seen['args']['headers'] );
+        $body = json_decode( $seen['args']['body'], true );
+        $this->assertSame( 'example.dk', $body['domain'] );
         $this->assertTrue( TrackWP_License::tracking_allowed( $this->fx['now'] ) );
     }
 
-    public function test_activate_failure_stores_no_key_or_token() {
-        $this->mock_http( self::http( 500, '' ) );
-        $this->assertWPError( TrackWP_License::activate( 'TWP-AAAA' ) );
-        $o = get_option( TrackWP_License::OPTION );
-        $this->assertSame( '', $o['key'] );
-        $this->assertSame( '', $o['token'] );
+    public function test_check_request_matches_contract_fixture() {
+        $seen = array();
+        add_filter(
+            'pre_http_request',
+            function ( $pre, $args, $url ) use ( &$seen ) {
+                $seen = array( 'args' => $args, 'url' => $url );
+                return $this->token_answer( 'active' );
+            },
+            10,
+            3
+        );
+        TrackWP_License::check();
+        $fx = self::fixture( 'check-request.json' );
+
+        $this->assertSame( $fx['method'], $seen['args']['method'] );
+        $this->assertSame( 'POST', $seen['args']['method'] );
+        $this->assertSame( $fx['path'], substr( wp_parse_url( $seen['url'], PHP_URL_PATH ), -strlen( $fx['path'] ) ) );
+        $this->assertSame( '/check', substr( wp_parse_url( $seen['url'], PHP_URL_PATH ), -6 ) );
+        $this->assertSame( $fx['headers']['Content-Type'], $seen['args']['headers']['Content-Type'] );
+        $this->assertSame( 'application/json', $seen['args']['headers']['Content-Type'] );
+        $this->assertArrayNotHasKey( 'Authorization', $seen['args']['headers'] );
+
+        $body = json_decode( $seen['args']['body'], true );
+        $keys = array_keys( $body );
+        $fx_keys = array_keys( $fx['body'] );
+        sort( $keys );
+        sort( $fx_keys );
+        $this->assertSame( array( 'domain', 'plugin_version', 'wp_version' ), $keys );
+        $this->assertSame( $fx_keys, $keys );
+        $this->assertSame( 'example.dk', $body['domain'] );
+        $this->assertSame( $fx['body']['domain'], $body['domain'] );
     }
 
-    public function test_check_without_key_makes_no_request() {
-        $this->mock_http( self::http( 200, '{}' ) );
-        $this->assertWPError( TrackWP_License::check() );
-        $this->assertSame( 0, $this->mock );
+    public function test_check_with_stored_key_still_sends_bearer() {
+        $this->store( '', 'TWP-OLDKEY' );
+        $seen = array();
+        add_filter(
+            'pre_http_request',
+            function ( $pre, $args ) use ( &$seen ) {
+                $seen = $args;
+                return $this->token_answer( 'active' );
+            },
+            10,
+            2
+        );
+        TrackWP_License::check();
+        $this->assertSame( 'Bearer TWP-OLDKEY', $seen['headers']['Authorization'] );
     }
 
-    public function test_deactivate_clears_only_on_confirmation() {
-        $this->store( $this->token( 'active' ) );
-        $this->mock_http( self::http( 500, '' ) );
-        $this->assertWPError( TrackWP_License::deactivate() );
-        $this->assertNotFalse( get_option( TrackWP_License::OPTION ) );
-        $this->mock_http( self::http( 200, '{"ok":true}' ) );
-        $this->assertTrue( TrackWP_License::deactivate() );
-        $this->assertFalse( get_option( TrackWP_License::OPTION ) );
+    public function test_check_in_grace_ends_grace_on_a_signed_decision_only() {
+        update_option( TrackWP_License::GRACE_OPT, time() + 1000 );
+        $this->mock_http( $this->token_answer( 'unknown' ) );
+        $this->assertSame( array( 'status' => 'unknown' ), TrackWP_License::check() );
+        $this->assertGreaterThan( 0, TrackWP_License::grace_until(), 'unknown keeps grace' );
+        $this->assertTrue( TrackWP_License::tracking_allowed( time() ) );
+
+        $this->mock_http( $this->token_answer( 'active' ) );
+        TrackWP_License::check();
+        $this->assertSame( 0, TrackWP_License::grace_until(), 'active removes grace' );
+        $this->assertTrue( TrackWP_License::tracking_allowed( $this->fx['now'] ) );
+
+        delete_option( TrackWP_License::OPTION );
+        update_option( TrackWP_License::GRACE_OPT, time() + 1000 );
+        $this->mock_http( $this->token_answer( 'disabled' ) );
+        TrackWP_License::check();
+        $this->assertSame( 0, TrackWP_License::grace_until(), 'disabled removes grace' );
+        $this->assertFalse( TrackWP_License::tracking_allowed( time() ) );
+    }
+
+    public function test_cron_check_runs_without_key() {
+        $this->mock_http( $this->token_answer( 'active' ) );
+        TrackWP_License::cron_check();
+        $this->assertSame( 1, $this->mock );
+        $this->assertSame( $this->token( 'active' ), get_option( TrackWP_License::OPTION )['token'] );
+    }
+
+    public function test_render_page_has_no_key_field() {
+        wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+        ob_start();
+        TrackWP_License::render_page();
+        $html = ob_get_clean();
+        $this->assertStringNotContainsString( 'license_key', $html );
+        $this->assertStringNotContainsString( 'trackwp_license_activate', $html );
+        $this->assertStringNotContainsString( 'trackwp_license_deactivate', $html );
+        $this->assertStringContainsString( 'trackwp_license_check', $html );
+        $this->assertStringContainsString( 'example.dk', $html );
     }
 
     public function test_update_checker_callbacks() {

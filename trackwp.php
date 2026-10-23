@@ -3,7 +3,7 @@
  * Plugin Name: TrackWP
  * Plugin URI: https://trackwp.com
  * Description: Server-side tracking proxy with built-in cookie consent and Consent Mode v2. Supports GA4, Google Ads, and Meta.
- * Version: 1.13.0
+ * Version: 1.13.1
  * Author: TrackWP
  * Author URI: https://trackwp.com
  * License: GPLv2 or later
@@ -17,7 +17,7 @@
 
 defined('ABSPATH') || exit;
 
-define('TRACKWP_VERSION', '1.13.0');
+define('TRACKWP_VERSION', '1.13.1');
 define('TRACKWP_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('TRACKWP_PLUGIN_URL', plugin_dir_url(__FILE__));
 define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
@@ -26,9 +26,10 @@ define('TRACKWP_PLUGIN_BASENAME', plugin_basename(__FILE__));
  * Updates from the TrackWP license server (nordium.ai/trackwp).
  *
  * Plugin Update Checker polls the server's update-info endpoint and serves the
- * ZIP through WordPress' standard update flow. The license key travels in the
- * Authorization header and the domain as a query argument (callbacks are
- * strings, so TrackWP_License is only autoloaded when they run).
+ * ZIP through WordPress' standard update flow. The domain travels as a query
+ * argument; a license key is only sent in the Authorization header when an
+ * older install has one stored (callbacks are strings, so TrackWP_License is
+ * only autoloaded when they run).
  */
 if (file_exists(TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php')) {
     require_once TRACKWP_PLUGIN_DIR . 'vendor/plugin-update-checker/plugin-update-checker.php';
@@ -352,7 +353,7 @@ final class TrackWP {
         // License check twice a day (token lives 7 days; the license client
         // also re-schedules this from wp-admin if it ever goes missing).
         if (!wp_next_scheduled(TrackWP_License::CRON_HOOK)) {
-            wp_schedule_event(time() + HOUR_IN_SECONDS, 'twicedaily', TrackWP_License::CRON_HOOK);
+            wp_schedule_event(time(), 'twicedaily', TrackWP_License::CRON_HOOK);
         }
 
         // Tables are created here as well as in the 1.10.1 upgrade block, so a
@@ -617,6 +618,13 @@ final class TrackWP {
                 update_option(TrackWP_License::GRACE_OPT, time() + 30 * DAY_IN_SECONDS, false);
                 TrackWP_License::reset_cache();
             }
+        }
+
+        // 1.13.1: the server decides per domain. Reschedule so the first
+        // check runs at the next cron spawn (no HTTP call in init).
+        if ( version_compare($stored, '1.13.1', '<') ) {
+            wp_clear_scheduled_hook(TrackWP_License::CRON_HOOK);
+            wp_schedule_event(time(), 'twicedaily', TrackWP_License::CRON_HOOK);
         }
 
         // Baseline for the vendor/category auto-bump (1.11.4). Recorded

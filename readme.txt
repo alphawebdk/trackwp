@@ -4,7 +4,7 @@ Tags: analytics, tracking, ga4, meta pixel, consent, gdpr, server-side, google a
 Requires at least: 6.0
 Tested up to: 6.8
 Requires PHP: 7.4
-Stable tag: 1.13.0
+Stable tag: 1.13.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -117,6 +117,10 @@ I v1.1 kan du vælge mellem 3 dedup-tilstande: "Klient + server" (default — be
 4. Avancerede indstillinger — Endpoint-slug, førsteparts-cookies, Consent Mode v2, dedup-strategi, debug
 
 == Changelog ==
+
+= 1.13.1 =
+
+* Ændret: licensen styres pr. domæne af leverandøren; ingen licensnøgle. Første licenstjek sker straks efter opdatering.
 
 = 1.13.0 =
 

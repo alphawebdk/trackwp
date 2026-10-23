@@ -4,6 +4,8 @@
  *
  * Talks to the license server (nordium.ai/trackwp) and decides, through the
  * single function tracking_allowed(), whether tracking may run on this site.
+ * The server decides per domain; a license key is optional and only sent when
+ * a 1.13.0 install has one stored.
  * The decision rests on a signed token (Ed25519): only a token with a valid
  * signature, bound to this host, can change the state. Network errors, HTTP
  * errors and malformed answers never change the stored state.
@@ -291,10 +293,8 @@ class TrackWP_License {
     }
 
     /**
-     * Is the grace period (E1) in force? Only for a site without a stored
-     * license key (or without a token). Once a key is stored, the signed
-     * token alone decides, so a signed disabled/expired/unknown status stops
-     * tracking even before the grace period has run out.
+     * Is the grace period (E1) in force? unknown, no token or an invalid
+     * token keeps grace open; a signed active/disabled/expired/limit decides.
      *
      * @param int $now
      * @return bool
@@ -303,8 +303,8 @@ class TrackWP_License {
         if ( self::grace_until() <= $now ) {
             return false;
         }
-        $o = self::stored();
-        return empty( $o['key'] ) || empty( $o['token'] );
+        $s = self::state( $now );
+        return ! ( $s['valid'] && 'unknown' !== $s['status'] );
     }
 
     private static function evaluate( $now ) {
@@ -361,15 +361,18 @@ class TrackWP_License {
      * a WP_Error (transport error, any non-200, invalid JSON).
      */
     private static function post( $endpoint, $key, array $body ) {
+        $headers = array(
+            'Content-Type' => 'application/json',
+            'Accept'       => 'application/json',
+        );
+        if ( '' !== $key ) {
+            $headers['Authorization'] = 'Bearer ' . $key;
+        }
         $res = wp_remote_post(
             self::API . $endpoint,
             array(
                 'timeout' => 10,
-                'headers' => array(
-                    'Authorization' => 'Bearer ' . $key,
-                    'Content-Type'  => 'application/json',
-                    'Accept'        => 'application/json',
-                ),
+                'headers' => $headers,
                 'body'    => wp_json_encode( $body ),
             )
         );
@@ -443,73 +446,13 @@ class TrackWP_License {
     }
 
     /**
-     * Activate a license key for this domain.
-     *
-     * @param string $key
-     * @return array|WP_Error array( status ) from the signed token.
-     */
-    public static function activate( $key ) {
-        $key = trim( (string) $key );
-        if ( '' === $key ) {
-            return new WP_Error( 'trackwp_license_key', 'Missing key' );
-        }
-        $res = self::request_token( 'activate', $key );
-        if ( is_wp_error( $res ) ) {
-            self::record_failure( $res );
-            return $res;
-        }
-        // Only a signed active answer is stored. A typo, a full quota or a
-        // disabled key must not replace the previous state (or end grace).
-        if ( 'active' !== $res['status'] ) {
-            $e = new WP_Error(
-                'trackwp_license_' . $res['status'],
-                self::status_error_message( $res['status'] )
-            );
-            self::record_failure( $e );
-            return $e;
-        }
-        self::with_transition(
-            function () use ( $key, $res ) {
-                self::save(
-                    array(
-                        'key'          => TrackWP_Hash::encode( $key ),
-                        'token'        => $res['token'],
-                        'last_error'   => '',
-                        'last_attempt' => time(),
-                    )
-                );
-                // Once a key has been active here, grace never applies again
-                // (not even after "Frigiv dette domæne").
-                delete_option( self::GRACE_OPT );
-            }
-        );
-        return array( 'status' => $res['status'] );
-    }
-
-    private static function status_error_message( $status ) {
-        switch ( $status ) {
-            case 'limit':
-                return __( 'Licensen er allerede brugt på det maksimale antal domæner.', 'trackwp' );
-            case 'disabled':
-                return __( 'Licensen er deaktiveret.', 'trackwp' );
-            case 'expired':
-                return __( 'Licensen er udløbet.', 'trackwp' );
-            default:
-                return __( 'Licensnøglen er ukendt.', 'trackwp' );
-        }
-    }
-
-    /**
-     * Refresh the token with the stored key (cron, admin, "Tjek nu").
+     * Refresh the token for this domain (cron, admin, "Tjek nu"). A stored
+     * key from a 1.13.0 install is still sent, but the server decides by domain.
      *
      * @return array|WP_Error
      */
     public static function check() {
-        $key = self::license_key();
-        if ( '' === $key ) {
-            return new WP_Error( 'trackwp_license_key', 'No key stored' );
-        }
-        $res = self::request_token( 'check', $key );
+        $res = self::request_token( 'check', self::license_key() );
         if ( is_wp_error( $res ) ) {
             self::record_failure( $res );
             return $res;
@@ -523,38 +466,13 @@ class TrackWP_License {
                         'last_attempt' => time(),
                     )
                 );
+                // A signed decision (anything but unknown) ends grace.
+                if ( 'unknown' !== $res['status'] ) {
+                    delete_option( self::GRACE_OPT );
+                }
             }
         );
         return array( 'status' => $res['status'] );
-    }
-
-    /**
-     * Release this domain on the server and forget key and token locally.
-     * Local state is only cleared when the server confirmed.
-     *
-     * @return true|WP_Error
-     */
-    public static function deactivate() {
-        $key = self::license_key();
-        if ( '' === $key ) {
-            return new WP_Error( 'trackwp_license_key', 'No key stored' );
-        }
-        $data = self::post( 'deactivate', $key, array( 'domain' => self::host() ) );
-        if ( is_wp_error( $data ) ) {
-            self::record_failure( $data );
-            return $data;
-        }
-        if ( empty( $data['ok'] ) ) {
-            $e = new WP_Error( 'trackwp_license_json', 'Not confirmed' );
-            self::record_failure( $e );
-            return $e;
-        }
-        self::with_transition(
-            function () {
-                delete_option( self::OPTION );
-            }
-        );
-        return true;
     }
 
     // ------------------------------------------------------------------
@@ -566,15 +484,11 @@ class TrackWP_License {
         add_action( 'admin_init', array( __CLASS__, 'maybe_refresh' ) );
         add_action( 'admin_menu', array( __CLASS__, 'admin_menu' ), 20 );
         add_action( 'admin_notices', array( __CLASS__, 'admin_notices' ) );
-        add_action( 'admin_post_trackwp_license_activate', array( __CLASS__, 'handle_activate' ) );
         add_action( 'admin_post_trackwp_license_check', array( __CLASS__, 'handle_check' ) );
-        add_action( 'admin_post_trackwp_license_deactivate', array( __CLASS__, 'handle_deactivate' ) );
     }
 
     public static function cron_check() {
-        if ( '' !== self::license_key() ) {
-            self::check();
-        }
+        self::check();
     }
 
     /**
@@ -585,15 +499,12 @@ class TrackWP_License {
         if ( wp_doing_ajax() || ! current_user_can( 'manage_options' ) ) {
             return;
         }
-        if ( '' === self::license_key() ) {
-            return;
-        }
         if ( ! wp_next_scheduled( self::CRON_HOOK ) ) {
-            wp_schedule_event( time() + HOUR_IN_SECONDS, 'twicedaily', self::CRON_HOOK );
+            wp_schedule_event( time(), 'twicedaily', self::CRON_HOOK );
         }
         $o = self::stored();
         $s = self::state();
-        if ( $s['valid'] && $s['exp'] < time() + 3 * DAY_IN_SECONDS
+        if ( ( ! $s['valid'] || $s['exp'] < time() + 3 * DAY_IN_SECONDS )
             && time() - (int) ( isset( $o['last_attempt'] ) ? $o['last_attempt'] : 0 ) > HOUR_IN_SECONDS ) {
             self::check();
         }
@@ -654,7 +565,7 @@ class TrackWP_License {
         }
         if ( self::grace_active( time() ) ) {
             /* translators: %s: date */
-            return array( 'warning', sprintf( __( 'TrackWP kræver nu en licens. Tracking fortsætter til %s.', 'trackwp' ), self::date( $grace ) ) );
+            return array( 'warning', sprintf( __( 'Dette domæne er endnu ikke tilknyttet en TrackWP-licens. Tracking fortsætter til %s.', 'trackwp' ), self::date( $grace ) ) );
         }
         if ( $s['valid'] && 'disabled' === $s['status'] ) {
             return array( 'error', __( 'Licensen er deaktiveret. Tracking er slået fra.', 'trackwp' ) );
@@ -665,7 +576,7 @@ class TrackWP_License {
         if ( $s['valid'] && 'limit' === $s['status'] ) {
             return array( 'error', __( 'Licensen er allerede brugt på det maksimale antal domæner.', 'trackwp' ) );
         }
-        return array( 'error', __( 'TrackWP er ikke aktiveret. Tracking er slået fra, indtil du aktiverer en licensnøgle.', 'trackwp' ) );
+        return array( 'error', __( 'Dette domæne har ingen aktiv TrackWP-licens. Tracking er slået fra. Kontakt leverandøren for at få domænet tilføjet.', 'trackwp' ) );
     }
 
     public static function admin_notices() {
@@ -695,33 +606,23 @@ class TrackWP_License {
         if ( ! current_user_can( 'manage_options' ) ) {
             wp_die( esc_html__( 'Adgang nægtet.', 'trackwp' ) );
         }
-        $m       = self::message();
-        $has_key = '' !== self::license_key();
-        $post    = esc_url( admin_url( 'admin-post.php' ) );
+        $m    = self::message();
+        $post = esc_url( admin_url( 'admin-post.php' ) );
         echo '<div class="wrap"><h1>' . esc_html__( 'Licens', 'trackwp' ) . '</h1>';
         if ( isset( $_GET['trackwp_license_error'] ) ) {
             echo '<div class="notice notice-error"><p>' . esc_html( sanitize_text_field( wp_unslash( $_GET['trackwp_license_error'] ) ) ) . '</p></div>';
         }
         printf( '<div class="notice notice-%s inline"><p>%s</p></div>', esc_attr( $m[0] ), esc_html( $m[1] ) );
+        echo '<p>' . sprintf(
+            /* translators: %s: domain */
+            esc_html__( 'Domæne: %s. Licensen styres af leverandøren pr. domæne; der skal ikke indtastes nogen nøgle.', 'trackwp' ),
+            '<code>' . esc_html( self::host() ) . '</code>'
+        ) . '</p>';
         echo '<form method="post" action="' . $post . '">'; // phpcs:ignore WordPress.Security.EscapeOutput
-        wp_nonce_field( 'trackwp_license_activate' );
-        echo '<input type="hidden" name="action" value="trackwp_license_activate">';
-        echo '<p><label for="trackwp_license_key">' . esc_html__( 'Licensnøgle', 'trackwp' ) . '</label> ';
-        echo '<input type="text" id="trackwp_license_key" name="license_key" class="regular-text" autocomplete="off"></p>';
-        submit_button( __( 'Aktivér', 'trackwp' ), 'primary', 'submit', false );
+        wp_nonce_field( 'trackwp_license_check' );
+        echo '<input type="hidden" name="action" value="trackwp_license_check">';
+        submit_button( __( 'Tjek nu', 'trackwp' ), 'secondary', 'submit', false );
         echo '</form>';
-        if ( $has_key ) {
-            foreach ( array(
-                'trackwp_license_check'      => __( 'Tjek nu', 'trackwp' ),
-                'trackwp_license_deactivate' => __( 'Frigiv dette domæne', 'trackwp' ),
-            ) as $action => $label ) {
-                echo '<form method="post" action="' . $post . '" style="display:inline-block;margin-top:12px;margin-right:8px">'; // phpcs:ignore WordPress.Security.EscapeOutput
-                wp_nonce_field( $action );
-                echo '<input type="hidden" name="action" value="' . esc_attr( $action ) . '">';
-                submit_button( $label, 'secondary', 'submit', false );
-                echo '</form>';
-            }
-        }
         echo '</div>';
     }
 
@@ -741,19 +642,8 @@ class TrackWP_License {
         exit;
     }
 
-    public static function handle_activate() {
-        self::admin_post_guard( 'trackwp_license_activate' );
-        $key = isset( $_POST['license_key'] ) ? sanitize_text_field( wp_unslash( $_POST['license_key'] ) ) : '';
-        self::back( self::activate( $key ) );
-    }
-
     public static function handle_check() {
         self::admin_post_guard( 'trackwp_license_check' );
         self::back( self::check() );
-    }
-
-    public static function handle_deactivate() {
-        self::admin_post_guard( 'trackwp_license_deactivate' );
-        self::back( self::deactivate() );
     }
 }

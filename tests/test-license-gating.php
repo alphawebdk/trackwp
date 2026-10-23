@@ -250,6 +250,19 @@ class TrackWP_License_Gating_Test extends WP_UnitTestCase {
         $this->assertTrue(TrackWP_License::tracking_allowed());
     }
 
+    public function test_upgrade_from_1_13_0_reschedules_check_now() {
+        wp_clear_scheduled_hook(TrackWP_License::CRON_HOOK);
+        wp_schedule_event(time() + DAY_IN_SECONDS, 'twicedaily', TrackWP_License::CRON_HOOK);
+        $this->upgrade_from('1.13.0');
+        $this->assertLessThanOrEqual(time() + 5, wp_next_scheduled(TrackWP_License::CRON_HOOK));
+    }
+
+    public function test_activation_schedules_check_now() {
+        wp_clear_scheduled_hook(TrackWP_License::CRON_HOOK);
+        TrackWP::instance()->activate();
+        $this->assertLessThanOrEqual(time() + 5, wp_next_scheduled(TrackWP_License::CRON_HOOK));
+    }
+
     public function test_cron_hook_cleared_on_deactivate() {
         wp_schedule_event(time() + 60, 'twicedaily', TrackWP_License::CRON_HOOK);
         $this->assertNotFalse(wp_next_scheduled(TrackWP_License::CRON_HOOK));

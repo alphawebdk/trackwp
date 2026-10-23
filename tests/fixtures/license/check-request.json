@@ -1,0 +1,1 @@
+{"_provenance":"Form af TrackWP_License::check()-request (includes/class-trackwp-license.php post()/request_token()); holdes sand af tests/test-license.php::test_check_request_matches_contract_fixture","method":"POST","path":"/trackwp/api/check","headers":{"Content-Type":"application/json"},"body":{"domain":"example.dk","plugin_version":"1.13.1","wp_version":"6.8"}}
